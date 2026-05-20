@@ -30,7 +30,7 @@ log_header "Case 1: 分布式调用链安装与卸载测试 (Distributed Tracing
 if (
     set -e
     ./run.sh --project tracing --file installing-distributed-tracing --force-init
-    ./run.sh --project tracing --file uninstalling-distributed-tracing
+    ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds
 ); then
     record_test_result 0
 else

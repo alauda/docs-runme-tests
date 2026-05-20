@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# otel 项目专属逻辑（Alauda Build of OpenTelemetry v2 文档测试）
+#
+# 由 run.sh 引擎在 source framework/{common,verify,kubeconfig,tools}.sh 之后加载。
+
+# ==============================================================================
+# 项目钩子（由 run.sh 引擎调用）
+# ==============================================================================
+
+# 校验 otel 项目专属环境变量
+project_check_env() {
+    if [ -z "$PKG_OPENTELEMETRY_OPERATOR2_URL" ]; then
+        log_error "otel 项目缺少必要的环境变量: PKG_OPENTELEMETRY_OPERATOR2_URL"
+        return 1
+    fi
+    return 0
+}
+
+# otel 重量级初始化（仅 --init-only / --force-init 时调用）
+# 通用工具（runme/violet）已由引擎安装；此处负责 kubeconfig 与 OTel Operator 插件包上传。
+# Operator 本身由测试脚本 install_operator 安装。
+# 用法: project_init <cluster>...
+project_init() {
+    if [ $# -eq 0 ]; then
+        log_error "otel project_init: 至少需要一个集群参数"
+        return 1
+    fi
+
+    local clusters=("$@")
+    log_info "otel 环境初始化（集群: ${clusters[*]}）..."
+
+    ensure_kubeconfig "${clusters[@]}" || return 1
+
+    # 下载并上传 OTel Operator 插件包（install_operator 依赖其 PackageManifest 存在）
+    download_package "$PKG_OPENTELEMETRY_OPERATOR2_URL" || return 1
+    local cluster
+    for cluster in "${clusters[@]}"; do
+        if ! check_package_uploaded "$cluster" "$PKG_OPENTELEMETRY_OPERATOR2_URL"; then
+            upload_package "$cluster" "$PKG_OPENTELEMETRY_OPERATOR2_URL" || return 1
+        fi
+    done
+
+    log_success "otel 环境初始化完成!"
+}
+
+# otel 轻量级准备（每次运行测试前调用）
+project_prepare() {
+    load_kubeconfig || return 1
+    return 0
+}

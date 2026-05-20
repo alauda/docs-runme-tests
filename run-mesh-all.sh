@@ -1,0 +1,198 @@
+#!/usr/bin/env bash
+# mesh 项目全量测试编排脚本
+# 按预定义顺序执行 Alauda Service Mesh v2 文档的所有测试任务
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# 加载公共函数
+source "$SCRIPT_DIR/framework/common.sh"
+
+# 确保在框架仓库根目录执行
+cd "$SCRIPT_DIR"
+
+# 注册退出时的回调函数，无论成功还是因错误退出，都会打印测试总结
+trap print_test_summary EXIT
+
+log_header "开始执行 mesh 项目所有测试任务"
+
+# ------------------------------------------------------------------
+# Case 1: 环境初始化（默认使用 SINGLE_CLUSTER_NAME）
+# 注：multi-cluster 文档测试需在对应 case 中再次执行
+#     ./run.sh --project mesh --init-only --cluster "$EAST_CLUSTER_NAME" --cluster "$WEST_CLUSTER_NAME"
+# ------------------------------------------------------------------
+log_header "Case 1: 环境初始化（默认 SINGLE_CLUSTER_NAME）"
+
+if (
+    set -e
+    ./run.sh --project mesh --init-only
+); then
+    record_test_result 0
+else
+    record_test_result 1
+    # 失败则直接退出
+    exit 1
+fi
+
+# ------------------------------------------------------------------
+# Case 2: 双栈网格安装
+# ------------------------------------------------------------------
+if [ "${IS_DUAL_STACK:-false}" == "true" ]; then
+    log_header "Case 2: 双栈网格安装测试 (Dual Stack)"
+    if (
+        set -e
+        ./run.sh --project mesh --file install-mesh-in-dual-stack-mode --no-cleanup
+        ./run.sh --project mesh --file install-mesh-in-dual-stack-mode --cleanup-only
+    ); then
+        record_test_result 0
+    else
+        record_test_result 1
+        exit 1
+    fi
+else
+    log_header "Case 2: 跳过双栈网格安装测试 (IS_DUAL_STACK != true)"
+fi
+
+# ------------------------------------------------------------------
+# Case 3: 单网格安装与应用测试
+# ------------------------------------------------------------------
+log_header "Case 3: 单网格安装与应用测试 (Single Mesh & App)"
+
+# 使用子 shell ( cmds ) 将多个命令组合为一个原子 case
+# 任何一个命令失败都会导致整个 block 返回非 0 状态
+if (
+    set -e
+    # 安装网格和应用
+    ./run.sh --project mesh --file install-mesh
+    ./run.sh --project mesh --file metrics-and-mesh
+    ./run.sh --project mesh --file deploying-the-bookinfo-application --no-cleanup
+    ./run.sh --project mesh --file kiali
+    # 清理
+    ./run.sh --project mesh --file uninstalling-alauda-build-of-kiali
+    ./run.sh --project mesh --file deploying-the-bookinfo-application --cleanup-only
+    ./run.sh --project mesh --file uninstalling-alauda-service-mesh
+); then
+    record_test_result 0
+else
+    record_test_result 1
+    exit 1
+fi
+
+# ------------------------------------------------------------------
+# Case 4: Istio HA 配置测试
+# ------------------------------------------------------------------
+log_header "Case 4: Istio HA 配置测试"
+
+if (
+    set -e
+    ./run.sh --project mesh --file install-mesh --force-init
+    ./run.sh --project mesh --file configuring-istio-ha-by-using-autoscaling
+    ./run.sh --project mesh --file uninstalling-alauda-service-mesh --skip-operator-and-crds
+    ./run.sh --project mesh --file install-mesh
+    ./run.sh --project mesh --file configuring-istio-ha-by-using-replica-count
+    ./run.sh --project mesh --file uninstalling-alauda-service-mesh --skip-operator-and-crds
+); then
+    record_test_result 0
+else
+    record_test_result 1
+    exit 1
+fi
+
+# ------------------------------------------------------------------
+# Case 5: InPlace 更新策略测试
+# ------------------------------------------------------------------
+log_header "Case 5: InPlace 更新策略测试 (Update InPlace)"
+
+if (
+    set -e
+    ./run.sh --project mesh --file update-inplace --no-cleanup --force-init
+    ./run.sh --project mesh --file update-inplace --cleanup-only
+); then
+    record_test_result 0
+else
+    record_test_result 1
+    exit 1
+fi
+
+# ------------------------------------------------------------------
+# Case 6: Ambient Mode 安装测试
+# ------------------------------------------------------------------
+log_header "Case 6: Ambient Mode 安装测试"
+
+if (
+    set -e
+    # 安装 ambient 网格和应用（operator 可能已经被删除，所以要 --force-init）
+    ./run.sh --project mesh --file installing-ambient-mode --force-init
+    ./run.sh --project mesh --file deploying-ambient-bookinfo --no-cleanup
+    ./run.sh --project mesh --file waypoint-proxies
+    # L7 特性测试（独立测试，包含清理步骤）
+    ./run.sh --project mesh --file ambient-l7-features --no-cleanup
+    ./run.sh --project mesh --file ambient-l7-features --cleanup-only
+    # 入口网关 K8S Gateway API 测试（集群需要支持 `LoadBalancer`）
+    ./run.sh --project mesh --file exposing-a-service-via-k8s-gateway-api-in-ambient-mode --no-cleanup
+    ./run.sh --project mesh --file exposing-a-service-via-k8s-gateway-api-in-ambient-mode --cleanup-only
+    # 出口网关 (Egress Gateway) 测试
+    ./run.sh --project mesh --file routing-egress-traffic-via-k8s-gateway-api-in-ambient-mode --no-cleanup
+    ./run.sh --project mesh --file routing-egress-traffic-via-k8s-gateway-api-in-ambient-mode --cleanup-only
+    # 卸载 ambient 网格
+    ./run.sh --project mesh --file uninstalling-alauda-service-mesh-in-ambient-mode
+    # 清理 bookinfo
+    ./run.sh --project mesh --file deploying-ambient-bookinfo --cleanup-only
+); then
+    record_test_result 0
+else
+    record_test_result 1
+    exit 1
+fi
+
+# ------------------------------------------------------------------
+# Case 7: 多集群 - 多主多网络拓扑 (Multi-Primary Multi-Network)
+# 注：会切换到双集群 kubeconfig，必须放在所有单集群 case 之后
+# ------------------------------------------------------------------
+if [ -z "${EAST_CLUSTER_NAME:-}" ] || [ -z "${WEST_CLUSTER_NAME:-}" ]; then
+    log_header "Case 7/8: 跳过多集群测试 (未设置 EAST_CLUSTER_NAME / WEST_CLUSTER_NAME)"
+else
+    log_header "Case 7: 多集群 - 多主多网络拓扑 (Multi-Primary Multi-Network)"
+
+    if (
+        set -e
+        # 切到双集群 kubeconfig
+        ./run.sh --project mesh --init-only --cluster "$EAST_CLUSTER_NAME" --cluster "$WEST_CLUSTER_NAME"
+        # 公共前置: 生成 CA 证书并下发 cacerts 到两个集群
+        ./run.sh --project mesh --file configuration-overview
+        # 多主多网络安装 + 验证 + 卸载
+        ./run.sh --project mesh --file install-multi-primary-multi-network --no-cleanup
+        ./run.sh --project mesh --file install-multi-primary-multi-network --cleanup-only
+    ); then
+        record_test_result 0
+    else
+        record_test_result 1
+        exit 1
+    fi
+
+    # ------------------------------------------------------------------
+    # Case 8: 多集群 - 主-远多网络拓扑 (Primary-Remote Multi-Network)
+    # ------------------------------------------------------------------
+    log_header "Case 8: 多集群 - 主-远多网络拓扑 (Primary-Remote Multi-Network)"
+
+    if (
+        set -e
+        # 重新初始化双集群 kubeconfig (Case 7 卸载后保险一步,确保上下文干净)
+        ./run.sh --project mesh --init-only --cluster "$EAST_CLUSTER_NAME" --cluster "$WEST_CLUSTER_NAME"
+        # 重新下发 cacerts (Case 7 cleanup 已删除 istio-system,需要重建)
+        ./run.sh --project mesh --file configuration-overview
+        # 主-远多网络安装 + 验证 + 卸载
+        ./run.sh --project mesh --file install-primary-remote-multi-network --no-cleanup
+        ./run.sh --project mesh --file install-primary-remote-multi-network --cleanup-only
+    ); then
+        record_test_result 0
+    else
+        record_test_result 1
+        exit 1
+    fi
+fi
+
+log_header "mesh 项目所有测试任务执行完成！"
+
+# 注意：print_test_summary 已通过 trap 注册，脚本退出时会自动执行，此处无需再次调用

@@ -33,8 +33,17 @@ INIT_ONLY=false
 FORCE_INIT=false
 SKIP_OPERATOR_AND_CRDS=false
 
-# 项目→仓库根 映射（load_repos_conf 填充）
-declare -A REPO_OF
+# 已注册（且仓库目录存在）的项目名列表（load_repos_conf 填充）
+# 注：用索引数组而非关联数组（declare -A），以兼容 macOS 自带的 Bash 3.2。
+REGISTERED_PROJECTS=()
+
+# 返回项目对应的文档仓库根（取自 load_repos_conf 导出的 <NAME>_REPO_ROOT 环境变量）
+# 用法: repo="$(_repo_root_of mesh)"
+_repo_root_of() {
+    local up
+    up="$(echo "$1" | tr '[:lower:]' '[:upper:]')_REPO_ROOT"
+    printf '%s' "${!up:-}"
+}
 
 # 使用说明
 usage() {
@@ -147,7 +156,7 @@ check_env() {
     fi
 }
 
-# 解析 repos.conf，填充 REPO_OF 并 export 各 <PROJECT>_REPO_ROOT
+# 解析 repos.conf，填充 REGISTERED_PROJECTS 并 export 各 <PROJECT>_REPO_ROOT
 load_repos_conf() {
     if [ ! -f "$REPOS_CONF" ]; then
         log_error "未找到文档仓库注册表: $REPOS_CONF"
@@ -178,22 +187,22 @@ load_repos_conf() {
         # 仅登记真实存在的仓库
         if [ -d "$resolved" ]; then
             resolved="$(cd "$resolved" && pwd)"
-            REPO_OF["$name"]="$resolved"
+            REGISTERED_PROJECTS+=("$name")
             export "${override_var}=$resolved"
         fi
     done < "$REPOS_CONF"
 }
 
-# 查找测试脚本；成功时 echo 绝对路径并设置全局 FOUND_PROJECT
-# 返回: 0 找到 / 1 未找到 / 2 多项目重名歧义
-FOUND_PROJECT=""
+# 查找测试脚本。
+# 成功: 向 stdout 输出 "<project>|<abs-path>"，返回 0
+# 失败: 返回 1（未找到）/ 2（多项目重名歧义）
+# 注：结果通过 stdout 传出（而非全局变量），以便在命令替换子 shell 中调用而不丢失。
 _find_test_script() {
     local file="$1"
-    FOUND_PROJECT=""
     local p proj repo
 
     if [ -n "$PROJECT" ]; then
-        repo="${REPO_OF[$PROJECT]:-}"
+        repo="$(_repo_root_of "$PROJECT")"
         if [ -z "$repo" ]; then
             log_error "项目 '$PROJECT' 未在 repos.conf 注册，或其仓库目录不存在"
             return 1
@@ -202,15 +211,15 @@ _find_test_script() {
         if [ -z "$p" ]; then
             return 1
         fi
-        FOUND_PROJECT="$PROJECT"
-        echo "$p"
+        printf '%s|%s' "$PROJECT" "$p"
         return 0
     fi
 
-    # 自动查找：遍历所有已注册仓库
+    # 自动查找：遍历所有已注册项目
     local matches=()
-    for proj in "${!REPO_OF[@]}"; do
-        p=$(find "${REPO_OF[$proj]}/docs" -type f -name "runme-test_${file}.sh" 2>/dev/null | head -n 1)
+    for proj in "${REGISTERED_PROJECTS[@]}"; do
+        repo="$(_repo_root_of "$proj")"
+        p=$(find "$repo/docs" -type f -name "runme-test_${file}.sh" 2>/dev/null | head -n 1)
         if [ -n "$p" ]; then
             matches+=("${proj}|${p}")
         fi
@@ -228,8 +237,7 @@ _find_test_script() {
         return 2
     fi
 
-    FOUND_PROJECT="${matches[0]%%|*}"
-    echo "${matches[0]#*|}"
+    printf '%s' "${matches[0]}"
     return 0
 }
 
@@ -253,6 +261,13 @@ run_test_script() {
     script_name=$(basename "$test_script")
 
     log_header "执行测试: $script_name"
+
+    # 清除上一个测试脚本可能残留的 test_/cleanup_ 函数，
+    # 避免一次传多个 --file 时 declare -F 命中旧脚本的同类函数。
+    local stale
+    for stale in $(declare -F | awk '$3 ~ /^(test|cleanup)_[a-z0-9_]+$/ {print $3}'); do
+        unset -f "$stale"
+    done
 
     # 加载测试脚本
     # shellcheck disable=SC1090
@@ -331,10 +346,10 @@ main() {
             exit 1
         fi
     elif [ ${#RUN_FILES[@]} -gt 0 ]; then
-        local file path rc
+        local file found rc fproject fpath
         for file in "${RUN_FILES[@]}"; do
             set +e
-            path=$(_find_test_script "$file")
+            found=$(_find_test_script "$file")
             rc=$?
             set -e
             if [ "$rc" -ne 0 ]; then
@@ -343,11 +358,13 @@ main() {
                 fi
                 exit 1
             fi
-            test_scripts+=("$path")
+            fproject="${found%%|*}"
+            fpath="${found#*|}"
+            test_scripts+=("$fpath")
             if [ -z "$PROJECT" ]; then
-                PROJECT="$FOUND_PROJECT"
-            elif [ "$PROJECT" != "$FOUND_PROJECT" ]; then
-                log_error "一次只能测试同一项目的文档（已锁定: $PROJECT，又遇到: $FOUND_PROJECT）"
+                PROJECT="$fproject"
+            elif [ "$PROJECT" != "$fproject" ]; then
+                log_error "一次只能测试同一项目的文档（已锁定: $PROJECT，又遇到: $fproject）"
                 exit 1
             fi
         done
@@ -358,7 +375,7 @@ main() {
     fi
 
     # ── 解析项目仓库根 ──
-    DOC_REPO_ROOT="${REPO_OF[$PROJECT]:-}"
+    DOC_REPO_ROOT="$(_repo_root_of "$PROJECT")"
     if [ -z "$DOC_REPO_ROOT" ]; then
         log_error "项目 '$PROJECT' 未在 repos.conf 注册，或其仓库目录不存在"
         exit 1

@@ -118,6 +118,10 @@ export PKG_OPENTELEMETRY_OPERATOR2_URL=xxx
 export TRACING_ES_ENDPOINT='https://es.xx:9200'
 export TRACING_ES_USER='your-es-username'
 export TRACING_ES_PASS='your-es-password'
+# telemetrygen 测试时长（可选，默认 60s；覆盖文档默认的 150s，加快测试）
+export TRACING_TEST_DURATION=60s
+# 是否测试 SPM (Service Performance Monitoring) 章节（可选，需 ACP monitoring）
+export TRACING_TEST_SPM=true
 ```
 
 **通用必需变量**（引擎 `check_env` 校验）：`RUNME_VERSION` `PLATFORM_ADDRESS` `ACP_API_TOKEN` `PLATFORM_USERNAME` `PLATFORM_PASSWORD`。

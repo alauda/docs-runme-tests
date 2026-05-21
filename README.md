@@ -93,7 +93,7 @@ export ACP_KUBECONFIG_MODE=direct
 # 平台 CA（可选，留空则 mesh 测试自动从 Global 集群拉取）
 # export PLATFORM_CA='base64-encoded-ca-certificate'
 # Global 集群名（可选，默认 'global'）
-# export GLOBAL_CLUSTER_NAME=global
+export GLOBAL_CLUSTER_NAME=global
 
 # ── 工具与镜像（通用）───────────────────────────────────────
 export RUNME_VERSION=3.16.11

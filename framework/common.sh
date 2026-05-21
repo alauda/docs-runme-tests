@@ -67,18 +67,18 @@ kubectl_apply_runme_block() {
     
     if [ -z "$cmd_content" ]; then
         log_error "无法获取代码块内容: $block_name"
-        popd > /dev/null
+        popd > /dev/null || return 1
         return 1
     fi
     
     # 执行命令
     eval "$cmd_content" || {
         log_error "应用 $block_name 失败"
-        popd > /dev/null
+        popd > /dev/null || return 1
         return 1
     }
     
-    popd > /dev/null
+    popd > /dev/null || return 1
     return 0
 }
 

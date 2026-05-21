@@ -73,7 +73,7 @@ kubectl_apply_with_mirror() {
 
     # 下载 YAML 文件，替换镜像地址，然后应用
     log_info "下载并替换镜像地址: $url"
-    curl -sSL "$url" \
+    curl -fsSL "$url" \
         | sed "s|docker\.io|${docker_io_target}|g" \
         | sed "s|registry\.istio\.io/release|${istio_release_target}|g" \
         | eval "${cmd_content//-f $url/-f -}"
@@ -182,7 +182,7 @@ install_all_servicemesh_operators() {
 # 用法: ca=$(fetch_platform_ca) || return 1
 # NOTE: config-kiali:* 块位于 servicemesh2-docs 仓库（引擎已 cd 到 DOC_REPO_ROOT）。
 fetch_platform_ca() {
-    local global_kc="$KUBECONFIG_DIR/${GLOBAL_CLUSTER_NAME}.yaml"
+    local global_kc="$KUBECONFIG_DIR/${GLOBAL_CLUSTER_NAME:-global}.yaml"
     if [ ! -f "$global_kc" ]; then
         log_error "fetch_platform_ca: 未找到 Global kubeconfig: $global_kc"
         log_error "请重新执行 './run.sh --project mesh --init-only' 让框架自动拉取 ${GLOBAL_CLUSTER_NAME} 集群的 kubeconfig"

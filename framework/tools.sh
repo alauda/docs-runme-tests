@@ -166,7 +166,7 @@ download_package() {
     fi
 
     log_info "下载插件包: $filename"
-    curl -sSL "$url" -o "$PKG_DIR/$filename" || {
+    curl -fsSL "$url" -o "$PKG_DIR/$filename" || {
         log_error "下载插件包失败: $url"
         return 1
     }

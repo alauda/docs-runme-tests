@@ -282,9 +282,7 @@ source "$FRAMEWORK_ROOT/framework/verify.sh"
 
 ## TODO
 
-- [ ] Multus / MetalLB 集群插件自动安装
-- [ ] tracing 测试的 Elasticsearch 依赖在 CI 中维护共享实例
-- [ ] 分布式调用链 SPM (Service Performance Monitoring) 扩展测试
+- [ ] Multus / MetalLB / mesh-v2-test-suite 集群插件自动安装
 - [ ] 优化测试 case 结果统计
 
 ## 参考资料

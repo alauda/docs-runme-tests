@@ -1,0 +1,5 @@
+# 运行时生成的工具与缓存目录
+bin/
+package/
+.kubeconfig/
+*.tar.gz

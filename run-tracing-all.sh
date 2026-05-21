@@ -2,8 +2,8 @@
 # tracing 项目全量测试编排脚本
 # 执行 Alauda Distributed Tracing 文档的所有测试任务
 #
-# 要求: TRACING_ES_ENDPOINT / TRACING_ES_USER / TRACING_ES_PASS 已设置，
-#       否则安装与卸载测试均以 SKIPPED 退出（不阻塞 CI）。
+# 要求: 默认通过 TRACING_ACP_ES_CLUSTER（默认 global）自动读取 ACP ES 配置；
+#       若 TRACING_ACP_ES_CLUSTER 为空，则使用 TRACING_ES_ENDPOINT / TRACING_ES_USER / TRACING_ES_PASS。
 
 set -e
 

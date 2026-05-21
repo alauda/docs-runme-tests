@@ -114,13 +114,15 @@ export PKG_METALLB_OPERATOR_URL=xxx
 export PKG_OPENTELEMETRY_OPERATOR2_URL=xxx
 
 # ── 分布式调用链测试专用 ────────────────────────────────────
-# tracing 测试依赖外部 Elasticsearch；未设置时 tracing 测试以 SKIPPED 退出（不阻塞 CI）
+# ACP ES 所在集群（可选，默认 global；设为空则使用下方 TRACING_ES_* 手动配置）
+export TRACING_ACP_ES_CLUSTER=global
+# 手动 Elasticsearch 配置（仅 TRACING_ACP_ES_CLUSTER 为空时使用）
 export TRACING_ES_ENDPOINT='https://es.xx:9200'
 export TRACING_ES_USER='your-es-username'
 export TRACING_ES_PASS='your-es-password'
 # telemetrygen 测试时长（可选，覆盖文档默认的 150s，加快测试）
 export TRACING_TELEMETRYGEN_TEST_DURATION_1=30s
-export TRACING_TELEMETRYGEN_TEST_DURATION_2=80s
+export TRACING_TELEMETRYGEN_TEST_DURATION_2=130s
 # 是否测试 SPM (Service Performance Monitoring) 章节（可选，需 ACP monitoring）
 export TRACING_TEST_SPM=true
 ```
@@ -129,11 +131,11 @@ export TRACING_TEST_SPM=true
 
 **项目专属变量**（各项目 `project_check_env` 校验）：
 
-| 项目    | 必需                                                                                                                  | 软依赖（缺失则 SKIPPED）        |
-| ------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
-| mesh    | `PKG_SERVICEMESH_OPERATOR2_URL` `PKG_KIALI_OPERATOR_URL` `PKG_OPENTELEMETRY_OPERATOR2_URL` `PKG_METALLB_OPERATOR_URL` | -                               |
-| otel    | `PKG_OPENTELEMETRY_OPERATOR2_URL`                                                                                     | -                               |
-| tracing | `PKG_OPENTELEMETRY_OPERATOR2_URL`                                                                                     | `TRACING_ES_ENDPOINT/USER/PASS` |
+| 项目    | 必需                                                                                                                  | 软依赖（缺失则 SKIPPED）                                    |
+| ------- | --------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| mesh    | `PKG_SERVICEMESH_OPERATOR2_URL` `PKG_KIALI_OPERATOR_URL` `PKG_OPENTELEMETRY_OPERATOR2_URL` `PKG_METALLB_OPERATOR_URL` | -                                                           |
+| otel    | `PKG_OPENTELEMETRY_OPERATOR2_URL`                                                                                     | -                                                           |
+| tracing | `PKG_OPENTELEMETRY_OPERATOR2_URL`                                                                                     | `TRACING_ACP_ES_CLUSTER` 或 `TRACING_ES_ENDPOINT/USER/PASS` |
 
 ### 4. kubeconfig 自动管理
 
@@ -232,7 +234,7 @@ cd docs-runme-tests
 | 分布式调用链安装 | `./run.sh --project tracing --file installing-distributed-tracing`   |
 | 分布式调用链卸载 | `./run.sh --project tracing --file uninstalling-distributed-tracing` |
 
-> 需设置 `TRACING_ES_*`，否则以 SKIPPED 退出。安装测试会自动安装前置依赖 OpenTelemetry v2 Operator（其代码块位于 `opentelemetry-docs`）。
+> 默认从 `TRACING_ACP_ES_CLUSTER` 指定的 ACP 集群（默认 `global`）读取 log-center Elasticsearch 配置；将其设为空时改用 `TRACING_ES_*` 手动配置。安装测试会自动安装前置依赖 OpenTelemetry v2 Operator（其代码块位于 `opentelemetry-docs`）。
 
 ## 工作原理
 

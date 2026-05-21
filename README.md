@@ -4,7 +4,7 @@
 
 本仓库是**独立的测试框架仓库**，与各文档仓库（`servicemesh2-docs` / `opentelemetry-docs` / `distributed-tracing-docs`）平级，作为兄弟目录存在：
 
-```
+```bash
 /your/workspace/
 ├── docs-runme-tests/          # 本仓库：测试引擎 + 编排 + 各项目钩子
 ├── servicemesh2-docs/         # 文档仓库（mesh）
@@ -16,7 +16,7 @@
 
 ## 目录结构
 
-```
+```bash
 docs-runme-tests/
 ├── run.sh                  # 单测执行引擎（项目感知）
 ├── run-mesh-all.sh         # mesh 项目全量编排
@@ -55,7 +55,7 @@ docs-runme-tests/
 
 ### 1. 系统要求
 
-**注**：执行测试脚本的机器（不是 k8s 集群）必须能访问 Github。
+**注**：执行测试脚本的机器（不是 k8s 集群）必须能访问 GitHub。
 
 以下工具需预先安装：`kubectl`、`curl`、`jq`。框架会自动安装 `runme` / `violet`（mesh 还会装 `istioctl`）。
 

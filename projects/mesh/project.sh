@@ -182,10 +182,11 @@ install_all_servicemesh_operators() {
 # 用法: ca=$(fetch_platform_ca) || return 1
 # NOTE: config-kiali:* 块位于 servicemesh2-docs 仓库（引擎已 cd 到 DOC_REPO_ROOT）。
 fetch_platform_ca() {
-    local global_kc="$KUBECONFIG_DIR/${GLOBAL_CLUSTER_NAME:-global}.yaml"
+    local global_cluster="${GLOBAL_CLUSTER_NAME:-global}"
+    local global_kc="$KUBECONFIG_DIR/${global_cluster}.yaml"
     if [ ! -f "$global_kc" ]; then
         log_error "fetch_platform_ca: 未找到 Global kubeconfig: $global_kc"
-        log_error "请重新执行 './run.sh --project mesh --init-only' 让框架自动拉取 ${GLOBAL_CLUSTER_NAME} 集群的 kubeconfig"
+        log_error "请重新执行 './run.sh --project mesh --init-only' 让框架自动拉取 ${global_cluster} 集群的 kubeconfig"
         return 1
     fi
 
@@ -209,7 +210,7 @@ fetch_platform_ca() {
     fi
 
     log_error "fetch_platform_ca: 两个 runme 块均返回空，无法获取 PLATFORM_CA"
-    log_error "请检查 ${GLOBAL_CLUSTER_NAME} 集群上 cpaas-system/dex.tls Secret 是否存在，或显式 export PLATFORM_CA"
+    log_error "请检查 ${global_cluster} 集群上 cpaas-system/dex.tls Secret 是否存在，或显式 export PLATFORM_CA"
     return 1
 }
 
@@ -251,7 +252,7 @@ project_init() {
 
     local clusters=("$@")
     local global_cluster="${GLOBAL_CLUSTER_NAME:-global}"
-    log_info "mesh 环境初始化（业务集群: ${clusters[*]} + Global 集群: $global_cluster）..."
+    log_info "mesh 环境初始化（业务集群: ${clusters[*]} + Global 集群: ${global_cluster}）..."
 
     install_istioctl
     # ensure_kubeconfig: fingerprint 一致则复用 merged.yaml，变更时才重新拉取。

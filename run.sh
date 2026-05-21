@@ -88,14 +88,26 @@ parse_args() {
     while [[ $# -gt 0 ]]; do
         case $1 in
             --project)
+                if [[ -z "${2:-}" || "$2" == -* ]]; then
+                    log_error "--project 需要一个参数值"
+                    exit 1
+                fi
                 PROJECT="$2"
                 shift 2
                 ;;
             --file)
+                if [[ -z "${2:-}" || "$2" == -* ]]; then
+                    log_error "--project 需要一个参数值"
+                    exit 1
+                fi
                 RUN_FILES+=("$2")
                 shift 2
                 ;;
             --cluster)
+                if [[ -z "${2:-}" || "$2" == -* ]]; then
+                    log_error "--project 需要一个参数值"
+                    exit 1
+                fi
                 INIT_CLUSTERS+=("$2")
                 shift 2
                 ;;
@@ -364,7 +376,7 @@ main() {
             if [ -z "$PROJECT" ]; then
                 PROJECT="$fproject"
             elif [ "$PROJECT" != "$fproject" ]; then
-                log_error "一次只能测试同一项目的文档（已锁定: $PROJECT，又遇到: $fproject）"
+                log_error "一次只能测试同一项目的文档（已锁定: ${PROJECT}，又遇到: ${fproject}）"
                 exit 1
             fi
         done

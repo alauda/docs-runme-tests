@@ -43,11 +43,11 @@ docs-runme-tests/
 
 ## 支持的文档项目
 
-| 项目 | 文档仓库 | 全量编排 | 说明 |
-| ------- | --------------------------- | -------------------- | ------------------------ |
-| mesh    | `servicemesh2-docs`         | `run-mesh-all.sh`    | Alauda Service Mesh v2   |
-| otel    | `opentelemetry-docs`        | `run-otel-all.sh`    | Alauda Build of OpenTelemetry v2 |
-| tracing | `distributed-tracing-docs`  | `run-tracing-all.sh` | Alauda Distributed Tracing |
+| 项目    | 文档仓库                   | 全量编排             | 说明                             |
+| ------- | -------------------------- | -------------------- | -------------------------------- |
+| mesh    | `servicemesh2-docs`        | `run-mesh-all.sh`    | Alauda Service Mesh v2           |
+| otel    | `opentelemetry-docs`       | `run-otel-all.sh`    | Alauda Build of OpenTelemetry v2 |
+| tracing | `distributed-tracing-docs` | `run-tracing-all.sh` | Alauda Distributed Tracing       |
 
 新增文档项目：在 `repos.conf` 加一行 + 新增 `projects/<name>/project.sh` + 新增 `run-<name>-all.sh`。
 
@@ -118,8 +118,9 @@ export PKG_OPENTELEMETRY_OPERATOR2_URL=xxx
 export TRACING_ES_ENDPOINT='https://es.xx:9200'
 export TRACING_ES_USER='your-es-username'
 export TRACING_ES_PASS='your-es-password'
-# telemetrygen 测试时长（可选，默认 60s；覆盖文档默认的 150s，加快测试）
-export TRACING_TEST_DURATION=60s
+# telemetrygen 测试时长（可选，覆盖文档默认的 150s，加快测试）
+export TRACING_TELEMETRYGEN_TEST_DURATION_1=30s
+export TRACING_TELEMETRYGEN_TEST_DURATION_2=80s
 # 是否测试 SPM (Service Performance Monitoring) 章节（可选，需 ACP monitoring）
 export TRACING_TEST_SPM=true
 ```
@@ -128,11 +129,11 @@ export TRACING_TEST_SPM=true
 
 **项目专属变量**（各项目 `project_check_env` 校验）：
 
-| 项目 | 必需 | 软依赖（缺失则 SKIPPED） |
-| ------- | -------------------------------------------------------------------- | ------------------------ |
-| mesh    | `PKG_SERVICEMESH_OPERATOR2_URL` `PKG_KIALI_OPERATOR_URL` `PKG_OPENTELEMETRY_OPERATOR2_URL` `PKG_METALLB_OPERATOR_URL` | - |
-| otel    | `PKG_OPENTELEMETRY_OPERATOR2_URL` | - |
-| tracing | `PKG_OPENTELEMETRY_OPERATOR2_URL` | `TRACING_ES_ENDPOINT/USER/PASS` |
+| 项目    | 必需                                                                                                                  | 软依赖（缺失则 SKIPPED）        |
+| ------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
+| mesh    | `PKG_SERVICEMESH_OPERATOR2_URL` `PKG_KIALI_OPERATOR_URL` `PKG_OPENTELEMETRY_OPERATOR2_URL` `PKG_METALLB_OPERATOR_URL` | -                               |
+| otel    | `PKG_OPENTELEMETRY_OPERATOR2_URL`                                                                                     | -                               |
+| tracing | `PKG_OPENTELEMETRY_OPERATOR2_URL`                                                                                     | `TRACING_ES_ENDPOINT/USER/PASS` |
 
 ### 4. kubeconfig 自动管理
 
@@ -191,44 +192,44 @@ cd docs-runme-tests
 
 ### mesh（servicemesh2-docs）
 
-| 文档名称 | 执行命令 |
-| ---------------------------- | ------------------------------------------------------------------------------ |
-| 双栈网格安装 | `./run.sh --project mesh --file install-mesh-in-dual-stack-mode` |
-| 网格安装 | `./run.sh --project mesh --file install-mesh` |
-| Istio HA - 自动伸缩 | `./run.sh --project mesh --file configuring-istio-ha-by-using-autoscaling` |
-| Istio HA - 固定副本数 | `./run.sh --project mesh --file configuring-istio-ha-by-using-replica-count` |
-| 指标与服务网格集成 | `./run.sh --project mesh --file metrics-and-mesh` |
-| Kiali 安装与配置 | `./run.sh --project mesh --file kiali` |
-| Bookinfo 应用部署 | `./run.sh --project mesh --file deploying-the-bookinfo-application` |
-| Kiali 卸载 | `./run.sh --project mesh --file uninstalling-alauda-build-of-kiali` |
-| 网格卸载 | `./run.sh --project mesh --file uninstalling-alauda-service-mesh` |
-| InPlace 更新策略 | `./run.sh --project mesh --file update-inplace` |
-| Ambient Mode 安装 | `./run.sh --project mesh --file installing-ambient-mode` |
-| Ambient Bookinfo 部署 | `./run.sh --project mesh --file deploying-ambient-bookinfo` |
-| Waypoint 代理部署 | `./run.sh --project mesh --file waypoint-proxies` |
-| Ambient L7 特性 | `./run.sh --project mesh --file ambient-l7-features` |
-| Ambient Gateway API | `./run.sh --project mesh --file exposing-a-service-via-k8s-gateway-api-in-ambient-mode` |
-| Ambient Egress Gateway | `./run.sh --project mesh --file routing-egress-traffic-via-k8s-gateway-api-in-ambient-mode` |
-| Ambient 模式网格卸载 | `./run.sh --project mesh --file uninstalling-alauda-service-mesh-in-ambient-mode` |
-| 多集群 - 配置概述（CA 证书） | `./run.sh --project mesh --file configuration-overview` |
-| 多集群 - 多主多网络 | `./run.sh --project mesh --file install-multi-primary-multi-network` |
-| 多集群 - 主-远多网络 | `./run.sh --project mesh --file install-primary-remote-multi-network` |
+| 文档名称                     | 执行命令                                                                                    |
+| ---------------------------- | ------------------------------------------------------------------------------------------- |
+| 双栈网格安装                 | `./run.sh --project mesh --file install-mesh-in-dual-stack-mode`                            |
+| 网格安装                     | `./run.sh --project mesh --file install-mesh`                                               |
+| Istio HA - 自动伸缩          | `./run.sh --project mesh --file configuring-istio-ha-by-using-autoscaling`                  |
+| Istio HA - 固定副本数        | `./run.sh --project mesh --file configuring-istio-ha-by-using-replica-count`                |
+| 指标与服务网格集成           | `./run.sh --project mesh --file metrics-and-mesh`                                           |
+| Kiali 安装与配置             | `./run.sh --project mesh --file kiali`                                                      |
+| Bookinfo 应用部署            | `./run.sh --project mesh --file deploying-the-bookinfo-application`                         |
+| Kiali 卸载                   | `./run.sh --project mesh --file uninstalling-alauda-build-of-kiali`                         |
+| 网格卸载                     | `./run.sh --project mesh --file uninstalling-alauda-service-mesh`                           |
+| InPlace 更新策略             | `./run.sh --project mesh --file update-inplace`                                             |
+| Ambient Mode 安装            | `./run.sh --project mesh --file installing-ambient-mode`                                    |
+| Ambient Bookinfo 部署        | `./run.sh --project mesh --file deploying-ambient-bookinfo`                                 |
+| Waypoint 代理部署            | `./run.sh --project mesh --file waypoint-proxies`                                           |
+| Ambient L7 特性              | `./run.sh --project mesh --file ambient-l7-features`                                        |
+| Ambient Gateway API          | `./run.sh --project mesh --file exposing-a-service-via-k8s-gateway-api-in-ambient-mode`     |
+| Ambient Egress Gateway       | `./run.sh --project mesh --file routing-egress-traffic-via-k8s-gateway-api-in-ambient-mode` |
+| Ambient 模式网格卸载         | `./run.sh --project mesh --file uninstalling-alauda-service-mesh-in-ambient-mode`           |
+| 多集群 - 配置概述（CA 证书） | `./run.sh --project mesh --file configuration-overview`                                     |
+| 多集群 - 多主多网络          | `./run.sh --project mesh --file install-multi-primary-multi-network`                        |
+| 多集群 - 主-远多网络         | `./run.sh --project mesh --file install-primary-remote-multi-network`                       |
 
 > 多集群测试需 `EAST_CLUSTER_NAME` / `WEST_CLUSTER_NAME` 双集群环境，并需先用双集群 `--init-only` 与 `configuration-overview` 完成 cacerts 下发。
 
 ### otel（opentelemetry-docs）
 
-| 文档名称 | 执行命令 |
-| -------------------------------- | ----------------------------------------------------- |
+| 文档名称                       | 执行命令                                               |
+| ------------------------------ | ------------------------------------------------------ |
 | OpenTelemetry v2 Operator 安装 | `./run.sh --project otel --file install-opentelemetry` |
 
 > 覆盖 `install-opentelemetry.mdx` 的「Installing the Alauda Build of OpenTelemetry v2 Operator」章节。
 
 ### tracing（distributed-tracing-docs）
 
-| 文档名称 | 执行命令 |
-| ------------------ | ------------------------------------------------------------------- |
-| 分布式调用链安装 | `./run.sh --project tracing --file installing-distributed-tracing` |
+| 文档名称         | 执行命令                                                             |
+| ---------------- | -------------------------------------------------------------------- |
+| 分布式调用链安装 | `./run.sh --project tracing --file installing-distributed-tracing`   |
 | 分布式调用链卸载 | `./run.sh --project tracing --file uninstalling-distributed-tracing` |
 
 > 需设置 `TRACING_ES_*`，否则以 SKIPPED 退出。安装测试会自动安装前置依赖 OpenTelemetry v2 Operator（其代码块位于 `opentelemetry-docs`）。
@@ -243,11 +244,11 @@ cd docs-runme-tests
 
 每个 `projects/<name>/project.sh` 实现三个标准钩子，由引擎调用：
 
-| 钩子 | 调用时机 | 职责 |
-| ----------------- | ----------------------------- | ----------------------- |
-| `project_check_env` | 每次运行开头 | 校验项目专属环境变量 |
+| 钩子                      | 调用时机                          | 职责                                          |
+| ------------------------- | --------------------------------- | --------------------------------------------- |
+| `project_check_env`       | 每次运行开头                      | 校验项目专属环境变量                          |
 | `project_init <clusters>` | 仅 `--init-only` / `--force-init` | kubeconfig + 插件包 + operator 等重量级初始化 |
-| `project_prepare` | 每次运行 | kubeconfig 加载等轻量级准备 |
+| `project_prepare`         | 每次运行                          | kubeconfig 加载等轻量级准备                   |
 
 ### 3. 测试脚本结构
 
@@ -269,13 +270,13 @@ source "$FRAMEWORK_ROOT/framework/verify.sh"
 
 ## 故障排除
 
-| 问题 | 排查 |
-| ------------------------------- | ------------------------------------------------------------------ |
-| 找不到 runme / violet | 执行 `./run.sh --project <项目> --init-only` 重新安装工具 |
+| 问题                      | 排查                                                                       |
+| ------------------------- | -------------------------------------------------------------------------- |
+| 找不到 runme / violet     | 执行 `./run.sh --project <项目> --init-only` 重新安装工具                  |
 | kubeconfig 获取失败 / 401 | 检查 `ACP_API_TOKEN` 是否过期、`PLATFORM_ADDRESS` 是否可达、集群名是否正确 |
-| 未找到测试脚本 | 确认 `repos.conf` 中对应仓库存在；脚本名为 `runme-test_<file>.sh` |
-| 测试脚本在多个项目重名 | 用 `--project` 显式指定 |
-| 测试执行失败 | `cd` 到对应文档仓库手动执行失败的 `runme run <block>` 调试 |
+| 未找到测试脚本            | 确认 `repos.conf` 中对应仓库存在；脚本名为 `runme-test_<file>.sh`          |
+| 测试脚本在多个项目重名    | 用 `--project` 显式指定                                                    |
+| 测试执行失败              | `cd` 到对应文档仓库手动执行失败的 `runme run <block>` 调试                 |
 
 ## TODO
 

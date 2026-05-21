@@ -55,9 +55,11 @@ else
 fi
 
 # ------------------------------------------------------------------
-# Case 3: 单网格安装与应用测试
+# Case 3: 单网格安装与应用测试（含调用链集成）
+# 顺序：先装调用链再装 kiali；清理逆序（先卸 kiali、再卸调用链）。
+# 卸载调用链使用 --skip-operator-and-crds 保留 OTel Operator 与 CRDs 供后续 case 复用。
 # ------------------------------------------------------------------
-log_header "Case 3: 单网格安装与应用测试 (Single Mesh & App)"
+log_header "Case 3: 单网格安装与应用测试 (Single Mesh & App + Tracing)"
 
 # 使用子 shell ( cmds ) 将多个命令组合为一个原子 case
 # 任何一个命令失败都会导致整个 block 返回非 0 状态
@@ -67,9 +69,14 @@ if (
     ./run.sh --project mesh --file install-mesh
     ./run.sh --project mesh --file metrics-and-mesh
     ./run.sh --project mesh --file deploying-the-bookinfo-application --no-cleanup
+    # 调用链集成：先装调用链平台，再配置网格上报，再装含调用链集成的 kiali
+    ./run.sh --project tracing --file installing-distributed-tracing
+    ./run.sh --project mesh --file config-with-service-mesh --no-cleanup
     ./run.sh --project mesh --file kiali
-    # 清理
+    # 清理（逆序）：先卸 kiali，再卸网格调用链配置，再卸调用链平台
     ./run.sh --project mesh --file uninstalling-alauda-build-of-kiali
+    ./run.sh --project mesh --file config-with-service-mesh --cleanup-only
+    ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds
     ./run.sh --project mesh --file deploying-the-bookinfo-application --cleanup-only
     ./run.sh --project mesh --file uninstalling-alauda-service-mesh
 ); then

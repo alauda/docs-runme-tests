@@ -169,6 +169,19 @@ _wait_for_deployment() {
     return 0
 }
 
+# Wait for rollout of named daemonset
+# usage: _wait_for_daemonset <namespace> <daemonset name> <optional: context>
+_wait_for_daemonset() {
+    local namespace="$1"
+    local name="$2"
+    local context="${3:-}"
+    if ! kubectl --context="$context" -n "$namespace" rollout status daemonset "$name" --timeout 5m; then
+        echo "Failed rollout of daemonset $name in namespace $namespace"
+        return 1
+    fi
+    return 0
+}
+
 # 等待 Service 的 LoadBalancer ingress (IP 或 hostname) 就绪
 # 用法: _wait_for_ingress_lb <namespace> <service> [context] [timeout]
 # 说明:

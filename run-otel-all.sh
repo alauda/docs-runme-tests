@@ -18,14 +18,17 @@ trap print_test_summary EXIT
 log_header "开始执行 otel 项目所有测试任务"
 
 # ------------------------------------------------------------------
-# Case 1: Alauda Build of OpenTelemetry v2 Operator 安装测试
-# 覆盖 install-opentelemetry.mdx 的 Operator 安装章节
+# Case 1: OpenTelemetry v2 安装与卸载测试
+# 安装覆盖 install-opentelemetry.mdx 全部 CLI 章节（Operator + Collector）
+# 卸载覆盖 uninstalling-opentelemetry.mdx 全部 CLI 章节（Instrumentation/Collector/Subscription/CRDs）
+# 注：跨 suite 复用 OTel Operator 的场景，调用方可加 --skip-operator-and-crds 保留 Operator 与 CRDs。
 # ------------------------------------------------------------------
-log_header "Case 1: OpenTelemetry v2 Operator 安装测试"
+log_header "Case 1: OpenTelemetry v2 安装与卸载测试"
 
 if (
     set -e
     ./run.sh --project otel --file install-opentelemetry --force-init
+    ./run.sh --project otel --file uninstalling-opentelemetry
 ); then
     record_test_result 0
 else

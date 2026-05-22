@@ -207,6 +207,7 @@ cd docs-runme-tests
 | Kiali 卸载                   | `./run.sh --project mesh --file uninstalling-alauda-build-of-kiali`                         |
 | 网格卸载                     | `./run.sh --project mesh --file uninstalling-alauda-service-mesh`                           |
 | InPlace 更新策略             | `./run.sh --project mesh --file update-inplace`                                             |
+| Istio CNI 升级               | `./run.sh --project mesh --file istio-cni`                                                  |
 | Ambient Mode 安装            | `./run.sh --project mesh --file installing-ambient-mode`                                    |
 | Ambient Bookinfo 部署        | `./run.sh --project mesh --file deploying-ambient-bookinfo`                                 |
 | Waypoint 代理部署            | `./run.sh --project mesh --file waypoint-proxies`                                           |

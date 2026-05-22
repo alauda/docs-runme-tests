@@ -108,13 +108,15 @@ else
 fi
 
 # ------------------------------------------------------------------
-# Case 5: InPlace 更新策略测试
+# Case 5: InPlace 更新策略 + Istio CNI 升级测试
+# 顺序：update-inplace --no-cleanup 铺垫环境 → istio-cni 升级 CNI 版本 → update-inplace --cleanup-only 统一清理
 # ------------------------------------------------------------------
-log_header "Case 5: InPlace 更新策略测试 (Update InPlace)"
+log_header "Case 5: InPlace 更新策略 + Istio CNI 升级测试 (Update InPlace + Istio CNI)"
 
 if (
     set -e
     ./run.sh --project mesh --file update-inplace --no-cleanup --force-init
+    ./run.sh --project mesh --file istio-cni
     ./run.sh --project mesh --file update-inplace --cleanup-only
 ); then
     record_test_result 0

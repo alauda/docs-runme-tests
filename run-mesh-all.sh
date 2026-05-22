@@ -70,7 +70,8 @@ if (
     ./run.sh --project mesh --file metrics-and-mesh
     ./run.sh --project mesh --file deploying-the-bookinfo-application --no-cleanup
     # 调用链集成：先装调用链平台，再配置网格上报，再装含调用链集成的 kiali
-    ./run.sh --project tracing --file installing-distributed-tracing
+    # mesh 场景下由 bookinfo 业务流量产生 trace，无需 telemetrygen 端到端验证
+    ./run.sh --project tracing --file installing-distributed-tracing --skip-telemetrygen
     ./run.sh --project mesh --file config-with-service-mesh --no-cleanup
     ./run.sh --project mesh --file kiali
     # 清理（逆序）：先卸 kiali，再卸网格调用链配置，再卸调用链平台

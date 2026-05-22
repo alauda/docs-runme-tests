@@ -32,6 +32,7 @@ CLEANUP_ONLY=false
 INIT_ONLY=false
 FORCE_INIT=false
 SKIP_OPERATOR_AND_CRDS=false
+SKIP_TELEMETRYGEN=false
 
 # 已注册（且仓库目录存在）的项目名列表（load_repos_conf 填充）
 # 注：用索引数组而非关联数组（declare -A），以兼容 macOS 自带的 Bash 3.2。
@@ -65,6 +66,10 @@ usage() {
   --force-init          强制执行环境初始化（用于 --file 模式）
   --skip-operator-and-crds
                         轻量清理开关，导出给测试脚本读取
+  --skip-telemetrygen   跳过 telemetrygen 端到端 trace 测试（仅
+                        installing-distributed-tracing 读取；用于
+                        mesh 等仅需安装调用链组件而无需 telemetrygen
+                        验证的编排场景）
   -h, --help            显示此帮助信息
 
 示例:
@@ -129,6 +134,10 @@ parse_args() {
                 ;;
             --skip-operator-and-crds)
                 SKIP_OPERATOR_AND_CRDS=true
+                shift
+                ;;
+            --skip-telemetrygen)
+                SKIP_TELEMETRYGEN=true
                 shift
                 ;;
             -h|--help)
@@ -392,7 +401,7 @@ main() {
         log_error "项目 '$PROJECT' 未在 repos.conf 注册，或其仓库目录不存在"
         exit 1
     fi
-    export DOC_REPO_ROOT PROJECT SKIP_OPERATOR_AND_CRDS
+    export DOC_REPO_ROOT PROJECT SKIP_OPERATOR_AND_CRDS SKIP_TELEMETRYGEN
 
     # ── 加载项目钩子 ──
     local project_sh="$PROJECTS_DIR/$PROJECT/project.sh"

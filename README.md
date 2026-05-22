@@ -201,6 +201,7 @@ cd docs-runme-tests
 | Istio HA - 自动伸缩          | `./run.sh --project mesh --file configuring-istio-ha-by-using-autoscaling`                  |
 | Istio HA - 固定副本数        | `./run.sh --project mesh --file configuring-istio-ha-by-using-replica-count`                |
 | 指标与服务网格集成           | `./run.sh --project mesh --file metrics-and-mesh`                                           |
+| 网格调用链集成配置           | `./run.sh --project mesh --file config-with-service-mesh`                                   |
 | Kiali 安装与配置             | `./run.sh --project mesh --file kiali`                                                      |
 | Bookinfo 应用部署            | `./run.sh --project mesh --file deploying-the-bookinfo-application`                         |
 | Kiali 卸载                   | `./run.sh --project mesh --file uninstalling-alauda-build-of-kiali`                         |

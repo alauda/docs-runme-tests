@@ -223,11 +223,12 @@ cd docs-runme-tests
 
 ### otel（opentelemetry-docs）
 
-| 文档名称                       | 执行命令                                               |
-| ------------------------------ | ------------------------------------------------------ |
-| OpenTelemetry v2 Operator 安装 | `./run.sh --project otel --file install-opentelemetry` |
+| 文档名称              | 执行命令                                                                                |
+| --------------------- | --------------------------------------------------------------------------------------- |
+| OpenTelemetry v2 安装 | `./run.sh --project otel --file install-opentelemetry`                                  |
+| OpenTelemetry v2 卸载 | `./run.sh --project otel --file uninstalling-opentelemetry [--skip-operator-and-crds]` |
 
-> 覆盖 `install-opentelemetry.mdx` 的「Installing the Alauda Build of OpenTelemetry v2 Operator」章节。
+> 安装覆盖 `install-opentelemetry.mdx` 的「Installing the Operator」与「Deploying the OpenTelemetry Collector」CLI 章节；卸载覆盖 `uninstalling-opentelemetry.mdx` 的「Uninstalling via the CLI」与「Deleting custom resource definitions」章节。`--skip-operator-and-crds` 保留 Operator subscription 与 CRDs，便于跨 suite 场景复用。
 
 ### tracing（distributed-tracing-docs）
 

@@ -27,9 +27,12 @@ project_init() {
     fi
 
     local clusters=("$@")
-    log_info "otel 环境初始化（集群: ${clusters[*]}）..."
+    local global_cluster="${GLOBAL_CLUSTER_NAME:-global}"
+    log_info "otel 环境初始化（业务集群: ${clusters[*]} + Global 集群: ${global_cluster}）..."
 
-    ensure_kubeconfig "${clusters[@]}" || return 1
+    # 末尾追加 Global 集群：与 mesh project_init 保持一致，避免跨项目交替时
+    # kubeconfig fingerprint 失配触发重拉。
+    ensure_kubeconfig "${clusters[@]}" "$global_cluster" || return 1
 
     # 下载并上传 OTel Operator 插件包（install_operator 依赖其 PackageManifest 存在）
     download_package "$PKG_OPENTELEMETRY_OPERATOR2_URL" || return 1

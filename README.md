@@ -208,6 +208,8 @@ cd docs-runme-tests
 | 网格卸载                     | `./run.sh --project mesh --file uninstalling-alauda-service-mesh`                           |
 | InPlace 更新策略             | `./run.sh --project mesh --file update-inplace`                                             |
 | Istio CNI 升级               | `./run.sh --project mesh --file istio-cni`                                                  |
+| RevisionBased 更新策略       | `./run.sh --project mesh --file update-revisionbased`                                       |
+| RevisionBased + 版本标签     | `./run.sh --project mesh --file update-revisionbased-and-istiorevisiontag`                  |
 | Ambient Mode 安装            | `./run.sh --project mesh --file installing-ambient-mode`                                    |
 | Ambient Bookinfo 部署        | `./run.sh --project mesh --file deploying-ambient-bookinfo`                                 |
 | Waypoint 代理部署            | `./run.sh --project mesh --file waypoint-proxies`                                           |

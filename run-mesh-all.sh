@@ -108,27 +108,9 @@ else
 fi
 
 # ------------------------------------------------------------------
-# Case 5: InPlace 更新策略 + Istio CNI 升级测试
-# 顺序：update-inplace --no-cleanup 铺垫环境 → istio-cni 升级 CNI 版本 → update-inplace --cleanup-only 统一清理
+# Case 5: Ambient Mode 安装测试
 # ------------------------------------------------------------------
-log_header "Case 5: InPlace 更新策略 + Istio CNI 升级测试 (Update InPlace + Istio CNI)"
-
-if (
-    set -e
-    ./run.sh --project mesh --file update-inplace --no-cleanup --force-init
-    ./run.sh --project mesh --file istio-cni
-    ./run.sh --project mesh --file update-inplace --cleanup-only
-); then
-    record_test_result 0
-else
-    record_test_result 1
-    exit 1
-fi
-
-# ------------------------------------------------------------------
-# Case 6: Ambient Mode 安装测试
-# ------------------------------------------------------------------
-log_header "Case 6: Ambient Mode 安装测试"
+log_header "Case 5: Ambient Mode 安装测试"
 
 if (
     set -e
@@ -157,13 +139,13 @@ else
 fi
 
 # ------------------------------------------------------------------
-# Case 7: 多集群 - 多主多网络拓扑 (Multi-Primary Multi-Network)
+# Case 6: 多集群 - 多主多网络拓扑 (Multi-Primary Multi-Network)
 # 注：会切换到双集群 kubeconfig，必须放在所有单集群 case 之后
 # ------------------------------------------------------------------
 if [ -z "${EAST_CLUSTER_NAME:-}" ] || [ -z "${WEST_CLUSTER_NAME:-}" ]; then
-    log_header "Case 7/8: 跳过多集群测试 (未设置 EAST_CLUSTER_NAME / WEST_CLUSTER_NAME)"
+    log_header "Case 6/7: 跳过多集群测试 (未设置 EAST_CLUSTER_NAME / WEST_CLUSTER_NAME)"
 else
-    log_header "Case 7: 多集群 - 多主多网络拓扑 (Multi-Primary Multi-Network)"
+    log_header "Case 6: 多集群 - 多主多网络拓扑 (Multi-Primary Multi-Network)"
 
     if (
         set -e
@@ -182,9 +164,9 @@ else
     fi
 
     # ------------------------------------------------------------------
-    # Case 8: 多集群 - 主-远多网络拓扑 (Primary-Remote Multi-Network)
+    # Case 7: 多集群 - 主-远多网络拓扑 (Primary-Remote Multi-Network)
     # ------------------------------------------------------------------
-    log_header "Case 8: 多集群 - 主-远多网络拓扑 (Primary-Remote Multi-Network)"
+    log_header "Case 7: 多集群 - 主-远多网络拓扑 (Primary-Remote Multi-Network)"
 
     if (
         set -e
@@ -201,6 +183,60 @@ else
         record_test_result 1
         exit 1
     fi
+fi
+
+# ------------------------------------------------------------------
+# Case 8: InPlace 更新策略 + Istio CNI 升级测试
+# 顺序：update-inplace --no-cleanup 铺垫环境 → istio-cni 升级 CNI 版本 → update-inplace --cleanup-only 统一清理
+# ------------------------------------------------------------------
+log_header "Case 8: InPlace 更新策略 + Istio CNI 升级测试 (Update InPlace + Istio CNI)"
+
+if (
+    set -e
+    ./run.sh --project mesh --file update-inplace --no-cleanup --force-init
+    ./run.sh --project mesh --file istio-cni
+    ./run.sh --project mesh --file update-inplace --cleanup-only
+); then
+    record_test_result 0
+else
+    record_test_result 1
+    exit 1
+fi
+
+# ------------------------------------------------------------------
+# Case 9: RevisionBased 更新策略测试
+# 顺序：update-revisionbased --no-cleanup 安装+升级验证 → --cleanup-only 统一清理
+# ------------------------------------------------------------------
+log_header "Case 9: RevisionBased 更新策略测试 (Update RevisionBased)"
+
+if (
+    set -e
+    ./run.sh --project mesh --file update-revisionbased --no-cleanup --force-init
+    ./run.sh --project mesh --file istio-cni
+    ./run.sh --project mesh --file update-revisionbased --cleanup-only
+); then
+    record_test_result 0
+else
+    record_test_result 1
+    exit 1
+fi
+
+# ------------------------------------------------------------------
+# Case 10: RevisionBased + IstioRevisionTag 更新策略测试
+# 顺序：update-revisionbased-and-istiorevisiontag --no-cleanup 安装+升级验证 → --cleanup-only 统一清理
+# ------------------------------------------------------------------
+log_header "Case 10: RevisionBased + IstioRevisionTag 更新策略测试 (Update RevisionBased + IstioRevisionTag)"
+
+if (
+    set -e
+    ./run.sh --project mesh --file update-revisionbased-and-istiorevisiontag --no-cleanup --force-init
+    ./run.sh --project mesh --file istio-cni
+    ./run.sh --project mesh --file update-revisionbased-and-istiorevisiontag --cleanup-only
+); then
+    record_test_result 0
+else
+    record_test_result 1
+    exit 1
 fi
 
 log_header "mesh 项目所有测试任务执行完成！"

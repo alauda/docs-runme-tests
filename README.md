@@ -229,8 +229,11 @@ cd docs-runme-tests
 | --------------------- | --------------------------------------------------------------------------------------- |
 | OpenTelemetry v2 安装 | `./run.sh --project otel --file install-opentelemetry`                                  |
 | OpenTelemetry v2 卸载 | `./run.sh --project otel --file uninstalling-opentelemetry [--skip-operator-and-crds]` |
+| Java 自动注入示例     | `./run.sh --project otel --file java-instrumentation`                                  |
 
 > 安装覆盖 `install-opentelemetry.mdx` 的「Installing the Operator」与「Deploying the OpenTelemetry Collector」CLI 章节；卸载覆盖 `uninstalling-opentelemetry.mdx` 的「Uninstalling via the CLI」与「Deleting custom resource definitions」章节。`--skip-operator-and-crds` 保留 Operator subscription 与 CRDs，便于跨 suite 场景复用。
+>
+> Java 自动注入示例（`java-instrumentation`）需 `USE_MESH_V2_TEST_SUITE_PLUGIN=true`：部署 / 卸载 `mesh-v2-test-suite` 集群插件预置的 Java OTel demo（namespace `otelv2-java-demo`，含 consumer/provider/asm-client 工作负载与 Instrumentation），并校验 Operator 已自动注入 Java agent。该脚本含 cleanup，编排中以 `--no-cleanup` 安装、`--cleanup-only` 卸载。原文档 `java-instrumentation.mdx` 示例不可运行，故不加 `{name=}` 标注。
 
 ### tracing（distributed-tracing-docs）
 

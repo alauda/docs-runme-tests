@@ -36,6 +36,32 @@ else
     exit 1
 fi
 
+# ------------------------------------------------------------------
+# Case 2: Java 自动注入示例服务（mesh-v2-test-suite 插件）+ 分布式调用链
+# 前置：USE_MESH_V2_TEST_SUITE_PLUGIN=true（已装 mesh-v2-test-suite 集群插件，提供
+#       cpaas-system/mesh-v2-test-suite-java-otel-demo ConfigMap 与配套镜像）；未设置时
+#       java-instrumentation 测试以 SKIPPED 退出，不阻断编排。
+# 顺序：先装分布式调用链（提供 jaeger-system 的 OTel Collector 作为 javaagent 导出端点）
+#       → 部署 Java OTel demo → 卸载 Java OTel demo → 卸载分布式调用链。
+# 说明：Case 1 已 --force-init 上传 OTel Operator 插件包（卸载不清理已上传包），故此处
+#       调用链安装无需 --force-init，其步骤 1 会自行重装 OTel Operator 与 CRDs；
+#       调用链卸载用 --skip-operator-and-crds 保留 Operator 与 CRDs。
+# ------------------------------------------------------------------
+log_header "Case 2: Java 自动注入示例服务 + 分布式调用链 (Java Instrumentation Demo)"
+
+if (
+    set -e
+    ./run.sh --project tracing --file installing-distributed-tracing --skip-telemetrygen
+    ./run.sh --project otel --file java-instrumentation --no-cleanup
+    ./run.sh --project otel --file java-instrumentation --cleanup-only
+    ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds
+); then
+    record_test_result 0
+else
+    record_test_result 1
+    exit 1
+fi
+
 log_header "otel 项目所有测试任务执行完成！"
 
 # 注意：print_test_summary 已通过 trap 注册，脚本退出时会自动执行，此处无需再次调用

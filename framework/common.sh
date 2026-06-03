@@ -531,6 +531,28 @@ _cluster_plugin_resolve_version() {
     return 0
 }
 
+# 等待集群插件的 ModuleConfig 被创建（上架 violet push 成功后，平台异步创建
+# ModulePlugin / ModuleConfig，需轮询等待 ModuleConfig 出现后才能解析版本并安装）
+# 用法: _wait_for_moduleconfig <module_name> [max_retries] [interval]
+# NOTE: 依赖调用方已将 KUBECONFIG 指向 Global 集群
+_wait_for_moduleconfig() {
+    local module_name="$1"
+    local max_retries="${2:-30}"
+    local interval="${3:-10}"
+    local attempt count
+
+    for ((attempt=1; attempt<=max_retries; attempt++)); do
+        count=$(kubectl get moduleconfigs -l "cpaas.io/module-name=${module_name}" \
+            -o name 2>/dev/null | wc -l | tr -d ' ')
+        if [ "$count" -gt 0 ]; then
+            return 0
+        fi
+        log_warn "等待 ModuleConfig 创建: module-name=$module_name (${attempt}/${max_retries})"
+        [ "$attempt" -lt "$max_retries" ] && sleep "$interval"
+    done
+    return 1
+}
+
 # 等待集群插件的 ModuleInfo 进入 Running（按 module-name + cluster-name label 定位）
 # 用法: _wait_for_moduleinfo_running <module_name> <target_cluster> [max_retries] [interval]
 # NOTE: 依赖调用方已将 KUBECONFIG 指向 Global 集群；状态字段为 .status.phase
@@ -635,10 +657,12 @@ install_cluster_plugin() {
     if [ -n "$existing_name" ]; then
         log_info "检测到已存在的 ModuleInfo: $existing_name (phase=${existing_phase:-<none>})，复用并等待就绪"
     else
-        # 2. 等待 ModulePlugin 就绪并解析版本
-        log_info "步骤 2: 等待 ModulePlugin $module_name 就绪"
-        if ! retry_command "kubectl get moduleplugin '$module_name' >/dev/null 2>&1" 20 5; then
-            log_error "未找到 ModulePlugin: $module_name (上架可能未完成)"
+        # 2. 等待 ModuleConfig 就绪并解析版本
+        #    上架成功后平台需异步创建 ModulePlugin / ModuleConfig（ModuleConfig 可能滞后于
+        #    ModulePlugin），故轮询等待 ModuleConfig 出现，它是版本解析与后续安装的前置。
+        log_info "步骤 2: 等待 ModuleConfig (module-name=$module_name) 就绪"
+        if ! _wait_for_moduleconfig "$module_name"; then
+            log_error "等待 ModuleConfig 超时: module-name=$module_name (上架后平台未在预期时间内创建 ModuleConfig)"
             return 1
         fi
         local version

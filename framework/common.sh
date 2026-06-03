@@ -562,7 +562,8 @@ _wait_for_moduleinfo_running() {
 #   package_url         - 上架并安装的插件包 URL
 #   prereq_package_url  - 可选，仅上架不安装的前置插件包（如 metallb 需要 metallb-operator）
 # 说明:
-#   - 所有操作（violet push 上架、创建 ModuleInfo、查询）均针对 Global 集群 API
+#   - 集群插件查询、创建 ModuleInfo、主插件包上架均针对 Global 集群（ModulePlugin/ModuleConfig/ModuleInfo 仅存于 Global）
+#   - 前置 operator 包（prereq_package_url）上架到目标业务集群（与其他 operator 一致）
 #   - 函数内 local export KUBECONFIG 指向 Global 集群独立 kubeconfig，返回后自动还原，
 #     不污染调用方 / merged.yaml 的 current-context
 #   - ModuleInfo 按默认配置安装：不带 .spec.config、不带 affinity（见 cluster_plugin.mdx 3.1）
@@ -598,7 +599,7 @@ install_cluster_plugin() {
 
     local selector="cpaas.io/module-name=${module_name},cpaas.io/cluster-name=${target_cluster}"
 
-    # 0. 幂等检查：已存在的 ModuleInfo
+    # 0. 幂等检查：已 Running 直接跳过
     local existing_phase existing_name
     existing_phase=$(kubectl get moduleinfo -l "$selector" \
         -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "")
@@ -609,27 +610,31 @@ install_cluster_plugin() {
     existing_name=$(kubectl get moduleinfo -l "$selector" \
         -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
 
-    if [ -n "$existing_name" ]; then
-        log_info "检测到已存在的 ModuleInfo: $existing_name (phase=${existing_phase:-<none>})，跳过上架与创建，直接等待就绪"
+    # 1. 上架插件包（每次未就绪时都执行，确保依赖就位；violet 对已存在的包/镜像会自动跳过）。
+    #    主插件包到 Global 集群，前置 operator 包到目标业务集群。
+    #    即使 ModuleInfo 已存在但未就绪（如卡在 Processing），也重新确保前置 operator 已上架，
+    #    使此前因依赖缺失而卡住的安装能够自愈。
+    log_info "步骤 1: 上架插件包"
+    local pkg
+    for pkg in "$package_url" "${prereq_urls[@]}"; do
+        download_package "$pkg" || return 1
+    done
+    # 主包：若对应 ModuleConfig 已存在则跳过 push
+    if kubectl get moduleconfigs -l "cpaas.io/module-name=${module_name}" -o name 2>/dev/null | grep -q .; then
+        log_info "插件 $module_name 已上架（ModuleConfig 存在），跳过 push"
     else
-        # 1. 上架插件包（主包 + 前置包，仅上架不安装）到 Global 集群
-        log_info "步骤 1: 上架插件包到 Global 集群"
-        local pkg
-        for pkg in "$package_url" "${prereq_urls[@]}"; do
-            download_package "$pkg" || return 1
-        done
-        # 主包：若对应 ModuleConfig 已存在则跳过 push（幂等）
-        if kubectl get moduleconfigs -l "cpaas.io/module-name=${module_name}" -o name 2>/dev/null | grep -q .; then
-            log_info "插件 $module_name 已上架（ModuleConfig 存在），跳过 push"
-        else
-            upload_package "$global_cluster" "$package_url" || return 1
-        fi
-        # 前置包：仅上架（不创建 ModuleInfo）
-        for pkg in "${prereq_urls[@]}"; do
-            log_info "上架前置插件包（仅上架不安装）: $(basename "$pkg")"
-            upload_package "$global_cluster" "$pkg" || return 1
-        done
+        upload_package "$global_cluster" "$package_url" || return 1
+    fi
+    # 前置包：上架到目标业务集群（与其他 operator 一致，仅上架不安装、不创建 ModuleInfo）
+    for pkg in "${prereq_urls[@]}"; do
+        log_info "上架前置插件包到业务集群 $target_cluster (仅上架不安装): $(basename "$pkg")"
+        upload_package "$target_cluster" "$pkg" || return 1
+    done
 
+    # 2 & 3. 仅当不存在 ModuleInfo 时才解析版本并创建；已存在则复用并等待其就绪（避免重复创建）
+    if [ -n "$existing_name" ]; then
+        log_info "检测到已存在的 ModuleInfo: $existing_name (phase=${existing_phase:-<none>})，复用并等待就绪"
+    else
         # 2. 等待 ModulePlugin 就绪并解析版本
         log_info "步骤 2: 等待 ModulePlugin $module_name 就绪"
         if ! retry_command "kubectl get moduleplugin '$module_name' >/dev/null 2>&1" 20 5; then
@@ -657,7 +662,7 @@ install_cluster_plugin() {
     fi
 
     log_success "=========================================="
-    log_success "集群插件 $module_name 安装完成（目标集群 $target_cluster）"
+    log_success "集群插件 $module_name 安装完成 (目标集群 $target_cluster)"
     log_success "=========================================="
     return 0
 }

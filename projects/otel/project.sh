@@ -34,7 +34,7 @@ project_init() {
 
     local clusters=("$@")
     local global_cluster="${GLOBAL_CLUSTER_NAME:-global}"
-    log_info "otel 环境初始化（业务集群: ${clusters[*]} + Global 集群: ${global_cluster}）..."
+    log_info "otel 环境初始化 (业务集群: ${clusters[*]} + Global 集群: ${global_cluster})..."
 
     # 末尾追加 Global 集群：与 mesh project_init 保持一致，避免跨项目交替时
     # kubeconfig fingerprint 失配触发重拉。

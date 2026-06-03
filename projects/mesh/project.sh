@@ -302,7 +302,7 @@ project_init() {
 
     local clusters=("$@")
     local global_cluster="${GLOBAL_CLUSTER_NAME:-global}"
-    log_info "mesh 环境初始化（业务集群: ${clusters[*]} + Global 集群: ${global_cluster}）..."
+    log_info "mesh 环境初始化 (业务集群: ${clusters[*]} + Global 集群: ${global_cluster})..."
 
     install_istioctl
     # ensure_kubeconfig: fingerprint 一致则复用 merged.yaml，变更时才重新拉取。
@@ -330,7 +330,7 @@ project_prepare() {
         log_info "PLATFORM_CA 未设置，从 Global 集群自动获取..."
         PLATFORM_CA=$(fetch_platform_ca) || return 1
         export PLATFORM_CA
-        log_success "PLATFORM_CA 已从 Global 集群获取（长度: ${#PLATFORM_CA}）"
+        log_success "PLATFORM_CA 已从 Global 集群获取 (长度: ${#PLATFORM_CA})"
     fi
     return 0
 }

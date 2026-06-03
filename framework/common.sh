@@ -460,3 +460,204 @@ install_operator() {
     log_success "=========================================="
     return 0
 }
+
+# ==============================================================================
+# 集群插件（ACP Cluster Plugin）通用安装
+#
+# 与 install_operator 平级的公共函数。集群插件不同于 OLM Operator：
+#   - 上架：violet push 到 Global 集群，平台自动创建 ModulePlugin / ModuleConfig
+#   - 安装：在 Global 集群创建 ModuleInfo，由 cpaas.io/cluster-name 决定落地集群
+# 详见 acp-docs/docs/en/extend/cluster_plugin.mdx。
+# ==============================================================================
+
+# 内联渲染 ModuleInfo（默认配置安装：不带 .spec.config、不带 affinity）
+# 用法: _render_moduleinfo <module_name> <version> <target_cluster>
+# 说明:
+#   - 临时名 <target_cluster>-<module_name>，平台创建后会按内容重命名为 <cluster>-<hash>
+#   - 按 cluster_plugin.mdx 3.1：即使 config 为空也不写 config 字段
+_render_moduleinfo() {
+    local module_name="$1" version="$2" target_cluster="$3"
+    cat <<EOF
+apiVersion: cluster.alauda.io/v1alpha1
+kind: ModuleInfo
+metadata:
+  labels:
+    cpaas.io/cluster-name: ${target_cluster}
+    cpaas.io/module-name: ${module_name}
+    cpaas.io/module-type: plugin
+  name: ${target_cluster}-${module_name}
+spec:
+  version: ${version}
+EOF
+}
+
+# 解析集群插件目标版本（从 Global 集群已发布的 ModuleConfig 读取）
+# 用法: version=$(_cluster_plugin_resolve_version <module_name> <package_url>)
+# 策略: 优先用包名解析出的 vX.Y.Z 去匹配 ModuleConfig，否则取最高版本（sort -V）
+# 输出: 标准输出仅打印版本号（如 v4.0.4）；诊断信息走 log_error(stderr) 以免污染捕获
+# NOTE: 依赖调用方已将 KUBECONFIG 指向 Global 集群
+_cluster_plugin_resolve_version() {
+    local module_name="$1"
+    local package_url="$2"
+
+    # 从包名解析期望版本（如 metallb.v4.0.4.tgz -> v4.0.4），可能为空
+    local pkg_version
+    pkg_version=$(basename "$package_url" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)
+
+    # 列出该 module 已发布的所有 ModuleConfig 版本（每行一个）
+    local versions
+    versions=$(kubectl get moduleconfigs -l "cpaas.io/module-name=${module_name}" \
+        -o jsonpath='{range .items[*]}{.spec.version}{"\n"}{end}' 2>/dev/null)
+
+    if [ -z "$versions" ]; then
+        log_error "未找到 ModuleConfig（module-name=${module_name}），插件可能尚未上架完成"
+        return 1
+    fi
+
+    # 包名版本存在于已发布版本中则直接采用
+    if [ -n "$pkg_version" ] && echo "$versions" | grep -qx "$pkg_version"; then
+        printf '%s' "$pkg_version"
+        return 0
+    fi
+
+    # 否则取最高版本
+    local latest
+    latest=$(echo "$versions" | sort -V | tail -n 1)
+    if [ -z "$latest" ]; then
+        log_error "无法解析 ${module_name} 的 ModuleConfig 版本"
+        return 1
+    fi
+    printf '%s' "$latest"
+    return 0
+}
+
+# 等待集群插件的 ModuleInfo 进入 Running（按 module-name + cluster-name label 定位）
+# 用法: _wait_for_moduleinfo_running <module_name> <target_cluster> [max_retries] [interval]
+# NOTE: 依赖调用方已将 KUBECONFIG 指向 Global 集群；状态字段为 .status.phase
+_wait_for_moduleinfo_running() {
+    local module_name="$1"
+    local target_cluster="$2"
+    local max_retries="${3:-60}"
+    local interval="${4:-10}"
+    local selector="cpaas.io/module-name=${module_name},cpaas.io/cluster-name=${target_cluster}"
+    local attempt phase
+
+    for ((attempt=1; attempt<=max_retries; attempt++)); do
+        phase=$(kubectl get moduleinfo -l "$selector" \
+            -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "")
+        if [ "$phase" = "Running" ]; then
+            return 0
+        fi
+        log_warn "等待集群插件就绪: ${module_name}@${target_cluster} phase=${phase:-<none>} (${attempt}/${max_retries})"
+        [ "$attempt" -lt "$max_retries" ] && sleep "$interval"
+    done
+    return 1
+}
+
+# 通用集群插件安装函数（在 Global 集群上架 ACP 集群插件，并安装到目标业务集群）
+# 用法: install_cluster_plugin <module_name> <target_cluster> <package_url> [prereq_package_url...]
+# 参数:
+#   module_name         - 集群插件名（ModulePlugin 名，如 multus / metallb / mesh-v2-test-suite）
+#   target_cluster      - 插件落地的目标集群（写入 ModuleInfo 的 cpaas.io/cluster-name）
+#   package_url         - 上架并安装的插件包 URL
+#   prereq_package_url  - 可选，仅上架不安装的前置插件包（如 metallb 需要 metallb-operator）
+# 说明:
+#   - 所有操作（violet push 上架、创建 ModuleInfo、查询）均针对 Global 集群 API
+#   - 函数内 local export KUBECONFIG 指向 Global 集群独立 kubeconfig，返回后自动还原，
+#     不污染调用方 / merged.yaml 的 current-context
+#   - ModuleInfo 按默认配置安装：不带 .spec.config、不带 affinity（见 cluster_plugin.mdx 3.1）
+# NOTE: 依赖 Global 集群独立 kubeconfig 已生成（各项目 project_init 的 ensure_kubeconfig 会追加 Global）
+install_cluster_plugin() {
+    local module_name="$1"
+    local target_cluster="$2"
+    local package_url="$3"
+
+    if [ -z "$module_name" ] || [ -z "$target_cluster" ] || [ -z "$package_url" ]; then
+        log_error "install_cluster_plugin: 缺少必要参数"
+        log_error "用法: install_cluster_plugin <module_name> <target_cluster> <package_url> [prereq_package_url...]"
+        return 1
+    fi
+    shift 3
+    local prereq_urls=("$@")
+
+    local global_cluster="${GLOBAL_CLUSTER_NAME:-global}"
+    local global_kc="$KUBECONFIG_DIR/${global_cluster}.yaml"
+    if [ ! -f "$global_kc" ]; then
+        log_error "install_cluster_plugin: 未找到 Global kubeconfig: $global_kc"
+        log_error "请先执行 './run.sh --project <项目> --init-only' 让框架拉取 ${global_cluster} 集群 kubeconfig"
+        return 1
+    fi
+
+    # 函数内 local export KUBECONFIG，返回后自动还原，避免污染 merged.yaml 的 current-context
+    local KUBECONFIG="$global_kc"
+    export KUBECONFIG
+
+    log_info "=========================================="
+    log_info "安装集群插件 $module_name 到目标集群 $target_cluster（经 Global 集群 $global_cluster 操作）"
+    log_info "=========================================="
+
+    local selector="cpaas.io/module-name=${module_name},cpaas.io/cluster-name=${target_cluster}"
+
+    # 0. 幂等检查：已存在的 ModuleInfo
+    local existing_phase existing_name
+    existing_phase=$(kubectl get moduleinfo -l "$selector" \
+        -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "")
+    if [ "$existing_phase" = "Running" ]; then
+        log_success "集群插件 $module_name 已安装于 $target_cluster (phase=Running)，跳过"
+        return 0
+    fi
+    existing_name=$(kubectl get moduleinfo -l "$selector" \
+        -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+
+    if [ -n "$existing_name" ]; then
+        log_info "检测到已存在的 ModuleInfo: $existing_name (phase=${existing_phase:-<none>})，跳过上架与创建，直接等待就绪"
+    else
+        # 1. 上架插件包（主包 + 前置包，仅上架不安装）到 Global 集群
+        log_info "步骤 1: 上架插件包到 Global 集群"
+        local pkg
+        for pkg in "$package_url" "${prereq_urls[@]}"; do
+            download_package "$pkg" || return 1
+        done
+        # 主包：若对应 ModuleConfig 已存在则跳过 push（幂等）
+        if kubectl get moduleconfigs -l "cpaas.io/module-name=${module_name}" -o name 2>/dev/null | grep -q .; then
+            log_info "插件 $module_name 已上架（ModuleConfig 存在），跳过 push"
+        else
+            upload_package "$global_cluster" "$package_url" || return 1
+        fi
+        # 前置包：仅上架（不创建 ModuleInfo）
+        for pkg in "${prereq_urls[@]}"; do
+            log_info "上架前置插件包（仅上架不安装）: $(basename "$pkg")"
+            upload_package "$global_cluster" "$pkg" || return 1
+        done
+
+        # 2. 等待 ModulePlugin 就绪并解析版本
+        log_info "步骤 2: 等待 ModulePlugin $module_name 就绪"
+        if ! retry_command "kubectl get moduleplugin '$module_name' >/dev/null 2>&1" 20 5; then
+            log_error "未找到 ModulePlugin: $module_name（上架可能未完成）"
+            return 1
+        fi
+        local version
+        version=$(_cluster_plugin_resolve_version "$module_name" "$package_url") || return 1
+        log_success "目标版本: $version"
+
+        # 3. 创建 ModuleInfo（默认配置，不带 config / affinity）
+        log_info "步骤 3: 创建 ModuleInfo 安装插件到 $target_cluster"
+        _render_moduleinfo "$module_name" "$version" "$target_cluster" | kubectl apply -f - || {
+            log_error "创建 ModuleInfo 失败"
+            return 1
+        }
+    fi
+
+    # 4. 等待 ModuleInfo 进入 Running
+    log_info "步骤 4: 等待集群插件安装完成 (phase=Running)"
+    if ! _wait_for_moduleinfo_running "$module_name" "$target_cluster"; then
+        log_error "集群插件 $module_name 安装超时或失败"
+        kubectl get moduleinfo -l "$selector" 2>/dev/null || true
+        return 1
+    fi
+
+    log_success "=========================================="
+    log_success "集群插件 $module_name 安装完成（目标集群 $target_cluster）"
+    log_success "=========================================="
+    return 0
+}

@@ -24,7 +24,7 @@ docs-runme-tests/
 ├── run-tracing-all.sh      # tracing 项目全量编排
 ├── repos.conf              # 文档仓库注册表
 ├── framework/              # 通用引擎函数库（零项目耦合）
-│   ├── common.sh           # 日志 / 结果统计 / install_operator / _wait_* / kubectl_apply_runme_block
+│   ├── common.sh           # 日志 / 结果统计 / install_operator / install_cluster_plugin / _wait_* / kubectl_apply_runme_block
 │   ├── verify.sh           # __cmp_* 输出比对
 │   ├── kubeconfig.sh       # ACP kubeconfig 拉取 / 合并 / 复用
 │   └── tools.sh            # 必备工具检查 / runme·violet 安装 / 插件包下载上传
@@ -104,14 +104,22 @@ export REGISTRY_MIRROR_ADDRESS=docker-mirrors.alauda.cn
 # ── 测试行为开关（mesh，可选）────────────────────────────────
 export IS_DUAL_STACK=false
 export AUTO_GEN_BOOKINFO_TRAFFIC=true
+# 是否安装 MetalLB 集群插件（仅多集群网格 / 网关场景需要，默认 false）
+export ENABLE_METALLB=false
 
 # ── 插件包地址 ──────────────────────────────────────────────
-# mesh 项目需要：
+# Operator 包：mesh 项目需要
 export PKG_SERVICEMESH_OPERATOR2_URL=xxx
 export PKG_KIALI_OPERATOR_URL=xxx
-export PKG_METALLB_OPERATOR_URL=xxx
-# mesh / otel / tracing 均需要：
+# Operator 包：mesh / otel / tracing 均需要
 export PKG_OPENTELEMETRY_OPERATOR2_URL=xxx
+# 集群插件包：mesh 始终需要 Multus（Service Mesh 前提）
+export PKG_MULTUS_URL=xxx
+# 集群插件包：仅 ENABLE_METALLB=true 时需要（metallb 插件 + 其前置 metallb-operator）
+export PKG_METALLB_URL=xxx
+export PKG_METALLB_OPERATOR_URL=xxx
+# 集群插件包：仅 USE_MESH_V2_TEST_SUITE_PLUGIN=true 时需要（mesh / otel / tracing 共用）
+export PKG_MESH_V2_TEST_SUITE_URL=xxx
 
 # ── 分布式调用链测试专用 ────────────────────────────────────
 # ACP ES 所在集群（可选，默认 global；设为空则使用下方 TRACING_ES_* 手动配置）
@@ -131,11 +139,11 @@ export TRACING_TEST_SPM=true
 
 **项目专属变量**（各项目 `project_check_env` 校验）：
 
-| 项目    | 必需                                                                                                                  | 软依赖（缺失则 SKIPPED）                                    |
-| ------- | --------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| mesh    | `PKG_SERVICEMESH_OPERATOR2_URL` `PKG_KIALI_OPERATOR_URL` `PKG_OPENTELEMETRY_OPERATOR2_URL` `PKG_METALLB_OPERATOR_URL` | -                                                           |
-| otel    | `PKG_OPENTELEMETRY_OPERATOR2_URL`                                                                                     | -                                                           |
-| tracing | `PKG_OPENTELEMETRY_OPERATOR2_URL`                                                                                     | `TRACING_ACP_ES_CLUSTER` 或 `TRACING_ES_ENDPOINT/USER/PASS` |
+| 项目    | 必需                                                                                              | 条件必需 / 软依赖                                                                                                                              |
+| ------- | ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| mesh    | `PKG_SERVICEMESH_OPERATOR2_URL` `PKG_KIALI_OPERATOR_URL` `PKG_OPENTELEMETRY_OPERATOR2_URL` `PKG_MULTUS_URL` | `ENABLE_METALLB=true` → `PKG_METALLB_URL` `PKG_METALLB_OPERATOR_URL`；`USE_MESH_V2_TEST_SUITE_PLUGIN=true` → `PKG_MESH_V2_TEST_SUITE_URL` |
+| otel    | `PKG_OPENTELEMETRY_OPERATOR2_URL`                                                                  | `USE_MESH_V2_TEST_SUITE_PLUGIN=true` → `PKG_MESH_V2_TEST_SUITE_URL`                                                                            |
+| tracing | `PKG_OPENTELEMETRY_OPERATOR2_URL`                                                                  | `USE_MESH_V2_TEST_SUITE_PLUGIN=true` → `PKG_MESH_V2_TEST_SUITE_URL`；`TRACING_ACP_ES_CLUSTER` 或 `TRACING_ES_ENDPOINT/USER/PASS`              |
 
 ### 4. kubeconfig 自动管理
 
@@ -290,7 +298,7 @@ source "$FRAMEWORK_ROOT/framework/verify.sh"
 
 ## TODO
 
-- [ ] Multus / MetalLB / mesh-v2-test-suite 集群插件自动安装
+- [x] Multus / MetalLB / mesh-v2-test-suite 集群插件自动安装
 - [ ] 优化测试 case 结果统计
 
 ## 参考资料

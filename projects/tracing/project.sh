@@ -94,6 +94,12 @@ project_check_env() {
         return 1
     fi
 
+    # 启用 mesh-v2-test-suite 集群插件时需要其插件包地址
+    if [ "${USE_MESH_V2_TEST_SUITE_PLUGIN:-false}" = "true" ] && [ -z "$PKG_MESH_V2_TEST_SUITE_URL" ]; then
+        log_error "USE_MESH_V2_TEST_SUITE_PLUGIN=true 但缺少 PKG_MESH_V2_TEST_SUITE_URL"
+        return 1
+    fi
+
     if [ -n "${TRACING_ACP_ES_CLUSTER:-}" ]; then
         log_info "将从 ACP 集群自动获取 Elasticsearch 配置: TRACING_ACP_ES_CLUSTER=${TRACING_ACP_ES_CLUSTER}"
         return 0
@@ -133,6 +139,14 @@ project_init() {
             upload_package "$cluster" "$PKG_OPENTELEMETRY_OPERATOR2_URL" || return 1
         fi
     done
+
+    # mesh-v2-test-suite 集群插件，由开关控制，安装到各业务集群
+    if [ "${USE_MESH_V2_TEST_SUITE_PLUGIN:-false}" = "true" ]; then
+        for cluster in "${clusters[@]}"; do
+            install_cluster_plugin "mesh-v2-test-suite" "$cluster" \
+                "$PKG_MESH_V2_TEST_SUITE_URL" || return 1
+        done
+    fi
 
     log_success "tracing 环境初始化完成!"
 }

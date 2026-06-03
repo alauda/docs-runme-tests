@@ -28,6 +28,7 @@ log_header "Case 1: OpenTelemetry v2 安装与卸载测试"
 if (
     set -e
     ./run.sh --project otel --file install-opentelemetry --force-init
+    # 清理
     ./run.sh --project otel --file uninstalling-opentelemetry
 ); then
     record_test_result 0
@@ -53,6 +54,7 @@ if (
     set -e
     ./run.sh --project tracing --file installing-distributed-tracing --skip-telemetrygen
     ./run.sh --project otel --file java-instrumentation --no-cleanup
+    # 清理
     ./run.sh --project otel --file java-instrumentation --cleanup-only
     ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds
 ); then

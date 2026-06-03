@@ -3,3 +3,4 @@ bin/
 package/
 .kubeconfig/
 *.tar.gz
+tmp/

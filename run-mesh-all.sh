@@ -8,8 +8,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # 加载公共函数
 source "$SCRIPT_DIR/framework/common.sh"
-# 加载 kubeconfig 工具（提供 $KUBECONFIG_DIR，供 setup/teardown_external_ip_pools 定位各集群 kubeconfig）
-source "$SCRIPT_DIR/framework/kubeconfig.sh"
 
 # 确保在框架仓库根目录执行
 cd "$SCRIPT_DIR"
@@ -153,15 +151,11 @@ else
         set -e
         # 切到双集群 kubeconfig
         ./run.sh --project mesh --init-only --cluster "$EAST_CLUSTER_NAME" --cluster "$WEST_CLUSTER_NAME"
-        # 创建外部 IP 地址池（仅 ENABLE_METALLB=true 时生效，否则 no-op）
-        setup_external_ip_pools "$EAST_CLUSTER_NAME" "$WEST_CLUSTER_NAME"
         # 公共前置: 生成 CA 证书并下发 cacerts 到两个集群
         ./run.sh --project mesh --file configuration-overview
         # 多主多网络安装 + 验证 + 卸载
         ./run.sh --project mesh --file install-multi-primary-multi-network --no-cleanup
         ./run.sh --project mesh --file install-multi-primary-multi-network --cleanup-only
-        # 清理外部 IP 地址池（仅 ENABLE_METALLB=true 时生效）
-        teardown_external_ip_pools "$EAST_CLUSTER_NAME" "$WEST_CLUSTER_NAME"
     ); then
         record_test_result 0
     else
@@ -178,15 +172,11 @@ else
         set -e
         # 重新初始化双集群 kubeconfig (Case 7 卸载后保险一步,确保上下文干净)
         ./run.sh --project mesh --init-only --cluster "$EAST_CLUSTER_NAME" --cluster "$WEST_CLUSTER_NAME"
-        # 创建外部 IP 地址池（仅 ENABLE_METALLB=true 时生效，否则 no-op）
-        setup_external_ip_pools "$EAST_CLUSTER_NAME" "$WEST_CLUSTER_NAME"
         # 重新下发 cacerts (Case 7 cleanup 已删除 istio-system,需要重建)
         ./run.sh --project mesh --file configuration-overview
         # 主-远多网络安装 + 验证 + 卸载
         ./run.sh --project mesh --file install-primary-remote-multi-network --no-cleanup
         ./run.sh --project mesh --file install-primary-remote-multi-network --cleanup-only
-        # 清理外部 IP 地址池（仅 ENABLE_METALLB=true 时生效）
-        teardown_external_ip_pools "$EAST_CLUSTER_NAME" "$WEST_CLUSTER_NAME"
     ); then
         record_test_result 0
     else

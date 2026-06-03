@@ -873,8 +873,14 @@ setup_external_ip_pools() {
     local cluster
     for cluster in "$@"; do
         # 取该集群地址（合并 ipv4Addresses 与 ipv6Addresses，后者缺省为空数组）
+        # 用 while-read 逐行收集（兼容 macOS 自带 Bash 3.2，其无 mapfile/readarray）
         local addresses=()
-        mapfile -t addresses < <(printf '%s' "$json" | jq -r --arg c "$cluster" \
+        local addr_line
+        while IFS= read -r addr_line; do
+            if [ -n "$addr_line" ]; then
+                addresses+=("$addr_line")
+            fi
+        done < <(printf '%s' "$json" | jq -r --arg c "$cluster" \
             '.[] | select(.cluster == $c) | ((.ipv4Addresses // []) + (.ipv6Addresses // []))[]')
         if [ ${#addresses[@]} -eq 0 ]; then
             log_error "METALLB_EXTERNAL_ADDRESSES_JSON 中集群 $cluster 无地址配置 (需含 cluster=$cluster 的条目及 ipv4Addresses)"

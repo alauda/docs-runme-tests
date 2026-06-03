@@ -690,3 +690,218 @@ install_cluster_plugin() {
     log_success "=========================================="
     return 0
 }
+
+# ==============================================================================
+# MetalLB 外部 IP 地址池（IPAddressPool + L2Advertisement）
+# ------------------------------------------------------------------------------
+# 多集群网格/网关测试（run-mesh-all.sh Case 6/7）依赖 MetalLB 暴露东西向网关的
+# LoadBalancer 地址。本组函数在各业务集群创建 / 校验 / 删除外部地址池，受 ENABLE_METALLB
+# 门控（未开启即 no-op）。创建/删除走 kubectl（按业务集群独立 kubeconfig），可用地址检查
+# 直接读 IPAddressPool 的 .status.availableIPv4 / .status.availableIPv6——创建/检查/删除
+# 三者统一同一访问路径，函数内 local export KUBECONFIG，返回即还原、不污染 merged.yaml。
+# 参考: acp-docs/docs/en/networking/functions/configure_metallb.mdx
+# ==============================================================================
+
+# 外部地址池所在命名空间（MetalLB 资源固定部署于此）
+METALLB_NAMESPACE="${METALLB_NAMESPACE:-metallb-system}"
+# 外部地址池资源名（需求固定为 mesh-v2）
+METALLB_EXTERNAL_POOL_NAME="${METALLB_EXTERNAL_POOL_NAME:-mesh-v2}"
+
+# 返回业务集群独立 kubeconfig 路径（不存在则报错）；调用方据此 local export KUBECONFIG
+# 用法: kc=$(_cluster_kubeconfig_path <cluster>) || return 1
+_cluster_kubeconfig_path() {
+    local cluster="$1"
+    local kc="$KUBECONFIG_DIR/${cluster}.yaml"
+    if [ ! -f "$kc" ]; then
+        log_error "未找到业务集群 kubeconfig: $kc"
+        log_error "请先执行 './run.sh --project mesh --init-only --cluster $cluster ...' 进行初始化"
+        return 1
+    fi
+    printf '%s' "$kc"
+}
+
+# 内联渲染 IPAddressPool + L2Advertisement
+# 用法: _render_external_ip_pool <pool> <namespace> <addr...>
+# 说明:
+#   - spec.avoidBuggyIPs: true；L2Advertisement spec.nodeSelectors: null（按真实环境验证载荷）
+#   - addresses 由地址参数逐行展开（CIDR，如 192.168.139.13/32）
+_render_external_ip_pool() {
+    local pool="$1" namespace="$2"
+    shift 2
+    local addresses=("$@")
+
+    cat <<EOF
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: ${pool}
+  namespace: ${namespace}
+spec:
+  avoidBuggyIPs: true
+  addresses:
+EOF
+    local addr
+    for addr in "${addresses[@]}"; do
+        printf '    - %s\n' "$addr"
+    done
+    cat <<EOF
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: ${pool}
+  namespace: ${namespace}
+spec:
+  ipAddressPools:
+    - ${pool}
+  nodeSelectors: null
+EOF
+}
+
+# 在指定业务集群创建外部 IP 地址池（IPAddressPool + L2Advertisement）
+# 用法: create_external_ip_pool <cluster> <pool> <addr...>
+create_external_ip_pool() {
+    local cluster="$1" pool="$2"
+    shift 2
+    local addresses=("$@")
+
+    if [ -z "$cluster" ] || [ -z "$pool" ] || [ ${#addresses[@]} -eq 0 ]; then
+        log_error "create_external_ip_pool: 缺少参数 (cluster=$cluster, pool=$pool, addresses=${addresses[*]})"
+        return 1
+    fi
+
+    local kc
+    kc=$(_cluster_kubeconfig_path "$cluster") || return 1
+    # 函数内 local export KUBECONFIG，返回后自动还原，不污染 merged.yaml 的 current-context
+    local KUBECONFIG="$kc"
+    export KUBECONFIG
+
+    log_info "创建外部 IP 地址池 $pool 于集群 $cluster (地址: ${addresses[*]})"
+    _render_external_ip_pool "$pool" "$METALLB_NAMESPACE" "${addresses[@]}" | kubectl apply -f - || {
+        log_error "创建外部 IP 地址池失败: $pool@$cluster"
+        return 1
+    }
+    return 0
+}
+
+# 轮询等待 IPAddressPool 可用地址 >= 1（读 .status.availableIPv4 + .status.availableIPv6）
+# 用法: _wait_ipaddresspool_available <cluster> <pool> [max_retries] [interval]
+# 说明: metallb 控制器 reconcile 后才回填 .status，故需重试；字段缺失/为空按 0 处理
+_wait_ipaddresspool_available() {
+    local cluster="$1" pool="$2"
+    local max_retries="${3:-30}"
+    local interval="${4:-10}"
+
+    local kc
+    kc=$(_cluster_kubeconfig_path "$cluster") || return 1
+    local KUBECONFIG="$kc"
+    export KUBECONFIG
+
+    local attempt status_line v4 v6 total
+    for ((attempt=1; attempt<=max_retries; attempt++)); do
+        status_line=$(kubectl -n "$METALLB_NAMESPACE" get ipaddresspool "$pool" \
+            -o jsonpath='{.status.availableIPv4} {.status.availableIPv6}' 2>/dev/null || echo "")
+        read -r v4 v6 <<<"$status_line"
+        [[ "$v4" =~ ^[0-9]+$ ]] || v4=0
+        [[ "$v6" =~ ^[0-9]+$ ]] || v6=0
+        total=$((v4 + v6))
+        if [ "$total" -ge 1 ]; then
+            log_success "外部 IP 地址池就绪: $pool@$cluster (availableIPv4=$v4, availableIPv6=$v6)"
+            return 0
+        fi
+        log_warn "等待外部 IP 地址池可用地址 >= 1: $pool@$cluster (availableIPv4=$v4, availableIPv6=$v6) (${attempt}/${max_retries})"
+        [ "$attempt" -lt "$max_retries" ] && sleep "$interval"
+    done
+    log_error "外部 IP 地址池可用地址始终不足: $pool@$cluster"
+    kubectl -n "$METALLB_NAMESPACE" get ipaddresspool "$pool" -o yaml 2>/dev/null || true
+    return 1
+}
+
+# 删除指定业务集群的外部 IP 地址池（先删 L2Advertisement 再删 IPAddressPool）
+# 用法: delete_external_ip_pool <cluster> <pool>
+delete_external_ip_pool() {
+    local cluster="$1" pool="$2"
+
+    if [ -z "$cluster" ] || [ -z "$pool" ]; then
+        log_error "delete_external_ip_pool: 缺少参数 (cluster=$cluster, pool=$pool)"
+        return 1
+    fi
+
+    local kc
+    kc=$(_cluster_kubeconfig_path "$cluster") || return 1
+    local KUBECONFIG="$kc"
+    export KUBECONFIG
+
+    log_info "删除外部 IP 地址池 $pool 于集群 $cluster"
+    kubectl -n "$METALLB_NAMESPACE" delete l2advertisement "$pool" --ignore-not-found || {
+        log_error "删除 L2Advertisement 失败: $pool@$cluster"
+        return 1
+    }
+    kubectl -n "$METALLB_NAMESPACE" delete ipaddresspool "$pool" --ignore-not-found || {
+        log_error "删除 IPAddressPool 失败: $pool@$cluster"
+        return 1
+    }
+    return 0
+}
+
+# 为多集群测试在各业务集群创建外部 IP 地址池并等待可用（受 ENABLE_METALLB 门控）
+# 用法: setup_external_ip_pools <cluster>...
+# 说明:
+#   - ENABLE_METALLB != true 时直接 no-op 返回 0（可在编排脚本中无条件调用）
+#   - 地址来源: METALLB_EXTERNAL_ADDRESSES_JSON（JSON 数组，按 cluster 匹配；含 ipv4Addresses，
+#     前向兼容 ipv6Addresses），资源固定命名 $METALLB_EXTERNAL_POOL_NAME（mesh-v2）
+setup_external_ip_pools() {
+    [ "${ENABLE_METALLB:-false}" = "true" ] || return 0
+
+    if [ $# -eq 0 ]; then
+        log_error "setup_external_ip_pools: 至少需要一个集群参数"
+        return 1
+    fi
+
+    local json="${METALLB_EXTERNAL_ADDRESSES_JSON:-}"
+    if [ -z "$json" ]; then
+        log_error "ENABLE_METALLB=true 但未设置 METALLB_EXTERNAL_ADDRESSES_JSON (多集群测试需要外部地址池)"
+        log_error '示例: METALLB_EXTERNAL_ADDRESSES_JSON='\''[{"cluster":"business-1","ipv4Addresses":["192.168.139.13/32"]}]'\'''
+        return 1
+    fi
+    if ! printf '%s' "$json" | jq empty 2>/dev/null; then
+        log_error "METALLB_EXTERNAL_ADDRESSES_JSON 不是有效 JSON"
+        return 1
+    fi
+
+    local pool="$METALLB_EXTERNAL_POOL_NAME"
+    local cluster
+    for cluster in "$@"; do
+        # 取该集群地址（合并 ipv4Addresses 与 ipv6Addresses，后者缺省为空数组）
+        local addresses=()
+        mapfile -t addresses < <(printf '%s' "$json" | jq -r --arg c "$cluster" \
+            '.[] | select(.cluster == $c) | ((.ipv4Addresses // []) + (.ipv6Addresses // []))[]')
+        if [ ${#addresses[@]} -eq 0 ]; then
+            log_error "METALLB_EXTERNAL_ADDRESSES_JSON 中集群 $cluster 无地址配置 (需含 cluster=$cluster 的条目及 ipv4Addresses)"
+            return 1
+        fi
+        create_external_ip_pool "$cluster" "$pool" "${addresses[@]}" || return 1
+        _wait_ipaddresspool_available "$cluster" "$pool" || return 1
+    done
+    log_success "外部 IP 地址池已就绪: 集群 $* (pool=$pool)"
+    return 0
+}
+
+# 删除多集群测试创建的外部 IP 地址池（受 ENABLE_METALLB 门控，尽力清理所有集群）
+# 用法: teardown_external_ip_pools <cluster>...
+teardown_external_ip_pools() {
+    [ "${ENABLE_METALLB:-false}" = "true" ] || return 0
+
+    if [ $# -eq 0 ]; then
+        log_error "teardown_external_ip_pools: 至少需要一个集群参数"
+        return 1
+    fi
+
+    local pool="$METALLB_EXTERNAL_POOL_NAME"
+    local cluster rc=0
+    for cluster in "$@"; do
+        delete_external_ip_pool "$cluster" "$pool" || rc=1
+    done
+    [ "$rc" -eq 0 ] && log_success "外部 IP 地址池已清理: 集群 $* (pool=$pool)"
+    return "$rc"
+}

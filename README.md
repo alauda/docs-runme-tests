@@ -24,7 +24,7 @@ docs-runme-tests/
 ├── run-tracing-all.sh      # tracing 项目全量编排
 ├── repos.conf              # 文档仓库注册表
 ├── framework/              # 通用引擎函数库（零项目耦合）
-│   ├── common.sh           # 日志 / 结果统计 / install_operator / install_cluster_plugin / _wait_* / kubectl_apply_runme_block
+│   ├── common.sh           # 日志 / 结果统计 / install_operator / install_cluster_plugin / setup_external_ip_pools / _wait_* / kubectl_apply_runme_block
 │   ├── verify.sh           # __cmp_* 输出比对
 │   ├── kubeconfig.sh       # ACP kubeconfig 拉取 / 合并 / 复用
 │   └── tools.sh            # 必备工具检查 / runme·violet 安装 / 插件包下载上传
@@ -106,6 +106,9 @@ export IS_DUAL_STACK=false
 export AUTO_GEN_BOOKINFO_TRAFFIC=true
 # 是否安装 MetalLB 集群插件（仅多集群网格 / 网关场景需要，默认 false）
 export ENABLE_METALLB=false
+# 外部 IP 地址池地址（仅 ENABLE_METALLB=true 且运行多集群 Case 6/7 时需要）：
+# JSON 数组，cluster 需与 EAST_CLUSTER_NAME / WEST_CLUSTER_NAME 对应；ipv6Addresses 为将来预留
+export METALLB_EXTERNAL_ADDRESSES_JSON='[{"cluster":"business-1","ipv4Addresses":["192.168.139.13/32"]},{"cluster":"business-2","ipv4Addresses":["192.168.137.150/32"]}]'
 
 # ── 插件包地址 ──────────────────────────────────────────────
 # Operator 包：mesh 项目需要
@@ -144,6 +147,8 @@ export TRACING_TEST_SPM=true
 | mesh    | `PKG_SERVICEMESH_OPERATOR2_URL` `PKG_KIALI_OPERATOR_URL` `PKG_OPENTELEMETRY_OPERATOR2_URL` `PKG_MULTUS_URL` | `ENABLE_METALLB=true` → `PKG_METALLB_URL` `PKG_METALLB_OPERATOR_URL`；`USE_MESH_V2_TEST_SUITE_PLUGIN=true` → `PKG_MESH_V2_TEST_SUITE_URL` |
 | otel    | `PKG_OPENTELEMETRY_OPERATOR2_URL`                                                                  | `USE_MESH_V2_TEST_SUITE_PLUGIN=true` → `PKG_MESH_V2_TEST_SUITE_URL`                                                                            |
 | tracing | `PKG_OPENTELEMETRY_OPERATOR2_URL`                                                                  | `USE_MESH_V2_TEST_SUITE_PLUGIN=true` → `PKG_MESH_V2_TEST_SUITE_URL`；`TRACING_ACP_ES_CLUSTER` 或 `TRACING_ES_ENDPOINT/USER/PASS`              |
+
+> 注：`METALLB_EXTERNAL_ADDRESSES_JSON`（外部 IP 地址池地址，JSON 数组）在 `ENABLE_METALLB=true` 且运行多集群 Case 6/7 时需要，由 `setup_external_ip_pools` 创建地址池时校验（不在 `project_check_env`）。
 
 ### 4. kubeconfig 自动管理
 

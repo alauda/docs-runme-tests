@@ -510,7 +510,7 @@ _cluster_plugin_resolve_version() {
         -o jsonpath='{range .items[*]}{.spec.version}{"\n"}{end}' 2>/dev/null)
 
     if [ -z "$versions" ]; then
-        log_error "未找到 ModuleConfig（module-name=${module_name}），插件可能尚未上架完成"
+        log_error "未找到 ModuleConfig (module-name=${module_name})，插件可能尚未上架完成"
         return 1
     fi
 
@@ -593,7 +593,7 @@ install_cluster_plugin() {
     export KUBECONFIG
 
     log_info "=========================================="
-    log_info "安装集群插件 $module_name 到目标集群 $target_cluster（经 Global 集群 $global_cluster 操作）"
+    log_info "安装集群插件 $module_name 到目标集群 $target_cluster (经 Global 集群 $global_cluster 操作)"
     log_info "=========================================="
 
     local selector="cpaas.io/module-name=${module_name},cpaas.io/cluster-name=${target_cluster}"
@@ -633,7 +633,7 @@ install_cluster_plugin() {
         # 2. 等待 ModulePlugin 就绪并解析版本
         log_info "步骤 2: 等待 ModulePlugin $module_name 就绪"
         if ! retry_command "kubectl get moduleplugin '$module_name' >/dev/null 2>&1" 20 5; then
-            log_error "未找到 ModulePlugin: $module_name（上架可能未完成）"
+            log_error "未找到 ModulePlugin: $module_name (上架可能未完成)"
             return 1
         fi
         local version

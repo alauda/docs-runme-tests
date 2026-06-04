@@ -44,15 +44,12 @@ fi
 #       java-instrumentation 测试以 SKIPPED 退出，不阻断编排。
 # 顺序：先装分布式调用链（提供 jaeger-system 的 OTel Collector 作为 javaagent 导出端点）
 #       → 部署 Java OTel demo → 卸载 Java OTel demo → 卸载分布式调用链。
-# 说明：Case 1 已 --force-init 上传 OTel Operator 插件包（卸载不清理已上传包），故此处
-#       调用链安装无需 --force-init，其步骤 1 会自行重装 OTel Operator 与 CRDs；
-#       调用链卸载用 --skip-operator-and-crds 保留 Operator 与 CRDs。
 # ------------------------------------------------------------------
 log_header "Case 2: Java 自动注入示例服务 + 分布式调用链 (Java Instrumentation Demo)"
 
 if (
     set -e
-    ./run.sh --project tracing --file installing-distributed-tracing --skip-telemetrygen
+    ./run.sh --project tracing --file installing-distributed-tracing --skip-telemetrygen --force-init
     ./run.sh --project otel --file java-instrumentation --no-cleanup
     # 清理
     ./run.sh --project otel --file java-instrumentation --cleanup-only

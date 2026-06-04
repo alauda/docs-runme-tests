@@ -5,7 +5,7 @@
 # 包含：
 #   - mesh 测试脚本使用的辅助函数（kubectl_apply_with_mirror）
 #   - mesh 初始化专属函数（install_istioctl / upload_all_packages /
-#     install_all_servicemesh_operators / fetch_platform_ca）
+#     install_all_cluster_plugins / install_all_servicemesh_operators / fetch_platform_ca）
 #   - 项目钩子 project_check_env / project_init / project_prepare
 
 # ==============================================================================
@@ -120,11 +120,12 @@ upload_all_packages() {
         return 0
     fi
 
+    # 注：metallb-operator 不在此无条件上传；它作为 MetalLB 集群插件的前置，
+    # 仅 ENABLE_METALLB=true 时由 install_all_cluster_plugins 按需上架到 Global 集群。
     local packages=(
         "$PKG_SERVICEMESH_OPERATOR2_URL"
         "$PKG_KIALI_OPERATOR_URL"
         "$PKG_OPENTELEMETRY_OPERATOR2_URL"
-        "$PKG_METALLB_OPERATOR_URL"
     )
 
     # 下载所有插件包
@@ -170,6 +171,44 @@ install_all_servicemesh_operators() {
     done
 
     log_success "所有集群的 servicemesh-operator2 安装完成"
+}
+
+# 在 Global 集群为每个业务集群安装所需集群插件（Multus 始终；MetalLB / mesh-v2-test-suite 按开关）
+# 用法: install_all_cluster_plugins <cluster>...
+# 说明:
+#   - Multus 是 Service Mesh 的前提（install-mesh.mdx），必须先于 servicemesh-operator2 安装
+#   - MetalLB 仅多集群网格 / 网关场景需要，由 ENABLE_METALLB 控制；安装前需上架 metallb-operator
+#   - mesh-v2-test-suite 由 USE_MESH_V2_TEST_SUITE_PLUGIN 控制
+#   - 所有操作经 Global 集群进行，插件落地到对应业务集群（见 common.sh install_cluster_plugin）
+install_all_cluster_plugins() {
+    local clusters=("$@")
+    if [ ${#clusters[@]} -eq 0 ]; then
+        log_warn "没有传入集群，跳过集群插件安装"
+        return 0
+    fi
+
+    local cluster
+    for cluster in "${clusters[@]}"; do
+        log_info "为业务集群 $cluster 安装集群插件..."
+
+        # Multus：mesh 前提，始终安装
+        install_cluster_plugin "multus" "$cluster" "$PKG_MULTUS_URL" || return 1
+
+        # MetalLB：仅 ENABLE_METALLB=true；需上架 metallb-operator 作为前置（仅上架不安装）
+        if [ "${ENABLE_METALLB:-false}" = "true" ]; then
+            install_cluster_plugin "metallb" "$cluster" \
+                "$PKG_METALLB_URL" "$PKG_METALLB_OPERATOR_URL" || return 1
+        fi
+
+        # mesh-v2-test-suite：仅 USE_MESH_V2_TEST_SUITE_PLUGIN=true
+        if [ "${USE_MESH_V2_TEST_SUITE_PLUGIN:-false}" = "true" ]; then
+            install_cluster_plugin "mesh-v2-test-suite" "$cluster" \
+                "$PKG_MESH_V2_TEST_SUITE_URL" || return 1
+        fi
+    done
+
+    log_success "所有业务集群的集群插件安装完成"
+    return 0
 }
 
 # 通过 Global 集群的独立 kubeconfig 拉取平台 CA 证书（base64 编码）
@@ -224,8 +263,19 @@ project_check_env() {
         "PKG_SERVICEMESH_OPERATOR2_URL"
         "PKG_KIALI_OPERATOR_URL"
         "PKG_OPENTELEMETRY_OPERATOR2_URL"
-        "PKG_METALLB_OPERATOR_URL"
+        "PKG_MULTUS_URL"
     )
+
+    # MetalLB 相关变量仅 ENABLE_METALLB=true 时必需（metallb 插件包 + 其前置 metallb-operator 包）
+    if [ "${ENABLE_METALLB:-false}" = "true" ]; then
+        required+=("PKG_METALLB_URL" "PKG_METALLB_OPERATOR_URL")
+    fi
+
+    # mesh-v2-test-suite 插件包仅 USE_MESH_V2_TEST_SUITE_PLUGIN=true 时必需
+    if [ "${USE_MESH_V2_TEST_SUITE_PLUGIN:-false}" = "true" ]; then
+        required+=("PKG_MESH_V2_TEST_SUITE_URL")
+    fi
+
     local missing=()
     local var
     for var in "${required[@]}"; do
@@ -252,13 +302,15 @@ project_init() {
 
     local clusters=("$@")
     local global_cluster="${GLOBAL_CLUSTER_NAME:-global}"
-    log_info "mesh 环境初始化（业务集群: ${clusters[*]} + Global 集群: ${global_cluster}）..."
+    log_info "mesh 环境初始化 (业务集群: ${clusters[*]} + Global 集群: ${global_cluster})..."
 
     install_istioctl
     # ensure_kubeconfig: fingerprint 一致则复用 merged.yaml，变更时才重新拉取。
     # 末尾追加 Global 集群（用于 fetch_platform_ca）；列表去重由内部处理。
     ensure_kubeconfig "${clusters[@]}" "$global_cluster" || return 1
     upload_all_packages "${clusters[@]}" || return 1
+    # 集群插件需先于 servicemesh-operator2 安装（Multus 是 mesh 前提）
+    install_all_cluster_plugins "${clusters[@]}" || return 1
     install_all_servicemesh_operators "${clusters[@]}" || return 1
 
     log_success "mesh 环境初始化完成!"
@@ -278,7 +330,7 @@ project_prepare() {
         log_info "PLATFORM_CA 未设置，从 Global 集群自动获取..."
         PLATFORM_CA=$(fetch_platform_ca) || return 1
         export PLATFORM_CA
-        log_success "PLATFORM_CA 已从 Global 集群获取（长度: ${#PLATFORM_CA}）"
+        log_success "PLATFORM_CA 已从 Global 集群获取 (长度: ${#PLATFORM_CA})"
     fi
     return 0
 }

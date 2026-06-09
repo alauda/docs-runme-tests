@@ -87,8 +87,6 @@ _tracing_load_acp_es_config() {
 
 # 校验 tracing 项目专属环境变量
 project_check_env() {
-    _tracing_set_default_acp_es_cluster
-
     if [ -z "$PKG_OPENTELEMETRY_OPERATOR2_URL" ]; then
         log_error "tracing 项目缺少必要的环境变量: PKG_OPENTELEMETRY_OPERATOR2_URL"
         return 1
@@ -100,15 +98,9 @@ project_check_env() {
         return 1
     fi
 
-    if [ -n "${TRACING_ACP_ES_CLUSTER:-}" ]; then
-        log_info "将从 ACP 集群自动获取 Elasticsearch 配置: TRACING_ACP_ES_CLUSTER=${TRACING_ACP_ES_CLUSTER}"
-        return 0
-    fi
-
-    # Elasticsearch 依赖为软检查：缺失时测试脚本会以 SKIPPED 退出，不在此阻断
-    if [ -z "${TRACING_ES_ENDPOINT:-}" ] || [ -z "${TRACING_ES_USER:-}" ] || [ -z "${TRACING_ES_PASS:-}" ]; then
-        log_warn "TRACING_ACP_ES_CLUSTER 为空且未设置 TRACING_ES_ENDPOINT/USER/PASS，分布式调用链测试将以 SKIPPED 退出"
-    fi
+    # 存储后端配置为软依赖，分别由各安装测试脚本自检（缺失时对应测试以 SKIPPED 退出）：
+    #   - Elasticsearch: TRACING_ACP_ES_CLUSTER（默认 global，从 ACP 自动获取）或手动 TRACING_ES_ENDPOINT/USER/PASS
+    #   - OpenSearch:    仅手动 TRACING_OPENSEARCH_ENDPOINT/USER/PASS（无 ACP 自动获取）
     return 0
 }
 
@@ -155,12 +147,7 @@ project_init() {
 project_prepare() {
     load_kubeconfig || return 1
 
-    _tracing_set_default_acp_es_cluster
-    if [ -n "${TRACING_ACP_ES_CLUSTER:-}" ]; then
-        _tracing_load_acp_es_config || return 1
-    else
-        log_info "TRACING_ACP_ES_CLUSTER 为空，使用 TRACING_ES_ENDPOINT/USER/PASS 配置 Elasticsearch"
-    fi
-
+    # 存储后端配置不在此加载：Elasticsearch 由 installing-distributed-tracing-elasticsearch
+    # 测试脚本自行调用 _tracing_load_acp_es_config；OpenSearch 仅使用手动 TRACING_OPENSEARCH_*。
     return 0
 }

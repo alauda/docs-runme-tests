@@ -131,6 +131,10 @@ export TRACING_ACP_ES_CLUSTER=global
 export TRACING_ES_ENDPOINT='https://es.xx:9200'
 export TRACING_ES_USER='your-es-username'
 export TRACING_ES_PASS='your-es-password'
+# 手动 OpenSearch 配置
+export TRACING_OPENSEARCH_ENDPOINT='https://opensearch.xx:9200'
+export TRACING_OPENSEARCH_USER='your-opensearch-username'
+export TRACING_OPENSEARCH_PASS='your-opensearch-password'
 # telemetrygen 测试时长（可选，覆盖文档默认的 150s，加快测试）
 export TRACING_TELEMETRYGEN_TEST_DURATION_1=30s
 export TRACING_TELEMETRYGEN_TEST_DURATION_2=130s
@@ -142,11 +146,11 @@ export TRACING_TEST_SPM=true
 
 **项目专属变量**（各项目 `project_check_env` 校验）：
 
-| 项目    | 必需                                                                                              | 条件必需 / 软依赖                                                                                                                              |
-| ------- | ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| mesh    | `PKG_SERVICEMESH_OPERATOR2_URL` `PKG_KIALI_OPERATOR_URL` `PKG_OPENTELEMETRY_OPERATOR2_URL` `PKG_MULTUS_URL` | `ENABLE_METALLB=true` → `PKG_METALLB_URL` `PKG_METALLB_OPERATOR_URL`；`USE_MESH_V2_TEST_SUITE_PLUGIN=true` → `PKG_MESH_V2_TEST_SUITE_URL` |
-| otel    | `PKG_OPENTELEMETRY_OPERATOR2_URL`                                                                  | `USE_MESH_V2_TEST_SUITE_PLUGIN=true` → `PKG_MESH_V2_TEST_SUITE_URL`                                                                            |
-| tracing | `PKG_OPENTELEMETRY_OPERATOR2_URL`                                                                  | `USE_MESH_V2_TEST_SUITE_PLUGIN=true` → `PKG_MESH_V2_TEST_SUITE_URL`；`TRACING_ACP_ES_CLUSTER` 或 `TRACING_ES_ENDPOINT/USER/PASS`              |
+| 项目    | 必需                                                                                                        | 条件必需 / 软依赖                                                                                                                                                                                   |
+| ------- | ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| mesh    | `PKG_SERVICEMESH_OPERATOR2_URL` `PKG_KIALI_OPERATOR_URL` `PKG_OPENTELEMETRY_OPERATOR2_URL` `PKG_MULTUS_URL` | `ENABLE_METALLB=true` → `PKG_METALLB_URL` `PKG_METALLB_OPERATOR_URL`；`USE_MESH_V2_TEST_SUITE_PLUGIN=true` → `PKG_MESH_V2_TEST_SUITE_URL`                                                           |
+| otel    | `PKG_OPENTELEMETRY_OPERATOR2_URL`                                                                           | `USE_MESH_V2_TEST_SUITE_PLUGIN=true` → `PKG_MESH_V2_TEST_SUITE_URL`                                                                                                                                 |
+| tracing | `PKG_OPENTELEMETRY_OPERATOR2_URL`                                                                           | `USE_MESH_V2_TEST_SUITE_PLUGIN=true` → `PKG_MESH_V2_TEST_SUITE_URL`；ES：`TRACING_ACP_ES_CLUSTER` 或 `TRACING_ES_ENDPOINT/USER/PASS`；OpenSearch：`TRACING_OPENSEARCH_ENDPOINT/USER/PASS`（仅手动） |
 
 > 注：`METALLB_EXTERNAL_ADDRESSES_JSON`（外部 IP 地址池地址，JSON 数组）在 `ENABLE_METALLB=true` 且运行多集群 Case 6/7 时需要，由 `setup_external_ip_pools` 创建地址池时校验（不在 `project_check_env`）。
 
@@ -238,9 +242,9 @@ cd docs-runme-tests
 
 ### otel（opentelemetry-docs）
 
-| 文档名称              | 执行命令                                                                                |
-| --------------------- | --------------------------------------------------------------------------------------- |
-| OpenTelemetry v2 安装 | `./run.sh --project otel --file install-opentelemetry`                                  |
+| 文档名称              | 执行命令                                                                               |
+| --------------------- | -------------------------------------------------------------------------------------- |
+| OpenTelemetry v2 安装 | `./run.sh --project otel --file install-opentelemetry`                                 |
 | OpenTelemetry v2 卸载 | `./run.sh --project otel --file uninstalling-opentelemetry [--skip-operator-and-crds]` |
 | Java 自动注入示例     | `./run.sh --project otel --file java-instrumentation`                                  |
 
@@ -250,12 +254,13 @@ cd docs-runme-tests
 
 ### tracing（distributed-tracing-docs）
 
-| 文档名称         | 执行命令                                                             |
-| ---------------- | -------------------------------------------------------------------- |
-| 分布式调用链安装 | `./run.sh --project tracing --file installing-distributed-tracing`   |
-| 分布式调用链卸载 | `./run.sh --project tracing --file uninstalling-distributed-tracing` |
+| 文档名称                          | 执行命令                                                                         |
+| --------------------------------- | -------------------------------------------------------------------------------- |
+| 分布式调用链安装（Elasticsearch） | `./run.sh --project tracing --file installing-distributed-tracing-elasticsearch` |
+| 分布式调用链安装（OpenSearch）    | `./run.sh --project tracing --file installing-distributed-tracing-opensearch`    |
+| 分布式调用链卸载                  | `./run.sh --project tracing --file uninstalling-distributed-tracing`             |
 
-> 默认从 `TRACING_ACP_ES_CLUSTER` 指定的 ACP 集群（默认 `global`）读取 log-center Elasticsearch 配置；将其设为空时改用 `TRACING_ES_*` 手动配置。安装测试会自动安装前置依赖 OpenTelemetry v2 Operator（其代码块位于 `opentelemetry-docs`）。
+> Elasticsearch 安装测试默认从 `TRACING_ACP_ES_CLUSTER` 指定的 ACP 集群（默认 `global`）读取 log-center Elasticsearch 配置；将其设为空时改用 `TRACING_ES_*` 手动配置（该加载逻辑位于 Elasticsearch 安装测试脚本，不再由 `project_prepare` 全局执行）。OpenSearch 安装测试仅支持手动配置 `TRACING_OPENSEARCH_ENDPOINT/USER/PASS`（无 ACP 自动获取），未设置时该测试 SKIPPED。卸载测试存储无关，按 Jaeger 命名空间是否存在判定是否执行。安装测试会自动安装前置依赖 OpenTelemetry v2 Operator（其代码块位于 `opentelemetry-docs`）。
 
 ## 工作原理
 

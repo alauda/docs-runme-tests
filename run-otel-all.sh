@@ -49,7 +49,7 @@ log_header "Case 2: Java 自动注入示例服务 + 分布式调用链 (Java Ins
 
 if (
     set -e
-    ./run.sh --project tracing --file installing-distributed-tracing --skip-telemetrygen --force-init
+    ./run.sh --project tracing --file installing-distributed-tracing-elasticsearch --skip-telemetrygen --force-init
     ./run.sh --project otel --file java-instrumentation --no-cleanup
     # 清理
     ./run.sh --project otel --file java-instrumentation --cleanup-only

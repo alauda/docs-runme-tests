@@ -67,7 +67,7 @@ usage() {
   --skip-operator-and-crds
                         轻量清理开关，导出给测试脚本读取
   --skip-telemetrygen   跳过 telemetrygen 端到端 trace 测试（仅
-                        installing-distributed-tracing 读取；用于
+                        installing-distributed-tracing-{elasticsearch,opensearch} 读取；用于
                         mesh 等仅需安装调用链组件而无需 telemetrygen
                         验证的编排场景）
   -h, --help            显示此帮助信息
@@ -80,7 +80,7 @@ usage() {
   $0 --file install-mesh
 
   # 显式指定项目并强制初始化
-  $0 --project tracing --file installing-distributed-tracing --force-init
+  $0 --project tracing --file installing-distributed-tracing-elasticsearch --force-init
 
 通用必需环境变量:
   RUNME_VERSION PLATFORM_ADDRESS ACP_API_TOKEN PLATFORM_USERNAME PLATFORM_PASSWORD

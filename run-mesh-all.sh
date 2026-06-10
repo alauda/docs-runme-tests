@@ -186,15 +186,16 @@ else
 fi
 
 # ------------------------------------------------------------------
-# Case 8: InPlace 更新策略 + Istio CNI 升级测试
-# 顺序：update-inplace --no-cleanup 铺垫环境 → istio-cni 升级 CNI 版本 → update-inplace --cleanup-only 统一清理
+# Case 8: InPlace 更新策略测试（含 Istio CNI 升级）
+# 顺序：update-inplace --no-cleanup 完整更新流程 → --cleanup-only 统一清理
+# 注：Istio CNI 升级已并入 update-inplace 文档步骤 4（测试经公共步骤库
+#     istio-cni-update-steps.sh 执行），不再单独调用 --file istio-cni
 # ------------------------------------------------------------------
-log_header "Case 8: InPlace 更新策略 + Istio CNI 升级测试 (Update InPlace + Istio CNI)"
+log_header "Case 8: InPlace 更新策略测试（含 Istio CNI 升级）(Update InPlace + Istio CNI)"
 
 if (
     set -e
     ./run.sh --project mesh --file update-inplace --no-cleanup --force-init
-    ./run.sh --project mesh --file istio-cni
     ./run.sh --project mesh --file update-inplace --cleanup-only
 ); then
     record_test_result 0
@@ -204,15 +205,15 @@ else
 fi
 
 # ------------------------------------------------------------------
-# Case 9: RevisionBased 更新策略测试
+# Case 9: RevisionBased 更新策略测试（含 Istio CNI 升级）
 # 顺序：update-revisionbased --no-cleanup 安装+升级验证 → --cleanup-only 统一清理
+# 注：Istio CNI 升级已并入 update-revisionbased 文档步骤 5（公共步骤库执行）
 # ------------------------------------------------------------------
 log_header "Case 9: RevisionBased 更新策略测试 (Update RevisionBased)"
 
 if (
     set -e
     ./run.sh --project mesh --file update-revisionbased --no-cleanup --force-init
-    ./run.sh --project mesh --file istio-cni
     ./run.sh --project mesh --file update-revisionbased --cleanup-only
 ); then
     record_test_result 0
@@ -222,15 +223,15 @@ else
 fi
 
 # ------------------------------------------------------------------
-# Case 10: RevisionBased + IstioRevisionTag 更新策略测试
+# Case 10: RevisionBased + IstioRevisionTag 更新策略测试（含 Istio CNI 升级）
 # 顺序：update-revisionbased-and-istiorevisiontag --no-cleanup 安装+升级验证 → --cleanup-only 统一清理
+# 注：Istio CNI 升级已并入 update-revisionbased-and-istiorevisiontag 文档步骤 5（公共步骤库执行）
 # ------------------------------------------------------------------
 log_header "Case 10: RevisionBased + IstioRevisionTag 更新策略测试 (Update RevisionBased + IstioRevisionTag)"
 
 if (
     set -e
     ./run.sh --project mesh --file update-revisionbased-and-istiorevisiontag --no-cleanup --force-init
-    ./run.sh --project mesh --file istio-cni
     ./run.sh --project mesh --file update-revisionbased-and-istiorevisiontag --cleanup-only
 ); then
     record_test_result 0

@@ -239,6 +239,29 @@ else
     exit 1
 fi
 
+# ------------------------------------------------------------------
+# Case 11: Ambient 模式更新测试 (Update Ambient Mode)
+# 顺序：updating-ambient-components --no-cleanup 铺垫 v1.28.3 ambient 环境并升级三组件到 v1.28.6
+#       → waypoint-proxies 部署 waypoint（复用 Case 5 测试，bookinfo 已由上一步就绪）
+#       → updating-waypoint-proxies 验证 waypoint 版本与 L7 行为（自带 curl 前置）
+#       → updating-ambient-components --cleanup-only 统一清理（waypoint 随 bookinfo 命名空间回收）
+# ------------------------------------------------------------------
+log_header "Case 11: Ambient 模式更新测试 (Update Ambient Mode)"
+
+if (
+    set -e
+    ./run.sh --project mesh --file updating-ambient-components --no-cleanup --force-init
+    ./run.sh --project mesh --file waypoint-proxies
+    ./run.sh --project mesh --file updating-waypoint-proxies --no-cleanup
+    ./run.sh --project mesh --file updating-waypoint-proxies --cleanup-only
+    ./run.sh --project mesh --file updating-ambient-components --cleanup-only
+); then
+    record_test_result 0
+else
+    record_test_result 1
+    exit 1
+fi
+
 log_header "mesh 项目所有测试任务执行完成！"
 
 # 注意：print_test_summary 已通过 trap 注册，脚本退出时会自动执行，此处无需再次调用

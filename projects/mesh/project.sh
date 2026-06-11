@@ -79,6 +79,32 @@ kubectl_apply_with_mirror() {
         | eval "${cmd_content//-f $url/-f -}"
 }
 
+# (可选) 在 bookinfo 的 ratings pod 中后台生成请求流量
+# 用法: maybe_gen_bookinfo_traffic [namespace]   # namespace 默认 bookinfo
+# 说明:
+#   - 仅当 AUTO_GEN_BOOKINFO_TRAFFIC=true 时执行，否则静默返回（与原内联逻辑一致）。
+#   - 找到 app=ratings 的 pod，在其 ratings 容器内启动一个后台循环，每 ~10s 访问一次
+#     productpage:9080/productpage，使 Kiali 等可观测到持续流量。
+#   - 未找到 ratings pod 时打印 warning 并跳过（不视为失败）。
+#   - bookinfo 工作负载被重启后，承载循环的 ratings pod 会被销毁，需在重启就绪后再次调用本函数。
+maybe_gen_bookinfo_traffic() {
+    [ "${AUTO_GEN_BOOKINFO_TRAFFIC:-false}" == "true" ] || return 0
+
+    local ns="${1:-bookinfo}"
+    log_info "生成请求流量 (AUTO_GEN_BOOKINFO_TRAFFIC=true, namespace=$ns)"
+
+    local ratings_pod
+    ratings_pod=$(kubectl get pod -l app=ratings -n "$ns" -o jsonpath='{.items[0].metadata.name}')
+    if [ -n "$ratings_pod" ]; then
+        log_info "在 ratings pod ($ratings_pod) 中启动流量生成..."
+        kubectl exec "$ratings_pod" -c ratings -n "$ns" -- bash -lc "(while true; do curl -sS productpage:9080/productpage >/dev/null; sleep 9.9; done) >/dev/null 2>&1 & disown"
+        log_success "流量生成已启动"
+    else
+        log_warn "未找到 ratings pod, 跳过流量生成"
+    fi
+    return 0
+}
+
 # ==============================================================================
 # mesh 初始化专属函数
 # ==============================================================================

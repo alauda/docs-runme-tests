@@ -234,6 +234,8 @@ cd docs-runme-tests
 | Ambient Gateway API          | `./run.sh --project mesh --file exposing-a-service-via-k8s-gateway-api-in-ambient-mode`     |
 | Ambient Egress Gateway       | `./run.sh --project mesh --file routing-egress-traffic-via-k8s-gateway-api-in-ambient-mode` |
 | Ambient 模式网格卸载         | `./run.sh --project mesh --file uninstalling-alauda-service-mesh-in-ambient-mode`           |
+| Ambient 模式组件升级         | `./run.sh --project mesh --file updating-ambient-components`                                |
+| Ambient Waypoint 升级验证    | `./run.sh --project mesh --file updating-waypoint-proxies`                                  |
 | 多集群 - 配置概述（CA 证书） | `./run.sh --project mesh --file configuration-overview`                                     |
 | 多集群 - 多主多网络          | `./run.sh --project mesh --file install-multi-primary-multi-network`                        |
 | 多集群 - 主-远多网络         | `./run.sh --project mesh --file install-primary-remote-multi-network`                       |

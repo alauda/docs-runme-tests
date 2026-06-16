@@ -116,7 +116,9 @@ if (
     set -e
     # 安装 ambient 网格和应用（operator 可能已经被删除，所以要 --force-init）
     ./run.sh --project mesh --file installing-ambient-mode --force-init
+    ./run.sh --project mesh --file metrics-and-mesh
     ./run.sh --project mesh --file deploying-ambient-bookinfo --no-cleanup
+    ./run.sh --project mesh --file kiali
     ./run.sh --project mesh --file waypoint-proxies
     # L7 特性测试（独立测试，包含清理步骤）
     ./run.sh --project mesh --file ambient-l7-features --no-cleanup

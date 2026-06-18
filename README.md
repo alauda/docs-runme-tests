@@ -107,10 +107,11 @@ export AUTO_GEN_BOOKINFO_TRAFFIC=true
 # 网关内核兼容（仅内核 < 4.11/CentOS7 需要，默认 false）：开启后网关按 Linux 内核兼容处理——
 # 高端口网关（东西向 / waypoint）走 Scenario 1（去 sysctls），特权端口网关（监听 80 的 ingress/egress）走 Scenario 2（+ NET_BIND_SERVICE + root）
 export ENABLE_GW_LINUX_KERNEL_COMPAT=false
-# 是否安装 MetalLB 集群插件（仅多集群网格 / 网关场景需要，默认 false）
+# 是否安装 MetalLB 集群插件（多集群网格 / 入口网关 LoadBalancer 场景需要，默认 false）
 export ENABLE_METALLB=false
-# 外部 IP 地址池地址（仅 ENABLE_METALLB=true 且运行多集群 Case 6/7 时需要）：
-# JSON 数组，cluster 需与 EAST_CLUSTER_NAME / WEST_CLUSTER_NAME 对应；ipv6Addresses 为将来预留
+# 外部 IP 地址池地址（仅 ENABLE_METALLB=true 时需要）：JSON 数组，ipv6Addresses 为将来预留
+# - 多集群 Case 6/7：cluster 需与 EAST_CLUSTER_NAME / WEST_CLUSTER_NAME 对应
+# - 单集群入口网关 LoadBalancer 测试（Case 3/5 的 exposing-* 文档）：需含 cluster=$SINGLE_CLUSTER_NAME 条目
 export METALLB_EXTERNAL_ADDRESSES_JSON='[{"cluster":"business-1","ipv4Addresses":["192.168.139.13/32"]},{"cluster":"business-2","ipv4Addresses":["192.168.137.150/32"]}]'
 
 # ── 插件包地址 ──────────────────────────────────────────────
@@ -155,7 +156,7 @@ export TRACING_TEST_SPM=true
 | otel    | `PKG_OPENTELEMETRY_OPERATOR2_URL`                                                                           | `USE_MESH_V2_TEST_SUITE_PLUGIN=true` → `PKG_MESH_V2_TEST_SUITE_URL`                                                                                                                                 |
 | tracing | `PKG_OPENTELEMETRY_OPERATOR2_URL`                                                                           | `USE_MESH_V2_TEST_SUITE_PLUGIN=true` → `PKG_MESH_V2_TEST_SUITE_URL`；ES：`TRACING_ACP_ES_CLUSTER` 或 `TRACING_ES_ENDPOINT/USER/PASS`；OpenSearch：`TRACING_OPENSEARCH_ENDPOINT/USER/PASS`（仅手动） |
 
-> 注：`METALLB_EXTERNAL_ADDRESSES_JSON`（外部 IP 地址池地址，JSON 数组）在 `ENABLE_METALLB=true` 且运行多集群 Case 6/7 时需要，由 `setup_external_ip_pools` 创建地址池时校验（不在 `project_check_env`）。
+> 注：`METALLB_EXTERNAL_ADDRESSES_JSON`（外部 IP 地址池地址，JSON 数组）在 `ENABLE_METALLB=true` 时由 `setup_external_ip_pools` 创建地址池时校验（不在 `project_check_env`）：多集群 Case 6/7 需含 `cluster=$EAST_CLUSTER_NAME`/`$WEST_CLUSTER_NAME` 条目；单集群入口网关 LoadBalancer 测试（Case 3/5 的 exposing-* 文档）需含 `cluster=$SINGLE_CLUSTER_NAME` 条目。
 
 ### 4. kubeconfig 自动管理
 
@@ -224,6 +225,8 @@ cd docs-runme-tests
 | 网格调用链集成配置           | `./run.sh --project mesh --file config-with-service-mesh`                                   |
 | Kiali 安装与配置             | `./run.sh --project mesh --file kiali`                                                      |
 | Bookinfo 应用部署            | `./run.sh --project mesh --file deploying-the-bookinfo-application`                         |
+| Sidecar 网关 - Istio Gateway   | `./run.sh --project mesh --file exposing-a-service-via-istio-gateway`                       |
+| Sidecar 网关 - K8s Gateway API | `./run.sh --project mesh --file exposing-a-service-via-k8s-gateway-api-in-sidecar-mode`     |
 | Kiali 卸载                   | `./run.sh --project mesh --file uninstalling-alauda-build-of-kiali`                         |
 | 网格卸载                     | `./run.sh --project mesh --file uninstalling-alauda-service-mesh`                           |
 | InPlace 更新策略             | `./run.sh --project mesh --file update-inplace`                                             |

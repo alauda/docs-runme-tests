@@ -67,6 +67,11 @@ if (
     set -e
     # 安装网格和应用
     ./run.sh --project mesh --file install-mesh
+    # 入口网关 (sidecar 模式) 测试：复用 sidecar 控制面（含 IstioCNI），各自带清理
+    ./run.sh --project mesh --file exposing-a-service-via-istio-gateway --no-cleanup
+    ./run.sh --project mesh --file exposing-a-service-via-istio-gateway --cleanup-only
+    ./run.sh --project mesh --file exposing-a-service-via-k8s-gateway-api-in-sidecar-mode --no-cleanup
+    ./run.sh --project mesh --file exposing-a-service-via-k8s-gateway-api-in-sidecar-mode --cleanup-only
     ./run.sh --project mesh --file metrics-and-mesh
     ./run.sh --project mesh --file deploying-the-bookinfo-application --no-cleanup
     # 调用链集成：先装调用链平台，再配置网格上报，再装含调用链集成的 kiali

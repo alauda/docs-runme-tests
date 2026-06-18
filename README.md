@@ -104,6 +104,9 @@ export REGISTRY_MIRROR_ADDRESS=docker-mirrors.alauda.cn
 # ── 测试行为开关（mesh，可选）────────────────────────────────
 export IS_DUAL_STACK=false
 export AUTO_GEN_BOOKINFO_TRAFFIC=true
+# 网关内核兼容（仅内核 < 4.11/CentOS7 需要，默认 false）：开启后网关按 Linux 内核兼容处理——
+# 高端口网关（东西向 / waypoint）走 Scenario 1（去 sysctls），特权端口网关（监听 80 的 ingress/egress）走 Scenario 2（+ NET_BIND_SERVICE + root）
+export ENABLE_GW_LINUX_KERNEL_COMPAT=false
 # 是否安装 MetalLB 集群插件（仅多集群网格 / 网关场景需要，默认 false）
 export ENABLE_METALLB=false
 # 外部 IP 地址池地址（仅 ENABLE_METALLB=true 且运行多集群 Case 6/7 时需要）：
@@ -293,6 +296,18 @@ source "$FRAMEWORK_ROOT/framework/verify.sh"
 ### 4. 验证工具
 
 `framework/verify.sh` 提供输出比对函数：`__cmp_same`（精确）、`__cmp_contains`（包含）、`__cmp_not_contains`、`__cmp_regex`、`__cmp_lines`（逐行 +/- 断言）等。`__cmp_like` 暂有问题，勿用。
+
+### 5. mesh 网关安装 / Linux 内核兼容公共函数
+
+`projects/mesh/project.sh` 提供以下网关相关公共函数（封装自 `gateways/gateway-installation/` 两篇文档），供 `directing-traffic-into-the-mesh` / `directing-outbound-traffic` / `install-*-multi-network` 等测试复用：
+
+| 函数                                                                  | 用途                                                                                                                                |
+| --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `install_gateway_via_injection <gw_name> <gw_ns> [context]`           | 通过 gateway injection 安装网关（含可选 HPA/PDB；去 infra 调度；`ENABLE_GW_LINUX_KERNEL_COMPAT=true` 时 Deployment 以 root 运行）  |
+| `apply_kernel_compat_istio_gateway [run_as_root=true] [context]`      | Istio Gateway（注入）路径内核兼容：修补 mesh 级注入模板并等待 Istio Ready；关时 no-op                                              |
+| `apply_kernel_compat_k8s_gateway_api <ns> <gw_name> [run_as_root=true] [context]` | K8s Gateway API 路径内核兼容：建 `asm-kube-gateway-options` ConfigMap 并给 Gateway 挂 `parametersRef`；关时 no-op       |
+
+> 两个 `apply_kernel_compat_*` 受 `ENABLE_GW_LINUX_KERNEL_COMPAT` 门控（默认 false 时直接返回）。`run_as_root=false` → Scenario 1（仅去 sysctls，高端口网关）；`true` → Scenario 2（+ NET_BIND_SERVICE + root，特权端口网关）。多集群东西向网关与 ambient waypoint 传 `false`；监听 80 的 ambient ingress 网关用默认 `true`。
 
 ## 编写新测试
 

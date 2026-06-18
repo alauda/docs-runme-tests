@@ -106,6 +106,219 @@ maybe_gen_bookinfo_traffic() {
 }
 
 # ==============================================================================
+# 网关安装 / Linux 内核兼容 公共函数
+# ------------------------------------------------------------------------------
+# 供 directing-traffic-into-the-mesh / directing-outbound-traffic /
+# install-*-multi-network 等测试复用，封装自:
+#   - gateways/gateway-installation/installing-a-gateway-via-injection.mdx
+#   - gateways/gateway-installation/linux-kernel-compatibility-notice.mdx
+# 开关 ENABLE_GW_LINUX_KERNEL_COMPAT=true 时按内核 < 4.11 (CentOS7) 做网关兼容处理:
+#   - run_as_root=false → Scenario 1: 仅去除 pod 的 sysctls (高端口网关，如东西向/waypoint)
+#   - run_as_root=true  → Scenario 2: 去 sysctls + 加 NET_BIND_SERVICE + 以 root 运行
+#                                     (特权端口 < 1024，如监听 80 的 ingress/egress 网关)
+# 注: 内部 sed 使用 GNU sed 的 \n 替换扩展，面向 Linux CI。
+# ==============================================================================
+
+# 渲染 runme 块并替换网关占位符 <gateway_name>/<gateway_namespace>
+# 用法: _gw_render_block <block_name> <gw_name> <gw_ns>
+_gw_render_block() {
+    runme print "$1" | sed -e "s|<gateway_name>|$2|g" -e "s|<gateway_namespace>|$3|g"
+}
+
+# 对以 kubectl 开头的命令串注入 --context (ctx 为空则原样返回)
+# 用法: cmd=$(_gw_inject_ctx "$ctx" "$cmd")
+_gw_inject_ctx() {
+    local ctx="$1"; shift
+    local cmd="$*"
+    if [ -n "$ctx" ]; then
+        printf '%s' "${cmd//kubectl /kubectl --context $ctx }"
+    else
+        printf '%s' "$cmd"
+    fi
+}
+
+# 通过 gateway injection 安装网关 (installing-a-gateway-via-injection.mdx)
+# 用法: install_gateway_via_injection <gateway_name> <gateway_namespace> [context]
+# 说明:
+#   - 渲染文档 YAML 块替换占位符后，按文档 apply 块下发 (覆盖含可选 HPA/PDB 的全部命名块)
+#   - gateway Deployment 经 `kubectl patch --local` 去掉 infra 节点调度 (nodeSelector/tolerations)，
+#     使其可调度到通用测试集群
+#   - 当 ENABLE_GW_LINUX_KERNEL_COMPAT=true 时，把 istio-proxy 容器 securityContext 改为 root +
+#     NET_BIND_SERVICE (否则内核 < 4.11 下无法绑定 80 端口；注入合并语义下 Deployment 自身的
+#     securityContext 会覆盖注入模板，故此处必须一并设置)
+install_gateway_via_injection() {
+    local gw_name="$1" gw_ns="$2" ctx="${3:-}"
+    if [ -z "$gw_name" ] || [ -z "$gw_ns" ]; then
+        log_error "install_gateway_via_injection: 用法 <gateway_name> <gateway_namespace> [context]"
+        return 1
+    fi
+
+    log_info "=========================================="
+    log_info "通过 gateway injection 安装网关: name=$gw_name ns=$gw_ns${ctx:+ context=$ctx}"
+    if [ "${ENABLE_GW_LINUX_KERNEL_COMPAT:-false}" = "true" ]; then
+        log_info "ENABLE_GW_LINUX_KERNEL_COMPAT=true: 网关 Deployment 将以 root 运行并加 NET_BIND_SERVICE"
+    fi
+    log_info "=========================================="
+
+    local workdir; workdir=$(mktemp -d -t gwi-XXXXXX)
+
+    # 注: runme 需 CWD 位于文档仓库根 (引擎已 cd 至此) 才能解析代码块，
+    #     故所有 runme print / 渲染先在此完成，最后再切到 workdir 执行 apply。
+
+    # 渲染各 YAML 落盘 (替换占位符)
+    _gw_render_block install-gateway-injection:secret-reader-yaml "$gw_name" "$gw_ns" > "$workdir/secret-reader.yaml"
+    _gw_render_block install-gateway-injection:gateway-service-yaml "$gw_name" "$gw_ns" > "$workdir/gateway-service.yaml"
+    _gw_render_block install-gateway-injection:gateway-hpa-yaml "$gw_name" "$gw_ns" > "$workdir/gateway-hpa.yaml"
+    _gw_render_block install-gateway-injection:gateway-pdb-yaml "$gw_name" "$gw_ns" > "$workdir/gateway-pdb.yaml"
+
+    # gateway Deployment: 去 infra 调度 (+ 内核兼容时 root)，经 kubectl patch --local 改写后落盘
+    local merge='{"spec":{"template":{"spec":{"nodeSelector":null,"tolerations":null}}}}'
+    if [ "${ENABLE_GW_LINUX_KERNEL_COMPAT:-false}" = "true" ]; then
+        merge='{"spec":{"template":{"spec":{"nodeSelector":null,"tolerations":null,"containers":[{"name":"istio-proxy","securityContext":{"runAsNonRoot":false,"runAsUser":0,"runAsGroup":0,"readOnlyRootFilesystem":false,"capabilities":{"add":["NET_BIND_SERVICE"],"drop":["ALL"]}}}]}}}}'
+    fi
+    _gw_render_block install-gateway-injection:gateway-deployment-yaml "$gw_name" "$gw_ns" \
+        | kubectl patch --local -f - -o yaml -p "$merge" > "$workdir/gateway-deployment.yaml"
+
+    # 捕获各命令 (含占位符替换与 --context 注入；在 workdir 外完成 runme 解析)
+    local ns_cmd apply_sr apply_dep roll apply_svc ep apply_hpa apply_pdb
+    ns_cmd=$(_gw_inject_ctx "$ctx" "$(_gw_render_block install-gateway-injection:create-namespace "$gw_name" "$gw_ns")")
+    apply_sr=$(_gw_inject_ctx "$ctx" "$(runme print install-gateway-injection:apply-secret-reader)")
+    apply_dep=$(_gw_inject_ctx "$ctx" "$(runme print install-gateway-injection:apply-gateway-deployment)")
+    roll=$(_gw_inject_ctx "$ctx" "$(_gw_render_block install-gateway-injection:verify-rollout "$gw_name" "$gw_ns")")
+    apply_svc=$(_gw_inject_ctx "$ctx" "$(runme print install-gateway-injection:apply-gateway-service)")
+    ep=$(_gw_inject_ctx "$ctx" "$(_gw_render_block install-gateway-injection:verify-endpoints "$gw_name" "$gw_ns")")
+    apply_hpa=$(_gw_inject_ctx "$ctx" "$(runme print install-gateway-injection:apply-gateway-hpa)")
+    apply_pdb=$(_gw_inject_ctx "$ctx" "$(runme print install-gateway-injection:apply-gateway-pdb)")
+
+    # 切到 workdir 执行 (apply 块内使用相对文件名)
+    local rc=0
+    (
+        set -e
+        cd "$workdir"
+        eval "$ns_cmd" 2>&1 || true   # 命名空间容忍 AlreadyExists
+        eval "$apply_sr"
+        eval "$apply_dep"
+        eval "$roll"
+        eval "$apply_svc"
+        eval "$ep"
+        eval "$apply_hpa"
+        eval "$apply_pdb"
+    ) || rc=1
+
+    rm -rf "$workdir"
+    if [ "$rc" -ne 0 ]; then
+        log_error "gateway injection 安装失败: name=$gw_name ns=$gw_ns"
+        return 1
+    fi
+    log_success "gateway injection 安装完成: name=$gw_name ns=$gw_ns"
+    return 0
+}
+
+# Istio Gateway (gateway injection) 路径的内核兼容: 修补 mesh 级注入模板并等待 Istio Ready
+# 用法: apply_kernel_compat_istio_gateway [run_as_root=true] [context]
+# 说明: 关时直接返回; 多集群东西向网关 (高端口) 传 run_as_root=false (Scenario 1)
+apply_kernel_compat_istio_gateway() {
+    [ "${ENABLE_GW_LINUX_KERNEL_COMPAT:-false}" = "true" ] || return 0
+    local run_as_root="${1:-true}" ctx="${2:-}"
+
+    log_info "Istio Gateway 注入模板内核兼容: run_as_root=$run_as_root${ctx:+ context=$ctx}"
+
+    local workdir; workdir=$(mktemp -d -t gwkc-XXXXXX)
+    local tmpl="$workdir/gateway-injection-template.txt"
+
+    # 在文档仓库根解析 runme 块 (引擎已 cd 至此；勿在 workdir 内调用 runme)
+    if [ "$run_as_root" = "true" ]; then
+        # Scenario 2: 模板已含 sysctls: []，再加 NET_BIND_SERVICE 并改为 root 运行
+        runme print kernel-compat:istio-injection-template \
+            | sed -e 's#^\( *\)runAsUser: {{ \.ProxyUID | default "1337" }}$#\1capabilities:\n\1  add:\n\1  - NET_BIND_SERVICE\n\1runAsUser: 0#' \
+                  -e 's#^\( *\)runAsGroup: {{ \.ProxyGID | default "1337" }}$#\1runAsGroup: 0\n\1runAsNonRoot: false#' \
+            > "$tmpl"
+    else
+        # Scenario 1: 仅去 sysctls (模板已含 sysctls: [])
+        runme print kernel-compat:istio-injection-template > "$tmpl"
+    fi
+    if [ ! -s "$tmpl" ]; then
+        log_error "获取/渲染注入模板失败 (kernel-compat:istio-injection-template)"
+        rm -rf "$workdir"; return 1
+    fi
+
+    local patch_cmd wait_cmd
+    patch_cmd=$(_gw_inject_ctx "$ctx" "$(runme print kernel-compat:patch-istio-template)")
+    wait_cmd=$(_gw_inject_ctx "$ctx" "$(runme print kernel-compat:wait-istio-ready)")
+
+    # 切到 workdir 执行 (patch 块内 `cat gateway-injection-template.txt` 依赖 CWD)
+    local rc=0
+    ( set -e; cd "$workdir"; eval "$patch_cmd"; eval "$wait_cmd" ) || rc=1
+
+    rm -rf "$workdir"
+    if [ "$rc" -ne 0 ]; then
+        log_error "Istio Gateway 注入模板内核兼容处理失败"
+        return 1
+    fi
+    log_success "Istio Gateway 注入模板内核兼容处理完成"
+    return 0
+}
+
+# Kubernetes Gateway API 路径的内核兼容: 创建 asm-kube-gateway-options ConfigMap 并给 Gateway 挂 parametersRef
+# 用法: apply_kernel_compat_k8s_gateway_api <namespace> <gateway_name> [run_as_root=true] [context]
+# 说明: 关时直接返回; 高端口网关 (如 waypoint 15008) 传 run_as_root=false (Scenario 1)
+apply_kernel_compat_k8s_gateway_api() {
+    [ "${ENABLE_GW_LINUX_KERNEL_COMPAT:-false}" = "true" ] || return 0
+    local ns="$1" gw_name="$2" run_as_root="${3:-true}" ctx="${4:-}"
+    if [ -z "$ns" ] || [ -z "$gw_name" ]; then
+        log_error "apply_kernel_compat_k8s_gateway_api: 用法 <namespace> <gateway_name> [run_as_root] [context]"
+        return 1
+    fi
+    local kargs=(kubectl); [ -n "$ctx" ] && kargs+=(--context "$ctx")
+
+    log_info "K8s Gateway API 内核兼容: ns=$ns gw=$gw_name run_as_root=$run_as_root${ctx:+ context=$ctx}"
+
+    # 1. asm-kube-gateway-options ConfigMap (幂等)
+    local cm_block cm_yaml
+    if [ "$run_as_root" = "true" ]; then
+        cm_block="kernel-compat:k8s-gateway-options-scenario2"
+    else
+        cm_block="kernel-compat:k8s-gateway-options-scenario1"
+    fi
+    cm_yaml=$(runme print "$cm_block" | sed "s|<your-gateway-namespace>|$ns|g")
+    if [ "$run_as_root" = "true" ]; then
+        # 取消 root 行注释 (# 为内容字符，sed 用 @ 作分隔符)
+        cm_yaml=$(printf '%s\n' "$cm_yaml" | sed -E 's@^([[:space:]]*)# (runAsUser: 0|runAsGroup: 0|runAsNonRoot: false)$@\1\2@')
+    fi
+    printf '%s\n' "$cm_yaml" | "${kargs[@]}" apply -f - || {
+        log_error "创建 asm-kube-gateway-options ConfigMap 失败 (ns=$ns)"
+        return 1
+    }
+
+    # 2. 给目标 Gateway 挂接 parametersRef，使其使用上述 ConfigMap
+    "${kargs[@]}" -n "$ns" patch gateway "$gw_name" --type=merge \
+        -p '{"spec":{"infrastructure":{"parametersRef":{"group":"","kind":"ConfigMap","name":"asm-kube-gateway-options"}}}}' || {
+        log_error "为 Gateway $gw_name 挂接 parametersRef 失败 (ns=$ns)"
+        return 1
+    }
+
+    # 3. 等待该 Gateway 生成的 Deployment 重新就绪 (parametersRef 触发控制器重建；按 gateway-name 标签定位，类无关)
+    #    Deployment 可能滞后于 parametersRef patch，故先轮询等待其出现，再等 rollout
+    local dep="" attempt
+    for ((attempt=1; attempt<=12; attempt++)); do
+        dep=$("${kargs[@]}" -n "$ns" get deploy -l "gateway.networking.k8s.io/gateway-name=$gw_name" -o name 2>/dev/null | head -n1)
+        [ -n "$dep" ] && break
+        sleep 5
+    done
+    if [ -n "$dep" ]; then
+        "${kargs[@]}" -n "$ns" rollout status "$dep" --timeout=5m || {
+            log_error "Gateway $gw_name 的 Deployment 重建未就绪 (ns=$ns)"
+            return 1
+        }
+    else
+        log_warn "未找到 Gateway $gw_name 生成的 Deployment (ns=$ns)，跳过 rollout 等待"
+    fi
+
+    log_success "K8s Gateway API 内核兼容处理完成: ns=$ns gw=$gw_name"
+    return 0
+}
+
+# ==============================================================================
 # mesh 初始化专属函数
 # ==============================================================================
 

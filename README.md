@@ -227,6 +227,8 @@ cd docs-runme-tests
 | Bookinfo 应用部署            | `./run.sh --project mesh --file deploying-the-bookinfo-application`                         |
 | Sidecar 网关 - Istio Gateway   | `./run.sh --project mesh --file exposing-a-service-via-istio-gateway`                       |
 | Sidecar 网关 - K8s Gateway API | `./run.sh --project mesh --file exposing-a-service-via-k8s-gateway-api-in-sidecar-mode`     |
+| Sidecar 出口网关 - Istio APIs   | `./run.sh --project mesh --file routing-egress-traffic-via-istio-apis`                      |
+| Sidecar 出口网关 - K8s Gateway API | `./run.sh --project mesh --file routing-egress-traffic-via-k8s-gateway-api-in-sidecar-mode` |
 | Kiali 卸载                   | `./run.sh --project mesh --file uninstalling-alauda-build-of-kiali`                         |
 | 网格卸载                     | `./run.sh --project mesh --file uninstalling-alauda-service-mesh`                           |
 | InPlace 更新策略             | `./run.sh --project mesh --file update-inplace`                                             |

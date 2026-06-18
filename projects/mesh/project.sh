@@ -138,27 +138,27 @@ _gw_inject_ctx() {
 }
 
 # 通过 gateway injection 安装网关 (installing-a-gateway-via-injection.mdx)
-# 用法: install_gateway_via_injection <gateway_name> <gateway_namespace> [context]
+# 用法: install_gateway_via_injection <gateway_name> <gateway_namespace> [run_as_root=true] [context]
 # 说明:
-#   - 渲染文档 YAML 块替换占位符后，按文档 apply 块下发 (覆盖含可选 HPA/PDB 的全部命名块)
-#   - gateway Deployment 经 `kubectl patch --local` 去掉 infra 节点调度 (nodeSelector/tolerations)，
-#     使其可调度到通用测试集群
-#   - 当 ENABLE_GW_LINUX_KERNEL_COMPAT=true 时，把 istio-proxy 容器 securityContext 改为 root +
-#     NET_BIND_SERVICE (否则内核 < 4.11 下无法绑定 80 端口；注入合并语义下 Deployment 自身的
-#     securityContext 会覆盖注入模板，故此处必须一并设置)
+#   - 严格按文档渲染各 YAML 块 (替换占位符) 并下发，覆盖含可选 HPA/PDB 的全部命名块；
+#     不对 Deployment 做任何额外改写 (securityContext 等保持文档原样)
+#   - 内核 < 4.11 兼容在本函数内处理: 创建网关 Deployment 前先调 apply_kernel_compat_istio_gateway,
+#     按 linux-kernel-compatibility-notice.mdx 修补 mesh 级 gateway 注入模板 (开关关时 no-op);
+#     注入时模板的 securityContext (sysctls / NET_BIND_SERVICE / root) 会 overlay 到 istio-proxy 容器;
+#     监听特权端口 < 1024 (如 80) 的网关传 run_as_root=true 走 Scenario 2, 高端口传 false 走 Scenario 1
 install_gateway_via_injection() {
-    local gw_name="$1" gw_ns="$2" ctx="${3:-}"
+    local gw_name="$1" gw_ns="$2" run_as_root="${3:-true}" ctx="${4:-}"
     if [ -z "$gw_name" ] || [ -z "$gw_ns" ]; then
-        log_error "install_gateway_via_injection: 用法 <gateway_name> <gateway_namespace> [context]"
+        log_error "install_gateway_via_injection: 用法 <gateway_name> <gateway_namespace> [run_as_root] [context]"
         return 1
     fi
 
     log_info "=========================================="
     log_info "通过 gateway injection 安装网关: name=$gw_name ns=$gw_ns${ctx:+ context=$ctx}"
-    if [ "${ENABLE_GW_LINUX_KERNEL_COMPAT:-false}" = "true" ]; then
-        log_info "ENABLE_GW_LINUX_KERNEL_COMPAT=true: 网关 Deployment 将以 root 运行并加 NET_BIND_SERVICE"
-    fi
     log_info "=========================================="
+
+    # 内核 < 4.11 兼容: 必须在创建网关 Deployment 前修补 mesh 级注入模板 (ENABLE_GW_LINUX_KERNEL_COMPAT 关时 no-op)
+    apply_kernel_compat_istio_gateway "$run_as_root" "$ctx" || return 1
 
     local workdir; workdir=$(mktemp -d -t gwi-XXXXXX)
 
@@ -170,14 +170,7 @@ install_gateway_via_injection() {
     _gw_render_block install-gateway-injection:gateway-service-yaml "$gw_name" "$gw_ns" > "$workdir/gateway-service.yaml"
     _gw_render_block install-gateway-injection:gateway-hpa-yaml "$gw_name" "$gw_ns" > "$workdir/gateway-hpa.yaml"
     _gw_render_block install-gateway-injection:gateway-pdb-yaml "$gw_name" "$gw_ns" > "$workdir/gateway-pdb.yaml"
-
-    # gateway Deployment: 去 infra 调度 (+ 内核兼容时 root)，经 kubectl patch --local 改写后落盘
-    local merge='{"spec":{"template":{"spec":{"nodeSelector":null,"tolerations":null}}}}'
-    if [ "${ENABLE_GW_LINUX_KERNEL_COMPAT:-false}" = "true" ]; then
-        merge='{"spec":{"template":{"spec":{"nodeSelector":null,"tolerations":null,"containers":[{"name":"istio-proxy","securityContext":{"runAsNonRoot":false,"runAsUser":0,"runAsGroup":0,"readOnlyRootFilesystem":false,"capabilities":{"add":["NET_BIND_SERVICE"],"drop":["ALL"]}}}]}}}}'
-    fi
-    _gw_render_block install-gateway-injection:gateway-deployment-yaml "$gw_name" "$gw_ns" \
-        | kubectl patch --local -f - -o yaml -p "$merge" > "$workdir/gateway-deployment.yaml"
+    _gw_render_block install-gateway-injection:gateway-deployment-yaml "$gw_name" "$gw_ns" > "$workdir/gateway-deployment.yaml"
 
     # 捕获各命令 (含占位符替换与 --context 注入；在 workdir 外完成 runme 解析)
     local ns_cmd apply_sr apply_dep roll apply_svc ep apply_hpa apply_pdb

@@ -116,7 +116,7 @@ maybe_gen_bookinfo_traffic() {
 #   - run_as_root=false → Scenario 1: 仅去除 pod 的 sysctls (高端口网关，如东西向/waypoint)
 #   - run_as_root=true  → Scenario 2: 去 sysctls + 加 NET_BIND_SERVICE + 以 root 运行
 #                                     (特权端口 < 1024，如监听 80 的 ingress/egress 网关)
-# 注: 内部 sed 使用 GNU sed 的 \n 替换扩展，面向 Linux CI。
+# 注: 内部文本处理兼容 GNU(Linux CI) 与 BSD(macOS) 的 sed/awk，不依赖 GNU sed 的 \n 替换扩展。
 # ==============================================================================
 
 # 渲染 runme 块并替换网关占位符 <gateway_name>/<gateway_namespace>
@@ -171,15 +171,18 @@ install_gateway_via_injection() {
     _gw_render_block install-gateway-injection:gateway-service-yaml "$gw_name" "$gw_ns" > "$workdir/gateway-service.yaml"
     _gw_render_block install-gateway-injection:gateway-hpa-yaml "$gw_name" "$gw_ns" > "$workdir/gateway-hpa.yaml"
     _gw_render_block install-gateway-injection:gateway-pdb-yaml "$gw_name" "$gw_ns" > "$workdir/gateway-pdb.yaml"
-    _gw_render_block install-gateway-injection:gateway-deployment-yaml "$gw_name" "$gw_ns" > "$workdir/gateway-deployment.yaml"
-
     # 内核 < 4.11 且以 root 运行 (Scenario 2 root) 时: 文档 gateway-deployment.yaml 的 istio-proxy 容器
     # 显式声明了容器级 runAsNonRoot: true，注入合并时其优先级高于被修补的注入模板 (runAsNonRoot: false)，
     # 会与模板下发的 runAsUser: 0 冲突，触发 kubelet "container's runAsUser breaks non-root policy"。
     # 故下发前将其改为 false，使网关安装配置与内核兼容处理保持一致
-    # (详见 gateways/gateway-installation/linux-kernel-compatibility-notice.mdx)。开关关或非 root 时不改写。
+    # (详见 gateways/gateway-installation/linux-kernel-compatibility-notice.mdx)。开关关或非 root 时原样下发。
+    # 注: 用「渲染管道 + 普通替换」而非 sed -i/-E，确保 GNU(Linux CI) 与 BSD(macOS) sed 均可用
+    #     (BSD sed 的 -i 须紧跟备份后缀，会把 -E 误当后缀，致基本正则下 \1 反向引用未定义而报错)。
     if [ "${ENABLE_GW_LINUX_KERNEL_COMPAT:-false}" = "true" ] && [ "$run_as_root" = "true" ]; then
-        sed -i -E 's/(runAsNonRoot:[[:space:]]*)true/\1false/' "$workdir/gateway-deployment.yaml"
+        _gw_render_block install-gateway-injection:gateway-deployment-yaml "$gw_name" "$gw_ns" \
+            | sed 's/runAsNonRoot: true/runAsNonRoot: false/' > "$workdir/gateway-deployment.yaml"
+    else
+        _gw_render_block install-gateway-injection:gateway-deployment-yaml "$gw_name" "$gw_ns" > "$workdir/gateway-deployment.yaml"
     fi
 
     # 捕获各命令 (含占位符替换与 --context 注入；在 workdir 外完成 runme 解析)
@@ -231,11 +234,21 @@ apply_kernel_compat_istio_gateway() {
 
     # 在文档仓库根解析 runme 块 (引擎已 cd 至此；勿在 workdir 内调用 runme)
     if [ "$run_as_root" = "true" ]; then
-        # Scenario 2: 模板已含 sysctls: []，再加 NET_BIND_SERVICE 并改为 root 运行
+        # Scenario 2: 模板已含 sysctls: []，再加 NET_BIND_SERVICE 并改为 root 运行。
+        # 用 awk 逐行匹配并按原缩进展开多行（而非 GNU sed 的 \n 替换扩展），以兼容 BSD(macOS) 与 GNU(Linux CI)；
+        # 已验证与原 sed \n 版本输出字节级一致。正则用 [{] [|] [.] 括号表达式，避免部分 awk 的转义告警。
         runme print kernel-compat:istio-injection-template \
-            | sed -e 's#^\( *\)runAsUser: {{ \.ProxyUID | default "1337" }}$#\1capabilities:\n\1  add:\n\1  - NET_BIND_SERVICE\n\1runAsUser: 0#' \
-                  -e 's#^\( *\)runAsGroup: {{ \.ProxyGID | default "1337" }}$#\1runAsGroup: 0\n\1runAsNonRoot: false#' \
-            > "$tmpl"
+            | awk '
+                /^[[:space:]]*runAsUser: [{][{] [.]ProxyUID [|] default "1337" [}][}]$/ {
+                    match($0, /^[[:space:]]*/); ind = substr($0, 1, RLENGTH)
+                    print ind "capabilities:"; print ind "  add:"; print ind "  - NET_BIND_SERVICE"; print ind "runAsUser: 0"; next
+                }
+                /^[[:space:]]*runAsGroup: [{][{] [.]ProxyGID [|] default "1337" [}][}]$/ {
+                    match($0, /^[[:space:]]*/); ind = substr($0, 1, RLENGTH)
+                    print ind "runAsGroup: 0"; print ind "runAsNonRoot: false"; next
+                }
+                { print }
+            ' > "$tmpl"
     else
         # Scenario 1: 仅去 sysctls (模板已含 sysctls: [])
         runme print kernel-compat:istio-injection-template > "$tmpl"

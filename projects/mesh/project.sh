@@ -140,8 +140,9 @@ _gw_inject_ctx() {
 # 通过 gateway injection 安装网关 (installing-a-gateway-via-injection.mdx)
 # 用法: install_gateway_via_injection <gateway_name> <gateway_namespace> [run_as_root=true] [context]
 # 说明:
-#   - 严格按文档渲染各 YAML 块 (替换占位符) 并下发，覆盖含可选 HPA/PDB 的全部命名块；
-#     不对 Deployment 做任何额外改写 (securityContext 等保持文档原样)
+#   - 默认严格按文档渲染各 YAML 块 (替换占位符) 并下发，覆盖含可选 HPA/PDB 的全部命名块；
+#     唯一例外: 内核兼容且以 root 运行时，将 Deployment 的 istio-proxy 容器 runAsNonRoot 改为 false
+#     (与被修补注入模板的 runAsUser: 0 保持一致，避免容器级 runAsNonRoot: true 覆盖模板致 pod 被拒)
 #   - 内核 < 4.11 兼容在本函数内处理: 创建网关 Deployment 前先调 apply_kernel_compat_istio_gateway,
 #     按 linux-kernel-compatibility-notice.mdx 修补 mesh 级 gateway 注入模板 (开关关时 no-op);
 #     注入时模板的 securityContext (sysctls / NET_BIND_SERVICE / root) 会 overlay 到 istio-proxy 容器;
@@ -171,6 +172,15 @@ install_gateway_via_injection() {
     _gw_render_block install-gateway-injection:gateway-hpa-yaml "$gw_name" "$gw_ns" > "$workdir/gateway-hpa.yaml"
     _gw_render_block install-gateway-injection:gateway-pdb-yaml "$gw_name" "$gw_ns" > "$workdir/gateway-pdb.yaml"
     _gw_render_block install-gateway-injection:gateway-deployment-yaml "$gw_name" "$gw_ns" > "$workdir/gateway-deployment.yaml"
+
+    # 内核 < 4.11 且以 root 运行 (Scenario 2 root) 时: 文档 gateway-deployment.yaml 的 istio-proxy 容器
+    # 显式声明了容器级 runAsNonRoot: true，注入合并时其优先级高于被修补的注入模板 (runAsNonRoot: false)，
+    # 会与模板下发的 runAsUser: 0 冲突，触发 kubelet "container's runAsUser breaks non-root policy"。
+    # 故下发前将其改为 false，使网关安装配置与内核兼容处理保持一致
+    # (详见 gateways/gateway-installation/linux-kernel-compatibility-notice.mdx)。开关关或非 root 时不改写。
+    if [ "${ENABLE_GW_LINUX_KERNEL_COMPAT:-false}" = "true" ] && [ "$run_as_root" = "true" ]; then
+        sed -i -E 's/(runAsNonRoot:[[:space:]]*)true/\1false/' "$workdir/gateway-deployment.yaml"
+    fi
 
     # 捕获各命令 (含占位符替换与 --context 注入；在 workdir 外完成 runme 解析)
     local ns_cmd apply_sr apply_dep roll apply_svc ep apply_hpa apply_pdb
@@ -249,6 +259,35 @@ apply_kernel_compat_istio_gateway() {
         return 1
     fi
     log_success "Istio Gateway 注入模板内核兼容处理完成"
+    return 0
+}
+
+# 内核 < 4.11 + 以 root 运行的「注入网关」一致性修正: 将其 Deployment 的 istio-proxy 容器
+# runAsNonRoot 置为 false，与被修补注入模板的 runAsUser: 0 保持一致。
+# 背景: gateway injection 的 Deployment (如上游 ingress-gateway.yaml) 容器级 securityContext 常含
+#       runAsNonRoot: true，注入合并时其优先级高于注入模板的 runAsNonRoot: false，会与 runAsUser: 0
+#       冲突，触发 kubelet "container's runAsUser breaks non-root policy"，pod 无法创建、rollout 卡住。
+# 适用: 经 kubectl apply 直接下发的注入网关；install_gateway_via_injection 已在渲染期 sed 处理，无需调用本函数。
+# 用法: reconcile_injected_gateway_runasroot <namespace> <deployment> [run_as_root=true] [context]
+# 说明: 仅 ENABLE_GW_LINUX_KERNEL_COMPAT=true 且 run_as_root=true 时生效，否则 no-op。
+reconcile_injected_gateway_runasroot() {
+    [ "${ENABLE_GW_LINUX_KERNEL_COMPAT:-false}" = "true" ] || return 0
+    local ns="$1" dep="$2" run_as_root="${3:-true}" ctx="${4:-}"
+    [ "$run_as_root" = "true" ] || return 0
+    if [ -z "$ns" ] || [ -z "$dep" ]; then
+        log_error "reconcile_injected_gateway_runasroot: 用法 <namespace> <deployment> [run_as_root] [context]"
+        return 1
+    fi
+    local kargs=(kubectl); [ -n "$ctx" ] && kargs+=(--context "$ctx")
+
+    log_info "内核兼容(root): 修正注入网关 Deployment $dep 的 istio-proxy runAsNonRoot=false (ns=$ns)"
+    # 策略合并 (默认 strategic): 按容器名 istio-proxy 合并，仅改 runAsNonRoot，保留其余 securityContext 字段；
+    # patch 触发滚动更新，新副本以一致的 securityContext 重新注入后即可被准入。
+    "${kargs[@]}" -n "$ns" patch deployment "$dep" \
+        -p '{"spec":{"template":{"spec":{"containers":[{"name":"istio-proxy","securityContext":{"runAsNonRoot":false}}]}}}}' || {
+        log_error "修正注入网关 $dep 的 runAsNonRoot 失败 (ns=$ns)"
+        return 1
+    }
     return 0
 }
 

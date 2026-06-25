@@ -224,6 +224,44 @@ JQ
     printf '%s' "$1" | jq -r "$prog"
 }
 
+# ── 内部：从 summary JSON 渲染美化终端摘要，stdout 输出 ──
+# 用法: _report_print_terminal <summary-json-string>
+_report_print_terminal() {
+    local prog
+    prog=$(cat <<'JQ'
+def fmtdur: . as $t | ($t/60|floor) as $m | ($t%60) as $s | (if $m>0 then "\($m)m\($s)s" else "\($s)s" end);
+def icon: if .=="passed" then "PASS" elif .=="failed" then "FAIL" else "SKIP" end;
+"================================================================",
+"  测试运行汇总   run-id: \(.run_id)   项目: \(.project)",
+"================================================================",
+"  总耗时 \(.duration_s|fmtdur)",
+"  Case      \(.totals.cases.total)   ✓\(.totals.cases.passed)  ✗\(.totals.cases.failed)  ⊘\(.totals.cases.skipped)",
+"  文档测试  \(.totals.doctests.total)   ✓\(.totals.doctests.passed)  ✗\(.totals.doctests.failed)  ⊘\(.totals.doctests.skipped)",
+"----------------------------------------------------------------",
+(.cases[] |
+  (.doctests|map(select(.status=="passed"))|length) as $p |
+  (.doctests|map(select(.status=="failed"))|length) as $f |
+  (.doctests|map(select(.status=="skipped"))|length) as $s |
+  "  [\(.status|icon)] Case \(.case_id): \(.case_name)   ✓\($p) ✗\($f) ⊘\($s)   \(.duration_s|fmtdur)"
+),
+"----------------------------------------------------------------",
+"  ✗ 失败明细",
+(([.cases[] | .case_id as $cid | .doctests[] | select(.status=="failed")
+   | "    [Case\($cid)] \(.project)/\(.file)   \(.duration_s|fmtdur)   \(.fail_reason)"]) as $f
+ | if ($f|length)==0 then "    （无）" else $f[] end),
+"  ⊘ 跳过明细",
+(([.cases[] | select(.status=="skipped") | "    [Case\(.case_id)] \(.case_name)   \(.skip_reason)"]
+  + [.cases[] | .case_id as $cid | .doctests[] | select(.status=="skipped")
+     | "    [Case\($cid)] \(.project)/\(.file)   \(.skip_reason)"]) as $s
+ | if ($s|length)==0 then "    （无）" else $s[] end),
+"================================================================",
+"  结果: \(.result)",
+"================================================================"
+JQ
+)
+    printf '%s' "$1" | jq -r "$prog"
+}
+
 # ── report_finalize（聚合 + 写 summary.json；Task 3/4 继续增强）──
 report_finalize() {
     local results="${RUNME_TEST_RUN_DIR:-}/results.jsonl"
@@ -239,14 +277,12 @@ report_finalize() {
     printf '%s\n' "$summary" > "$RUNME_TEST_RUN_DIR/summary.json"
     _report_write_junit "$summary" > "$RUNME_TEST_RUN_DIR/junit.xml"
 
-    local dt_total dt_failed result
-    dt_total="$(printf '%s' "$summary" | jq -r '.totals.doctests.total')"
-    dt_failed="$(printf '%s' "$summary" | jq -r '.totals.doctests.failed')"
+    local result
     result="$(printf '%s' "$summary" | jq -r '.result')"
 
     echo ""
-    echo "测试汇总：DocTest 共 $dt_total，失败 $dt_failed（result=$result）"
-    echo "报告目录：$RUNME_TEST_RUN_DIR"
+    _report_print_terminal "$summary"
+    echo "  报告目录: $RUNME_TEST_RUN_DIR"
 
     [ "$result" = "failed" ] && return 1
     return 0

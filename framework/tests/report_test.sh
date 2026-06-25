@@ -141,6 +141,29 @@ test_junit() {
     rm -rf "$RUNME_TEST_RUN_DIR"
 }
 
+# ── 测试：终端摘要 ──
+test_terminal() {
+    printf '\n== 终端摘要 ==\n'
+    new_sandbox
+    RUNME_TEST_RUN_ID="testrun"; RUNME_TEST_PROJECT="mesh"; RUNME_TEST_RUN_START=100
+    export RUNME_TEST_RUN_ID RUNME_TEST_PROJECT RUNME_TEST_RUN_START
+    printf '%s\n' \
+      '{"type":"case_skip","case_id":"2","case_name":"双栈","skip_reason":"IS_DUAL_STACK != true"}' \
+      '{"type":"doctest","project":"mesh","file":"kiali","script":"x.sh","case_id":"3","case_name":"单网格","phase":"test","status":"failed","skip_reason":"","fail_reason":"pod 未就绪","start_ts":1,"end_ts":131,"duration_s":130}' \
+      '{"type":"case","case_id":"3","case_name":"单网格","status":"failed","duration_s":130}' \
+      > "$RUNME_TEST_RUN_DIR/results.jsonl"
+
+    local out; out="$(report_finalize 2>&1)"
+    check_contains "标题" "$out" "测试运行汇总"
+    check_contains "Case 计数行" "$out" "Case"
+    check_contains "文档测试计数行" "$out" "文档测试"
+    check_contains "失败明细含文件" "$out" "mesh/kiali"
+    check_contains "失败原因" "$out" "pod 未就绪"
+    check_contains "跳过明细" "$out" "双栈"
+    check_contains "耗时格式" "$out" "2m10s"
+    rm -rf "$RUNME_TEST_RUN_DIR"
+}
+
 main() {
     test_name_parse
     test_record_doctest
@@ -148,6 +171,7 @@ main() {
     test_finalize_exit
     test_aggregate
     test_junit
+    test_terminal
     printf '\n==================================\n'
     printf '通过: %d  失败: %d\n' "$T_PASS" "$T_FAIL"
     [ "$T_FAIL" -eq 0 ]

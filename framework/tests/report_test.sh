@@ -69,6 +69,7 @@ test_case_skip() {
     local line; line="$(cat "$RUNME_TEST_RUN_DIR/results.jsonl")"
     check_contains "type=case_skip" "$line" '"type":"case_skip"'
     check_contains "reason" "$line" '"skip_reason":"IS_DUAL_STACK != true"'
+    check_contains "case_id=2" "$line" '"case_id":"2"'
     rm -rf "$RUNME_TEST_RUN_DIR"
 }
 

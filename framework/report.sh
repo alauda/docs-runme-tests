@@ -60,7 +60,8 @@ report_init() {
 report_record_doctest() {
     local project="$1" file="$2" script="$3" phase="$4" status="$5"
     local skip_reason="$6" fail_reason="$7" start_ts="$8" end_ts="$9"
-    local duration=$(( end_ts - start_ts ))
+    local duration
+    duration=$(( end_ts - start_ts ))
     _report_append "$(jq -nc \
         --arg type "doctest" --arg project "$project" --arg file "$file" \
         --arg script "$script" --arg case_id "${RUNME_TEST_CASE_ID:-}" \
@@ -114,6 +115,7 @@ case_end_fatal() {
     fi
     _case_record "failed"
     log_error "致命前置 Case ${RUNME_TEST_CASE_ID:-?}: ${RUNME_TEST_CASE_NAME:-} 失败，中止整个 Run"
+    unset RUNME_TEST_CASE_ID RUNME_TEST_CASE_NAME
     report_finalize
     exit 1
 }

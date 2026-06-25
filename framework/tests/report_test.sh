@@ -155,11 +155,12 @@ test_terminal() {
 
     local out; out="$(report_finalize 2>&1)"
     check_contains "标题" "$out" "测试运行汇总"
-    check_contains "Case 计数行" "$out" "Case"
+    check_contains "Case 计数行" "$out" "Case      "
     check_contains "文档测试计数行" "$out" "文档测试"
     check_contains "失败明细含文件" "$out" "mesh/kiali"
     check_contains "失败原因" "$out" "pod 未就绪"
     check_contains "跳过明细" "$out" "双栈"
+    check_contains "跳过明细含原因" "$out" "IS_DUAL_STACK != true"
     check_contains "耗时格式" "$out" "2m10s"
     rm -rf "$RUNME_TEST_RUN_DIR"
 }

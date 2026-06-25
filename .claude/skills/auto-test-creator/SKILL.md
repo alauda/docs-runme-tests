@@ -498,19 +498,26 @@ output=$(runme run <prefix>:<action> 2>&1) || {
 # ------------------------------------------------------------------
 # Case N: <测试描述>
 # ------------------------------------------------------------------
-log_header "Case N: <测试描述>"
+case_begin "N" "<测试描述>"
 
 if (
     set -e
     ./run.sh --file <test-name> --no-cleanup
     ./run.sh --file <test-name> --cleanup-only
 ); then
-    record_test_result 0
+    case_end 0
 else
-    record_test_result 1
-    exit 1
+    case_end 1
 fi
 ```
+
+> **测试结果统计（三层：Run → Case → DocTest）**：统计由 `framework/report.sh` 承载，编排脚本顶部需 `source framework/report.sh` + `report_init <项目>` + `export RUNME_TEST_ORCHESTRATED=1` + `trap report_finalize EXIT`（现有 `run-<project>-all.sh` 已具备）。Case 边界用：
+> - `case_begin "N" "描述"` 开始一个 Case；`case_end 0/1` 结束（**普通 Case 失败只记录、不 `exit 1`，跑完全部再汇总**）。
+> - 致命前置（如环境初始化）失败要中止整个 Run 时，用 `case_end_fatal 1` 取代 `case_end 1`。
+> - 条件跳过（缺环境变量等）用 `case_skip "N" "描述" "跳过原因"` 取代整个 if 块。
+> - 文档脚本内部主动跳过用 `skip_test "原因"`（引擎据此记 DocTest 为 skipped 第三态）。
+>
+> 退出时 `report_finalize` 自动产出美化终端摘要 + `tmp/runs/<run-id>/{summary.json,junit.xml}`。详见仓库 README「测试结果统计」章节。
 
 ### 第七步：设置可执行权限
 

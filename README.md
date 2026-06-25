@@ -104,10 +104,14 @@ export REGISTRY_MIRROR_ADDRESS=docker-mirrors.alauda.cn
 # ── 测试行为开关（mesh，可选）────────────────────────────────
 export IS_DUAL_STACK=false
 export AUTO_GEN_BOOKINFO_TRAFFIC=true
-# 是否安装 MetalLB 集群插件（仅多集群网格 / 网关场景需要，默认 false）
+# 网关内核兼容（仅内核 < 4.11/CentOS7 需要，默认 false）：开启后网关按 Linux 内核兼容处理——
+# 高端口网关（东西向 / waypoint）走 Scenario 1（去 sysctls），特权端口网关（监听 80 的 ingress/egress）走 Scenario 2（+ NET_BIND_SERVICE + root）
+export ENABLE_GW_LINUX_KERNEL_COMPAT=false
+# 是否安装 MetalLB 集群插件（多集群网格 / 入口网关 LoadBalancer 场景需要，默认 false）
 export ENABLE_METALLB=false
-# 外部 IP 地址池地址（仅 ENABLE_METALLB=true 且运行多集群 Case 6/7 时需要）：
-# JSON 数组，cluster 需与 EAST_CLUSTER_NAME / WEST_CLUSTER_NAME 对应；ipv6Addresses 为将来预留
+# 外部 IP 地址池地址（仅 ENABLE_METALLB=true 时需要）：JSON 数组，ipv6Addresses 为将来预留
+# - 多集群 Case 6/7：cluster 需与 EAST_CLUSTER_NAME / WEST_CLUSTER_NAME 对应
+# - 单集群入口网关 LoadBalancer 测试（Case 3/5 的 exposing-* 文档）：需含 cluster=$SINGLE_CLUSTER_NAME 条目
 export METALLB_EXTERNAL_ADDRESSES_JSON='[{"cluster":"business-1","ipv4Addresses":["192.168.139.13/32"]},{"cluster":"business-2","ipv4Addresses":["192.168.137.150/32"]}]'
 
 # ── 插件包地址 ──────────────────────────────────────────────
@@ -152,7 +156,7 @@ export TRACING_TEST_SPM=true
 | otel    | `PKG_OPENTELEMETRY_OPERATOR2_URL`                                                                           | `USE_MESH_V2_TEST_SUITE_PLUGIN=true` → `PKG_MESH_V2_TEST_SUITE_URL`                                                                                                                                 |
 | tracing | `PKG_OPENTELEMETRY_OPERATOR2_URL`                                                                           | `USE_MESH_V2_TEST_SUITE_PLUGIN=true` → `PKG_MESH_V2_TEST_SUITE_URL`；ES：`TRACING_ACP_ES_CLUSTER` 或 `TRACING_ES_ENDPOINT/USER/PASS`；OpenSearch：`TRACING_OPENSEARCH_ENDPOINT/USER/PASS`（仅手动） |
 
-> 注：`METALLB_EXTERNAL_ADDRESSES_JSON`（外部 IP 地址池地址，JSON 数组）在 `ENABLE_METALLB=true` 且运行多集群 Case 6/7 时需要，由 `setup_external_ip_pools` 创建地址池时校验（不在 `project_check_env`）。
+> 注：`METALLB_EXTERNAL_ADDRESSES_JSON`（外部 IP 地址池地址，JSON 数组）在 `ENABLE_METALLB=true` 时由 `setup_external_ip_pools` 创建地址池时校验（不在 `project_check_env`）：多集群 Case 6/7 需含 `cluster=$EAST_CLUSTER_NAME`/`$WEST_CLUSTER_NAME` 条目；单集群入口网关 LoadBalancer 测试（Case 3/5 的 exposing-* 文档）需含 `cluster=$SINGLE_CLUSTER_NAME` 条目。
 
 ### 4. kubeconfig 自动管理
 
@@ -220,7 +224,11 @@ cd docs-runme-tests
 | 指标与服务网格集成           | `./run.sh --project mesh --file metrics-and-mesh`                                           |
 | 网格调用链集成配置           | `./run.sh --project mesh --file config-with-service-mesh`                                   |
 | Kiali 安装与配置             | `./run.sh --project mesh --file kiali`                                                      |
-| Bookinfo 应用部署            | `./run.sh --project mesh --file deploying-the-bookinfo-application`                         |
+| Bookinfo 应用部署（含网关）  | `./run.sh --project mesh --file deploying-the-bookinfo-application`                         |
+| Sidecar 网关 - Istio Gateway   | `./run.sh --project mesh --file exposing-a-service-via-istio-gateway`                       |
+| Sidecar 网关 - K8s Gateway API | `./run.sh --project mesh --file exposing-a-service-via-k8s-gateway-api-in-sidecar-mode`     |
+| Sidecar 出口网关 - Istio APIs   | `./run.sh --project mesh --file routing-egress-traffic-via-istio-apis`                      |
+| Sidecar 出口网关 - K8s Gateway API | `./run.sh --project mesh --file routing-egress-traffic-via-k8s-gateway-api-in-sidecar-mode` |
 | Kiali 卸载                   | `./run.sh --project mesh --file uninstalling-alauda-build-of-kiali`                         |
 | 网格卸载                     | `./run.sh --project mesh --file uninstalling-alauda-service-mesh`                           |
 | InPlace 更新策略             | `./run.sh --project mesh --file update-inplace`                                             |
@@ -293,6 +301,18 @@ source "$FRAMEWORK_ROOT/framework/verify.sh"
 ### 4. 验证工具
 
 `framework/verify.sh` 提供输出比对函数：`__cmp_same`（精确）、`__cmp_contains`（包含）、`__cmp_not_contains`、`__cmp_regex`、`__cmp_lines`（逐行 +/- 断言）等。`__cmp_like` 暂有问题，勿用。
+
+### 5. mesh 网关安装 / Linux 内核兼容公共函数
+
+`projects/mesh/project.sh` 提供以下网关相关公共函数（封装自 `gateways/gateway-installation/` 两篇文档），供 `directing-traffic-into-the-mesh` / `directing-outbound-traffic` / `install-*-multi-network` 等测试复用：
+
+| 函数                                                                  | 用途                                                                                                                                |
+| --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `install_gateway_via_injection <gw_name> <gw_ns> [context]`           | 通过 gateway injection 安装网关（含可选 HPA/PDB；去 infra 调度；`ENABLE_GW_LINUX_KERNEL_COMPAT=true` 时 Deployment 以 root 运行）  |
+| `apply_kernel_compat_istio_gateway [run_as_root=true] [context]`      | Istio Gateway（注入）路径内核兼容：修补 mesh 级注入模板并等待 Istio Ready；关时 no-op                                              |
+| `apply_kernel_compat_k8s_gateway_api <ns> <gw_name> [run_as_root=true] [context]` | K8s Gateway API 路径内核兼容：建 `asm-kube-gateway-options` ConfigMap 并给 Gateway 挂 `parametersRef`；关时 no-op       |
+
+> 两个 `apply_kernel_compat_*` 受 `ENABLE_GW_LINUX_KERNEL_COMPAT` 门控（默认 false 时直接返回）。`run_as_root=false` → Scenario 1（仅去 sysctls，高端口网关）；`true` → Scenario 2（+ NET_BIND_SERVICE + root，特权端口网关）。多集群东西向网关与 ambient waypoint 传 `false`；监听 80 的 ambient ingress 网关用默认 `true`。
 
 ## 编写新测试
 

@@ -110,6 +110,8 @@ test_aggregate() {
     check_eq "doctests.skipped" "$(printf '%s' "$s" | jq -r '.totals.doctests.skipped')" "1"
     check_eq "cases.total"      "$(printf '%s' "$s" | jq -r '.totals.cases.total')"      "3"
     check_eq "cases.skipped"    "$(printf '%s' "$s" | jq -r '.totals.cases.skipped')"    "1"
+    check_eq "cases.passed"     "$(printf '%s' "$s" | jq -r '.totals.cases.passed')"     "1"
+    check_eq "cases.failed"     "$(printf '%s' "$s" | jq -r '.totals.cases.failed')"     "1"
     check_eq "result"           "$(printf '%s' "$s" | jq -r '.result')"                  "failed"
     check_eq "case3 明细数"     "$(printf '%s' "$s" | jq -r '.cases[] | select(.case_id=="3") | .doctests | length')" "3"
     check_eq "case2 跳过原因"   "$(printf '%s' "$s" | jq -r '.cases[] | select(.case_id=="2") | .skip_reason')" "IS_DUAL_STACK != true"

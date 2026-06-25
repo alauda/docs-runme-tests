@@ -87,11 +87,41 @@ test_finalize_exit() {
     rm -rf "$RUNME_TEST_RUN_DIR"
 }
 
+# ── 测试：三层聚合 summary.json ──
+test_aggregate() {
+    printf '\n== _report_aggregate / summary.json ==\n'
+    new_sandbox
+    RUNME_TEST_RUN_ID="testrun"; RUNME_TEST_PROJECT="mesh"; RUNME_TEST_RUN_START=100
+    export RUNME_TEST_RUN_ID RUNME_TEST_PROJECT RUNME_TEST_RUN_START
+    # 构造：init case(passed,无doctest) / case_skip / 普通case(passed+skipped+failed)
+    printf '%s\n' \
+      '{"type":"case","case_id":"1","case_name":"初始化","status":"passed","duration_s":130}' \
+      '{"type":"case_skip","case_id":"2","case_name":"双栈","skip_reason":"IS_DUAL_STACK != true"}' \
+      '{"type":"doctest","project":"mesh","file":"install-mesh","script":"x.sh","case_id":"3","case_name":"单网格","phase":"test","status":"passed","skip_reason":"","fail_reason":"","start_ts":100,"end_ts":280,"duration_s":180}' \
+      '{"type":"doctest","project":"tracing","file":"es","script":"x.sh","case_id":"3","case_name":"单网格","phase":"test","status":"skipped","skip_reason":"未配置 ES","fail_reason":"","start_ts":280,"end_ts":281,"duration_s":1}' \
+      '{"type":"doctest","project":"mesh","file":"kiali","script":"x.sh","case_id":"3","case_name":"单网格","phase":"test","status":"failed","skip_reason":"","fail_reason":"pod 未就绪","start_ts":281,"end_ts":791,"duration_s":510}' \
+      '{"type":"case","case_id":"3","case_name":"单网格","status":"failed","duration_s":691}' \
+      > "$RUNME_TEST_RUN_DIR/results.jsonl"
+
+    report_finalize >/dev/null 2>&1
+    local s; s="$(cat "$RUNME_TEST_RUN_DIR/summary.json")"
+    check_eq "doctests.total"   "$(printf '%s' "$s" | jq -r '.totals.doctests.total')"   "3"
+    check_eq "doctests.failed"  "$(printf '%s' "$s" | jq -r '.totals.doctests.failed')"  "1"
+    check_eq "doctests.skipped" "$(printf '%s' "$s" | jq -r '.totals.doctests.skipped')" "1"
+    check_eq "cases.total"      "$(printf '%s' "$s" | jq -r '.totals.cases.total')"      "3"
+    check_eq "cases.skipped"    "$(printf '%s' "$s" | jq -r '.totals.cases.skipped')"    "1"
+    check_eq "result"           "$(printf '%s' "$s" | jq -r '.result')"                  "failed"
+    check_eq "case3 明细数"     "$(printf '%s' "$s" | jq -r '.cases[] | select(.case_id=="3") | .doctests | length')" "3"
+    check_eq "case2 跳过原因"   "$(printf '%s' "$s" | jq -r '.cases[] | select(.case_id=="2") | .skip_reason')" "IS_DUAL_STACK != true"
+    rm -rf "$RUNME_TEST_RUN_DIR"
+}
+
 main() {
     test_name_parse
     test_record_doctest
     test_case_skip
     test_finalize_exit
+    test_aggregate
     printf '\n==================================\n'
     printf '通过: %d  失败: %d\n' "$T_PASS" "$T_FAIL"
     [ "$T_FAIL" -eq 0 ]

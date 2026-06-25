@@ -128,7 +128,67 @@ case_skip() {
     log_warn "Case $1: $2 —— SKIPPED（$3）"
 }
 
-# ── report_finalize（最小版；Task 2/3/4 增强）──
+# ── 内部：三层聚合，stdout 输出 summary JSON ──
+# 用法: _report_aggregate <results.jsonl>
+_report_aggregate() {
+    local results="$1"
+    local prog
+    prog=$(cat <<'JQ'
+. as $rows
+| (reduce $rows[] as $r ([];
+    if ($r.type=="case" or $r.type=="case_skip")
+    then . + [{case_id:$r.case_id, case_name:$r.case_name,
+               status:(if $r.type=="case_skip" then "skipped" else $r.status end),
+               duration_s:($r.duration_s // 0), is_skip:($r.type=="case_skip"),
+               skip_reason:($r.skip_reason // "")}]
+    else . end)) as $cases0
+| ([$cases0[].case_id]) as $known
+| (reduce $rows[] as $r ([];
+    if ($r.type=="doctest" and (($known|index($r.case_id))==null) and ((index($r.case_id))==null))
+    then . + [$r.case_id] else . end)) as $orphan_ids
+| ($cases0 + ($orphan_ids | map({case_id:., case_name:(if .=="" then "（无 Case）" else . end),
+                                 status:"pending", duration_s:0, is_skip:false, skip_reason:""}))) as $cases1
+| ($cases1 | map(
+    .case_id as $cid | .is_skip as $isskip
+    | ([$rows[] | select(.type=="doctest" and .case_id==$cid)
+        | {project,file,status,duration_s,fail_reason,skip_reason}]) as $dts
+    | . + {doctests:$dts}
+    | .status = (if $isskip then "skipped"
+                 elif .status=="pending" then
+                   (if ($dts|map(select(.status=="failed"))|length)>0 then "failed"
+                    elif ($dts|map(select(.status=="passed"))|length)>0 then "passed"
+                    else "skipped" end)
+                 else .status end)
+  )) as $cases
+| {run_id:$run_id, project:$project, started_at:$started_at, duration_s:$duration_s,
+   totals:{
+     cases:{total:($cases|length),
+            passed:($cases|map(select(.status=="passed"))|length),
+            failed:($cases|map(select(.status=="failed"))|length),
+            skipped:($cases|map(select(.status=="skipped"))|length)},
+     doctests:{total:($rows|map(select(.type=="doctest"))|length),
+               passed:($rows|map(select(.type=="doctest" and .status=="passed"))|length),
+               failed:($rows|map(select(.type=="doctest" and .status=="failed"))|length),
+               skipped:($rows|map(select(.type=="doctest" and .status=="skipped"))|length)}},
+   result:(if ($cases|map(select(.status=="failed"))|length)>0
+              or ($rows|map(select(.type=="doctest" and .status=="failed"))|length)>0
+           then "failed" else "passed" end),
+   cases:($cases|map(del(.is_skip)))}
+JQ
+)
+    local now started dur
+    now="$(date +%s)"
+    started="${RUNME_TEST_RUN_START:-$now}"
+    dur=$(( now - started ))
+    jq -s \
+        --arg run_id "${RUNME_TEST_RUN_ID:-unknown}" \
+        --arg project "${RUNME_TEST_PROJECT:-unknown}" \
+        --argjson started_at "$started" \
+        --argjson duration_s "$dur" \
+        "$prog" "$results"
+}
+
+# ── report_finalize（聚合 + 写 summary.json；Task 3/4 继续增强）──
 report_finalize() {
     local results="${RUNME_TEST_RUN_DIR:-}/results.jsonl"
     if [ -z "${RUNME_TEST_RUN_DIR:-}" ] || [ ! -f "$results" ]; then
@@ -138,17 +198,19 @@ report_finalize() {
         log_warn "未执行任何测试（results.jsonl 为空）"; return 0
     fi
 
-    local dt_total dt_failed case_failed
-    dt_total=$(jq -s 'map(select(.type=="doctest"))|length' "$results")
-    dt_failed=$(jq -s 'map(select(.type=="doctest" and .status=="failed"))|length' "$results")
-    case_failed=$(jq -s 'map(select(.type=="case" and .status=="failed"))|length' "$results")
+    local summary
+    summary="$(_report_aggregate "$results")"
+    printf '%s\n' "$summary" > "$RUNME_TEST_RUN_DIR/summary.json"
+
+    local dt_total dt_failed result
+    dt_total="$(printf '%s' "$summary" | jq -r '.totals.doctests.total')"
+    dt_failed="$(printf '%s' "$summary" | jq -r '.totals.doctests.failed')"
+    result="$(printf '%s' "$summary" | jq -r '.result')"
 
     echo ""
-    echo "测试汇总：DocTest 共 $dt_total，失败 $dt_failed"
+    echo "测试汇总：DocTest 共 $dt_total，失败 $dt_failed（result=$result）"
     echo "报告目录：$RUNME_TEST_RUN_DIR"
 
-    if [ "$dt_failed" -gt 0 ] || [ "$case_failed" -gt 0 ]; then
-        return 1
-    fi
+    [ "$result" = "failed" ] && return 1
     return 0
 }

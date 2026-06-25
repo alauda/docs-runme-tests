@@ -17,6 +17,7 @@ REPOS_CONF="$FRAMEWORK_ROOT/repos.conf"
 # ── 加载框架函数库（顺序固定：common → verify → kubeconfig → tools）──────────────
 source "$FRAMEWORK_DIR/common.sh"
 source "$FRAMEWORK_DIR/verify.sh"
+source "$FRAMEWORK_DIR/report.sh"
 source "$FRAMEWORK_DIR/kubeconfig.sh"
 source "$FRAMEWORK_DIR/tools.sh"
 
@@ -275,33 +276,41 @@ resolve_init_clusters() {
     INIT_CLUSTERS=("$SINGLE_CLUSTER_NAME")
 }
 
-# 执行单个测试脚本
+# 执行单个测试脚本，捕获三态并写入结果记录
 run_test_script() {
     local test_script="$1"
-    local script_name
+    local script_name file phase
     script_name=$(basename "$test_script")
+    file="$(_doctest_name_from_script "$test_script")"
+    if [ "$CLEANUP_ONLY" = true ]; then phase="cleanup-only"; else phase="test"; fi
 
     log_header "执行测试: $script_name"
 
-    # 清除上一个测试脚本可能残留的 test_/cleanup_ 函数，
-    # 避免一次传多个 --file 时 declare -F 命中旧脚本的同类函数。
+    # 清除上一个脚本残留的 test_/cleanup_ 函数
     local stale
     for stale in $(declare -F | awk '$3 ~ /^(test|cleanup)_[a-z0-9_]+$/ {print $3}'); do
         unset -f "$stale"
     done
 
-    # 加载测试脚本
+    # 重置三态标记
+    __TEST_SKIPPED=0
+    __TEST_SKIP_REASON=""
+
     # shellcheck disable=SC1090
     source "$test_script"
 
-    # 查找测试函数和 cleanup 函数
     local test_func cleanup_func
     test_func=$(declare -F | awk '$3 ~ /^test_[a-z0-9_]+$/ {print $3; exit}')
     cleanup_func=$(declare -F | awk '$3 ~ /^cleanup_[a-z0-9_]+$/ {print $3; exit}')
 
+    local start_ts end_ts status="passed" skip_reason="" fail_reason=""
+    start_ts=$(date +%s)
+
     if [ -z "$test_func" ]; then
+        end_ts=$(date +%s)
         log_error "在 $script_name 中未找到测试函数 (test_*)"
-        record_test_result 1
+        report_record_doctest "$PROJECT" "$file" "$script_name" "$phase" \
+            "failed" "" "未找到测试函数 test_*" "$start_ts" "$end_ts"
         return 1
     fi
 
@@ -309,41 +318,43 @@ run_test_script() {
     if [ "$CLEANUP_ONLY" = true ]; then
         if [ -n "$cleanup_func" ]; then
             log_info "执行 cleanup: $cleanup_func"
-            if $cleanup_func; then
-                log_success "Cleanup 成功"
-                record_test_result 0
-                return 0
-            else
-                log_error "Cleanup 失败"
-                record_test_result 1
-                return 1
-            fi
+            if $cleanup_func; then status="passed"; else status="failed"; fail_reason="cleanup 失败"; fi
         else
-            log_warn "未找到 cleanup 函数"
-            return 0
+            log_warn "未找到 cleanup 函数"; status="skipped"; skip_reason="无 cleanup 函数"
         fi
+        end_ts=$(date +%s)
+        report_record_doctest "$PROJECT" "$file" "$script_name" "$phase" \
+            "$status" "$skip_reason" "$fail_reason" "$start_ts" "$end_ts"
+        [ "$status" = "failed" ] && return 1
+        return 0
     fi
 
     # 执行测试
     log_info "执行测试函数: $test_func"
-    local test_result=0
-    if ! $test_func; then
-        log_error "测试失败: $test_func"
-        test_result=1
+    if $test_func; then
+        if [ "${__TEST_SKIPPED:-0}" = "1" ]; then
+            status="skipped"; skip_reason="$__TEST_SKIP_REASON"
+            log_warn "测试跳过: $test_func"
+        else
+            status="passed"; log_success "测试通过: $test_func"
+        fi
     else
-        log_success "测试通过: $test_func"
+        status="failed"; fail_reason="测试函数 $test_func 返回非 0"
+        log_error "测试失败: $test_func"
     fi
 
-    # 执行 cleanup
+    # 执行 cleanup（跳过的测试也尝试清理，幂等无害）
     if [ "$NO_CLEANUP" = false ] && [ -n "$cleanup_func" ]; then
         log_info "执行 cleanup: $cleanup_func"
-        if ! $cleanup_func; then
-            log_warn "Cleanup 失败，但不影响测试结果"
-        fi
+        if ! $cleanup_func; then log_warn "Cleanup 失败，但不影响测试结果"; fi
     fi
 
-    record_test_result "$test_result"
-    return "$test_result"
+    end_ts=$(date +%s)
+    report_record_doctest "$PROJECT" "$file" "$script_name" "$phase" \
+        "$status" "$skip_reason" "$fail_reason" "$start_ts" "$end_ts"
+
+    [ "$status" = "failed" ] && return 1
+    return 0
 }
 
 # 主函数
@@ -456,13 +467,21 @@ main() {
     log_info "开始执行测试..."
     echo ""
 
-    local script
+    # ── 单跑模式自行 init（编排模式下父进程已 init 并导出，report_init 幂等跳过）──
+    report_init "$PROJECT"
+
+    local script overall_rc=0
     for script in "${test_scripts[@]}"; do
-        run_test_script "$script"
+        run_test_script "$script" || overall_rc=1
         echo ""
     done
 
-    print_test_summary
+    # 编排模式（RUNME_TEST_ORCHESTRATED=1）由父进程 trap report_finalize 汇总；
+    # 单跑模式由引擎自行 finalize。
+    if [ -z "${RUNME_TEST_ORCHESTRATED:-}" ]; then
+        report_finalize || overall_rc=1
+    fi
+    exit "$overall_rc"
 }
 
 main "$@"

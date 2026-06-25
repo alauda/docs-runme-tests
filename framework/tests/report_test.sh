@@ -122,7 +122,7 @@ test_aggregate() {
 test_junit() {
     printf '\n== junit.xml ==\n'
     new_sandbox
-    RUNME_TEST_RUN_ID="testrun"; RUNME_TEST_PROJECT="mesh"; RUNME_TEST_RUN_START=100
+    RUNME_TEST_RUN_ID="testrun"; RUNME_TEST_PROJECT="mesh"; RUNME_TEST_RUN_START="$(date +%s)"
     export RUNME_TEST_RUN_ID RUNME_TEST_PROJECT RUNME_TEST_RUN_START
     printf '%s\n' \
       '{"type":"case_skip","case_id":"2","case_name":"双栈","skip_reason":"IS_DUAL_STACK != true"}' \

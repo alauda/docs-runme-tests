@@ -6,14 +6,18 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+export FRAMEWORK_ROOT="$SCRIPT_DIR"
 # 加载公共函数
 source "$SCRIPT_DIR/framework/common.sh"
+source "$SCRIPT_DIR/framework/report.sh"
 
 # 确保在框架仓库根目录执行
 cd "$SCRIPT_DIR"
 
-# 注册退出时的回调函数，无论成功还是因错误退出，都会打印测试总结
-trap print_test_summary EXIT
+# 编排模式：子 run.sh 不各自 finalize，由本脚本退出时统一汇总三层报告
+export RUNME_TEST_ORCHESTRATED=1
+report_init mesh
+trap report_finalize EXIT
 
 log_header "开始执行 mesh 项目所有测试任务"
 
@@ -22,36 +26,33 @@ log_header "开始执行 mesh 项目所有测试任务"
 # 注：multi-cluster 文档测试需在对应 case 中再次执行
 #     ./run.sh --project mesh --init-only --cluster "$EAST_CLUSTER_NAME" --cluster "$WEST_CLUSTER_NAME"
 # ------------------------------------------------------------------
-log_header "Case 1: 环境初始化（默认 SINGLE_CLUSTER_NAME）"
+case_begin "1" "环境初始化（默认 SINGLE_CLUSTER_NAME）"
 
 if (
     set -e
     ./run.sh --project mesh --init-only
 ); then
-    record_test_result 0
+    case_end 0
 else
-    record_test_result 1
-    # 失败则直接退出
-    exit 1
+    case_end_fatal 1
 fi
 
 # ------------------------------------------------------------------
 # Case 2: 双栈网格安装
 # ------------------------------------------------------------------
 if [ "${IS_DUAL_STACK:-false}" == "true" ]; then
-    log_header "Case 2: 双栈网格安装测试 (Dual Stack)"
+    case_begin "2" "双栈网格安装测试 (Dual Stack)"
     if (
         set -e
         ./run.sh --project mesh --file install-mesh-in-dual-stack-mode --no-cleanup
         ./run.sh --project mesh --file install-mesh-in-dual-stack-mode --cleanup-only
     ); then
-        record_test_result 0
+        case_end 0
     else
-        record_test_result 1
-        exit 1
+        case_end 1
     fi
 else
-    log_header "Case 2: 跳过双栈网格安装测试 (IS_DUAL_STACK != true)"
+    case_skip "2" "双栈网格安装测试" "IS_DUAL_STACK != true"
 fi
 
 # ------------------------------------------------------------------
@@ -59,7 +60,7 @@ fi
 # 顺序：先装调用链再装 kiali；清理逆序（先卸 kiali、再卸调用链）。
 # 卸载调用链使用 --skip-operator-and-crds 保留 OTel Operator 与 CRDs 供后续 case 复用。
 # ------------------------------------------------------------------
-log_header "Case 3: 单网格安装与应用测试 (Single Mesh & App + Tracing)"
+case_begin "3" "单网格安装与应用测试 (Single Mesh & App + Tracing)"
 
 # 使用子 shell ( cmds ) 将多个命令组合为一个原子 case
 # 任何一个命令失败都会导致整个 block 返回非 0 状态
@@ -91,16 +92,15 @@ if (
     ./run.sh --project mesh --file deploying-the-bookinfo-application --cleanup-only
     ./run.sh --project mesh --file uninstalling-alauda-service-mesh
 ); then
-    record_test_result 0
+    case_end 0
 else
-    record_test_result 1
-    exit 1
+    case_end 1
 fi
 
 # ------------------------------------------------------------------
 # Case 4: Istio HA 配置测试
 # ------------------------------------------------------------------
-log_header "Case 4: Istio HA 配置测试"
+case_begin "4" "Istio HA 配置测试"
 
 if (
     set -e
@@ -111,16 +111,15 @@ if (
     ./run.sh --project mesh --file configuring-istio-ha-by-using-replica-count
     ./run.sh --project mesh --file uninstalling-alauda-service-mesh --skip-operator-and-crds
 ); then
-    record_test_result 0
+    case_end 0
 else
-    record_test_result 1
-    exit 1
+    case_end 1
 fi
 
 # ------------------------------------------------------------------
 # Case 5: Ambient Mode 安装测试
 # ------------------------------------------------------------------
-log_header "Case 5: Ambient Mode 安装测试"
+case_begin "5" "Ambient Mode 安装测试"
 
 if (
     set -e
@@ -144,10 +143,9 @@ if (
     # 清理 bookinfo
     ./run.sh --project mesh --file deploying-ambient-bookinfo --cleanup-only
 ); then
-    record_test_result 0
+    case_end 0
 else
-    record_test_result 1
-    exit 1
+    case_end 1
 fi
 
 # ------------------------------------------------------------------
@@ -155,9 +153,10 @@ fi
 # 注：会切换到双集群 kubeconfig，必须放在所有单集群 case 之后
 # ------------------------------------------------------------------
 if [ -z "${EAST_CLUSTER_NAME:-}" ] || [ -z "${WEST_CLUSTER_NAME:-}" ]; then
-    log_header "Case 6/7: 跳过多集群测试 (未设置 EAST_CLUSTER_NAME / WEST_CLUSTER_NAME)"
+    case_skip "6" "多集群-多主多网络拓扑" "未设置 EAST_CLUSTER_NAME / WEST_CLUSTER_NAME"
+    case_skip "7" "多集群-主-远多网络拓扑" "未设置 EAST_CLUSTER_NAME / WEST_CLUSTER_NAME"
 else
-    log_header "Case 6: 多集群 - 多主多网络拓扑 (Multi-Primary Multi-Network)"
+    case_begin "6" "多集群 - 多主多网络拓扑 (Multi-Primary Multi-Network)"
 
     if (
         set -e
@@ -169,16 +168,15 @@ else
         ./run.sh --project mesh --file install-multi-primary-multi-network --no-cleanup
         ./run.sh --project mesh --file install-multi-primary-multi-network --cleanup-only
     ); then
-        record_test_result 0
+        case_end 0
     else
-        record_test_result 1
-        exit 1
+        case_end 1
     fi
 
     # ------------------------------------------------------------------
     # Case 7: 多集群 - 主-远多网络拓扑 (Primary-Remote Multi-Network)
     # ------------------------------------------------------------------
-    log_header "Case 7: 多集群 - 主-远多网络拓扑 (Primary-Remote Multi-Network)"
+    case_begin "7" "多集群 - 主-远多网络拓扑 (Primary-Remote Multi-Network)"
 
     if (
         set -e
@@ -190,10 +188,9 @@ else
         ./run.sh --project mesh --file install-primary-remote-multi-network --no-cleanup
         ./run.sh --project mesh --file install-primary-remote-multi-network --cleanup-only
     ); then
-        record_test_result 0
+        case_end 0
     else
-        record_test_result 1
-        exit 1
+        case_end 1
     fi
 fi
 
@@ -203,17 +200,16 @@ fi
 # 注：Istio CNI 升级已并入 update-inplace 文档步骤 4（测试经公共步骤库
 #     istio-cni-update-steps.sh 执行），不再单独调用 --file istio-cni
 # ------------------------------------------------------------------
-log_header "Case 8: InPlace 更新策略测试（含 Istio CNI 升级）(Update InPlace + Istio CNI)"
+case_begin "8" "InPlace 更新策略测试（含 Istio CNI 升级）(Update InPlace + Istio CNI)"
 
 if (
     set -e
     ./run.sh --project mesh --file update-inplace --no-cleanup --force-init
     ./run.sh --project mesh --file update-inplace --cleanup-only
 ); then
-    record_test_result 0
+    case_end 0
 else
-    record_test_result 1
-    exit 1
+    case_end 1
 fi
 
 # ------------------------------------------------------------------
@@ -221,17 +217,16 @@ fi
 # 顺序：update-revisionbased --no-cleanup 安装+升级验证 → --cleanup-only 统一清理
 # 注：Istio CNI 升级已并入 update-revisionbased 文档步骤 5（公共步骤库执行）
 # ------------------------------------------------------------------
-log_header "Case 9: RevisionBased 更新策略测试 (Update RevisionBased)"
+case_begin "9" "RevisionBased 更新策略测试 (Update RevisionBased)"
 
 if (
     set -e
     ./run.sh --project mesh --file update-revisionbased --no-cleanup --force-init
     ./run.sh --project mesh --file update-revisionbased --cleanup-only
 ); then
-    record_test_result 0
+    case_end 0
 else
-    record_test_result 1
-    exit 1
+    case_end 1
 fi
 
 # ------------------------------------------------------------------
@@ -239,17 +234,16 @@ fi
 # 顺序：update-revisionbased-and-istiorevisiontag --no-cleanup 安装+升级验证 → --cleanup-only 统一清理
 # 注：Istio CNI 升级已并入 update-revisionbased-and-istiorevisiontag 文档步骤 5（公共步骤库执行）
 # ------------------------------------------------------------------
-log_header "Case 10: RevisionBased + IstioRevisionTag 更新策略测试 (Update RevisionBased + IstioRevisionTag)"
+case_begin "10" "RevisionBased + IstioRevisionTag 更新策略测试 (Update RevisionBased + IstioRevisionTag)"
 
 if (
     set -e
     ./run.sh --project mesh --file update-revisionbased-and-istiorevisiontag --no-cleanup --force-init
     ./run.sh --project mesh --file update-revisionbased-and-istiorevisiontag --cleanup-only
 ); then
-    record_test_result 0
+    case_end 0
 else
-    record_test_result 1
-    exit 1
+    case_end 1
 fi
 
 # ------------------------------------------------------------------
@@ -259,7 +253,7 @@ fi
 #       → updating-waypoint-proxies 验证 waypoint 版本与 L7 行为（自带 curl 前置）
 #       → updating-ambient-components --cleanup-only 统一清理（waypoint 随 bookinfo 命名空间回收）
 # ------------------------------------------------------------------
-log_header "Case 11: Ambient 模式更新测试 (Update Ambient Mode)"
+case_begin "11" "Ambient 模式更新测试 (Update Ambient Mode)"
 
 if (
     set -e
@@ -269,12 +263,11 @@ if (
     ./run.sh --project mesh --file updating-waypoint-proxies --cleanup-only
     ./run.sh --project mesh --file updating-ambient-components --cleanup-only
 ); then
-    record_test_result 0
+    case_end 0
 else
-    record_test_result 1
-    exit 1
+    case_end 1
 fi
 
 log_header "mesh 项目所有测试任务执行完成！"
 
-# 注意：print_test_summary 已通过 trap 注册，脚本退出时会自动执行，此处无需再次调用
+# 注意：report_finalize 已通过 trap 注册，脚本退出时自动汇总三层报告，此处无需再次调用

@@ -61,6 +61,33 @@
 - **Case（用例组）**：编排脚本中的一个 `log_header "Case N"` + 子 shell，内含一个或多个 `./run.sh` 调用。是「原子单元」——内部任一步失败则整个 Case 判 FAIL。
 - **DocTest（文档测试）**：一次 `./run.sh --file <doc>` 的执行，对应一篇 MDX 文档的 `runme-test_<doc>.sh`。是最细的统计粒度。
 
+### 2.2 跨平台兼容约束（Linux + macOS）
+
+测试框架需同时在 **Linux 与 macOS** 运行。macOS 自带 Bash 3.2（2007 年）且系统工具为 BSD 变体，与 Linux 的 GNU coreutils 有差异。所有新增 / 修改代码必须遵守：
+
+**Bash 3.2 兼容（禁用 Bash 4+ 特性）：**
+
+- 禁用关联数组 `declare -A` —— 聚合改用 `jq`（已采纳，从根本上规避）
+- 禁用 `mapfile` / `readarray` —— 用 `while IFS= read -r` 循环
+- 禁用 `${var^^}` / `${var,,}` 大小写展开 —— 用 `tr '[:lower:]' '[:upper:]'`（框架既有模式）
+- 禁用 `&>>`、`local -n`（nameref）
+
+**BSD vs GNU 命令差异（只用两平台通用子集）：**
+
+- `date`：仅用 `date +%s` 与 `date +%Y%m%d-%H%M%S`；**禁用** `date -d` / `date -r` 做日期运算——耗时一律用 Bash 算术 `$((end_ts - start_ts))`
+- **禁用** `readlink -f` / `realpath`（macOS 无 `-f`）——路径解析用 `cd "$dir" && pwd`（框架既有模式）
+- **禁用** `sed -i`（BSD 需 `-i ''`，GNU 为 `-i`）——需改写文件时用临时文件 + `mv`，或用 `jq`
+- **禁用** `grep -P`（macOS 无 PCRE）——用 `grep -E`
+- **禁用** `stat`（BSD / GNU 格式不一）
+- 软链替换用 `ln -sfn`（两平台通用，已验证）；临时目录用 `mktemp -d`（不带模板，或带 `XXXXXX`）
+
+**输出：**
+
+- JUnit XML 的 `time` 属性用整数秒，规避 locale 小数点（逗号 / 句点）差异
+- 新代码优先 `printf` 而非 `echo -e`（既有 `echo -e` 保留不动）
+
+> 已在 Linux 侧用 jq 1.7、`date +%s`、`date +%Y%m%d-%H%M%S`、`ln -sfn`、`mktemp -d` 验证；上述约束确保 macOS（BSD + Bash 3.2）侧同样可用。
+
 ---
 
 ## 3. 核心架构决策：跨进程三层统计
@@ -484,6 +511,7 @@ tmp/runs/
 3. Run 级**同时报 Case 与 DocTest 两套计数**。
 4. 单跑 `./run.sh --file` 也产出一致的三层报告（隐式单 Case / 空 case_id）。
 5. run-id 格式 `date +%Y%m%d-%H%M%S`；产物按 run-id 分目录 + `latest` 软链。
+6. 全程遵守 §2.2 跨平台兼容约束（Linux + macOS / Bash 3.2 / BSD 工具子集）。
 
 ---
 

@@ -118,12 +118,36 @@ test_aggregate() {
     rm -rf "$RUNME_TEST_RUN_DIR"
 }
 
+# ── 测试：junit.xml 生成与转义 ──
+test_junit() {
+    printf '\n== junit.xml ==\n'
+    new_sandbox
+    RUNME_TEST_RUN_ID="testrun"; RUNME_TEST_PROJECT="mesh"; RUNME_TEST_RUN_START=100
+    export RUNME_TEST_RUN_ID RUNME_TEST_PROJECT RUNME_TEST_RUN_START
+    printf '%s\n' \
+      '{"type":"case_skip","case_id":"2","case_name":"双栈","skip_reason":"IS_DUAL_STACK != true"}' \
+      '{"type":"doctest","project":"mesh","file":"kiali","script":"x.sh","case_id":"3","case_name":"单网格","phase":"test","status":"failed","skip_reason":"","fail_reason":"pod <a & b>","start_ts":1,"end_ts":3,"duration_s":2}' \
+      '{"type":"case","case_id":"3","case_name":"单网格","status":"failed","duration_s":2}' \
+      > "$RUNME_TEST_RUN_DIR/results.jsonl"
+
+    report_finalize >/dev/null 2>&1
+    local x; x="$(cat "$RUNME_TEST_RUN_DIR/junit.xml")"
+    check_contains "XML 头" "$x" '<?xml version="1.0" encoding="UTF-8"?>'
+    check_contains "testsuites" "$x" '<testsuites name="mesh"'
+    check_contains "testcase 命名" "$x" 'name="mesh/kiali"'
+    check_contains "failure 元素" "$x" '<failure message='
+    check_contains "XML 转义" "$x" 'pod &lt;a &amp; b&gt;'
+    check_contains "skipped 占位" "$x" '<skipped message="IS_DUAL_STACK != true">'
+    rm -rf "$RUNME_TEST_RUN_DIR"
+}
+
 main() {
     test_name_parse
     test_record_doctest
     test_case_skip
     test_finalize_exit
     test_aggregate
+    test_junit
     printf '\n==================================\n'
     printf '通过: %d  失败: %d\n' "$T_PASS" "$T_FAIL"
     [ "$T_FAIL" -eq 0 ]

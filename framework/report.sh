@@ -188,6 +188,42 @@ JQ
         "$prog" "$results"
 }
 
+# ── 内部：从 summary JSON 生成 JUnit XML，stdout 输出 ──
+# 用法: _report_write_junit <summary-json-string>
+_report_write_junit() {
+    local prog
+    prog=$(cat <<'JQ'
+"<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+"<testsuites name=\"\(.project|@html)\" tests=\"\(.totals.doctests.total)\" failures=\"\(.totals.doctests.failed)\" skipped=\"\(.totals.doctests.skipped)\" time=\"\(.duration_s)\">",
+(.cases[] |
+  .case_id as $cid | .case_name as $cname | .status as $cstatus | .duration_s as $cdur | (.skip_reason // "") as $creason |
+  .doctests as $dts |
+  (if ($dts|length)>0 then ($dts|length) else 1 end) as $tests |
+  (if ($dts|length)>0 then ($dts|map(select(.status=="failed"))|length) else (if $cstatus=="failed" then 1 else 0 end) end) as $fails |
+  (if ($dts|length)>0 then ($dts|map(select(.status=="skipped"))|length) else (if $cstatus=="skipped" then 1 else 0 end) end) as $skips |
+  "  <testsuite name=\"Case \($cid): \($cname|@html)\" tests=\"\($tests)\" failures=\"\($fails)\" skipped=\"\($skips)\" time=\"\($cdur)\">",
+  (if ($dts|length)>0 then
+    ($dts[] |
+      "    <testcase name=\"\(.project)/\(.file|@html)\" classname=\"Case\($cid)\" time=\"\(.duration_s)\">",
+      (if .status=="failed" then "      <failure message=\"\((.fail_reason//"")|@html)\"></failure>"
+       elif .status=="skipped" then "      <skipped message=\"\((.skip_reason//"")|@html)\"></skipped>"
+       else empty end),
+      "    </testcase>")
+   else
+    "    <testcase name=\"\($cname|@html)\" classname=\"Case\($cid)\" time=\"\($cdur)\">",
+    (if $cstatus=="failed" then "      <failure message=\"Case failed\"></failure>"
+     elif $cstatus=="skipped" then "      <skipped message=\"\($creason|@html)\"></skipped>"
+     else empty end),
+    "    </testcase>"
+   end),
+  "  </testsuite>"
+),
+"</testsuites>"
+JQ
+)
+    printf '%s' "$1" | jq -r "$prog"
+}
+
 # ── report_finalize（聚合 + 写 summary.json；Task 3/4 继续增强）──
 report_finalize() {
     local results="${RUNME_TEST_RUN_DIR:-}/results.jsonl"
@@ -201,6 +237,7 @@ report_finalize() {
     local summary
     summary="$(_report_aggregate "$results")"
     printf '%s\n' "$summary" > "$RUNME_TEST_RUN_DIR/summary.json"
+    _report_write_junit "$summary" > "$RUNME_TEST_RUN_DIR/junit.xml"
 
     local dt_total dt_failed result
     dt_total="$(printf '%s' "$summary" | jq -r '.totals.doctests.total')"

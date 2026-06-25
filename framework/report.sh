@@ -35,6 +35,9 @@ report_init() {
         return 0
     fi
 
+    # 新 Run 开始：清除上一轮的 finalize 幂等状态
+    unset __REPORT_FINALIZED __REPORT_FINALIZE_RC
+
     local runs_root="${FRAMEWORK_ROOT:-$(pwd)}/tmp/runs"
     local run_id
     run_id="$(date +%Y%m%d-%H%M%S)"
@@ -264,12 +267,20 @@ JQ
 
 # ── report_finalize（聚合 + 写 summary.json；Task 3/4 继续增强）──
 report_finalize() {
+    # 幂等防护：report_finalize 既会被 case_end_fatal 显式调用、又会被编排脚本的
+    # `trap report_finalize EXIT` 触发。无防护时致命前置失败会汇总两次、终端摘要重复打印。
+    # 已汇总过则直接返回上次退出码。
+    if [ -n "${__REPORT_FINALIZED:-}" ]; then
+        return "${__REPORT_FINALIZE_RC:-0}"
+    fi
+    __REPORT_FINALIZED=1
+
     local results="${RUNME_TEST_RUN_DIR:-}/results.jsonl"
     if [ -z "${RUNME_TEST_RUN_DIR:-}" ] || [ ! -f "$results" ]; then
-        log_warn "无结果数据，跳过汇总"; return 0
+        log_warn "无结果数据，跳过汇总"; __REPORT_FINALIZE_RC=0; return 0
     fi
     if [ ! -s "$results" ]; then
-        log_warn "未执行任何测试（results.jsonl 为空）"; return 0
+        log_warn "未执行任何测试（results.jsonl 为空）"; __REPORT_FINALIZE_RC=0; return 0
     fi
 
     local summary
@@ -284,6 +295,7 @@ report_finalize() {
     _report_print_terminal "$summary"
     echo "  报告目录: $RUNME_TEST_RUN_DIR"
 
-    [ "$result" = "failed" ] && return 1
+    if [ "$result" = "failed" ]; then __REPORT_FINALIZE_RC=1; return 1; fi
+    __REPORT_FINALIZE_RC=0
     return 0
 }

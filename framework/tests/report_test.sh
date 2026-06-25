@@ -35,7 +35,8 @@ check_eq() {
 
 # 每个用例用独立的临时 RUN_DIR
 new_sandbox() {
-    unset RUNME_TEST_RUN_DIR RUNME_TEST_RUN_ID RUNME_TEST_CASE_ID RUNME_TEST_CASE_NAME
+    unset RUNME_TEST_RUN_DIR RUNME_TEST_RUN_ID RUNME_TEST_CASE_ID RUNME_TEST_CASE_NAME \
+          __REPORT_FINALIZED __REPORT_FINALIZE_RC
     RUNME_TEST_RUN_DIR="$(mktemp -d)"
     export RUNME_TEST_RUN_DIR
     : > "$RUNME_TEST_RUN_DIR/results.jsonl"
@@ -174,12 +175,42 @@ test_terminal() {
     rm -rf "$RUNME_TEST_RUN_DIR"
 }
 
+# ── 测试：report_finalize 幂等（防 case_end_fatal 显式调用 + EXIT trap 二次汇总重复打印）──
+# 注意：幂等状态（__REPORT_FINALIZED）通过 shell 变量在同一进程中传递；子 shell $() 隔离
+# 变量，因此两次调用须在同一进程中执行。用临时文件捕获各次输出并分别验证。
+test_finalize_idempotent() {
+    printf '\n== report_finalize 幂等 ==\n'
+    new_sandbox
+    RUNME_TEST_RUN_ID=idem; RUNME_TEST_PROJECT=mesh; RUNME_TEST_RUN_START="$(date +%s)"
+    export RUNME_TEST_RUN_ID RUNME_TEST_PROJECT RUNME_TEST_RUN_START
+    report_record_doctest mesh a x.sh test failed "" "boom" 1 2
+
+    # 第一次：在父 shell 中执行，通过临时文件捕获输出
+    local tmp1; tmp1="$(mktemp)"
+    local rc1 rc2
+    report_finalize > "$tmp1" 2>&1; rc1=$?
+    local out1; out1="$(cat "$tmp1")"
+
+    # 第二次：仍在同一父 shell 中执行（__REPORT_FINALIZED 已设置），验证幂等
+    local tmp2; tmp2="$(mktemp)"
+    report_finalize > "$tmp2" 2>&1; rc2=$?
+    local out2; out2="$(cat "$tmp2")"
+
+    check_contains "首次打印汇总横幅" "$out1" "测试运行汇总"
+    check_eq "首次退出码 1" "$rc1" "1"
+    check_eq "二次幂等-无横幅" "$(printf '%s' "$out2" | grep -c "测试运行汇总")" "0"
+    check_eq "二次退出码仍 1" "$rc2" "1"
+    rm -f "$tmp1" "$tmp2"
+    rm -rf "$RUNME_TEST_RUN_DIR"
+}
+
 main() {
     test_skip_test
     test_name_parse
     test_record_doctest
     test_case_skip
     test_finalize_exit
+    test_finalize_idempotent
     test_aggregate
     test_junit
     test_terminal

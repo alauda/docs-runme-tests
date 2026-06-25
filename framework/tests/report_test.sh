@@ -87,6 +87,15 @@ test_finalize_exit() {
     rm -rf "$RUNME_TEST_RUN_DIR"
 }
 
+# ── 测试：skip_test 设置跳过标记 ──
+test_skip_test() {
+    printf '\n== skip_test ==\n'
+    __TEST_SKIPPED=0; __TEST_SKIP_REASON=""
+    skip_test "缺少 FOO 环境变量" >/dev/null 2>&1
+    check_eq "标记置位" "$__TEST_SKIPPED" "1"
+    check_eq "原因记录" "$__TEST_SKIP_REASON" "缺少 FOO 环境变量"
+}
+
 # ── 测试：三层聚合 summary.json ──
 test_aggregate() {
     printf '\n== _report_aggregate / summary.json ==\n'
@@ -166,6 +175,7 @@ test_terminal() {
 }
 
 main() {
+    test_skip_test
     test_name_parse
     test_record_doctest
     test_case_skip

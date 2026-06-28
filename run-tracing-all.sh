@@ -12,14 +12,18 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+export FRAMEWORK_ROOT="$SCRIPT_DIR"
 # 加载公共函数
 source "$SCRIPT_DIR/framework/common.sh"
+source "$SCRIPT_DIR/framework/report.sh"
 
 # 确保在框架仓库根目录执行
 cd "$SCRIPT_DIR"
 
-# 注册退出时的回调函数，无论成功还是因错误退出，都会打印测试总结
-trap print_test_summary EXIT
+# 编排模式：子 run.sh 不各自 finalize，由本脚本退出时统一汇总三层报告
+export RUNME_TEST_ORCHESTRATED=1
+report_init tracing
+trap report_finalize EXIT
 
 log_header "开始执行 tracing 项目所有测试任务"
 
@@ -28,7 +32,7 @@ log_header "开始执行 tracing 项目所有测试任务"
 # install --force-init 会自动上传 OTel Operator 插件包（安装的前置依赖）；
 # 安装测试步骤 1 负责安装 OTel Operator 本身。
 # ------------------------------------------------------------------
-log_header "Case 1: 分布式调用链安装与卸载测试 (Elasticsearch)"
+case_begin "1" "分布式调用链安装与卸载测试 (Elasticsearch)"
 
 if (
     set -e
@@ -36,10 +40,9 @@ if (
     # 清理
     ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds
 ); then
-    record_test_result 0
+    case_end 0
 else
-    record_test_result 1
-    exit 1
+    case_end 1
 fi
 
 # ------------------------------------------------------------------
@@ -49,7 +52,7 @@ fi
 # 仅在设置了手动 TRACING_OPENSEARCH_* 时实际执行；否则安装测试 SKIPPED、
 # 卸载按命名空间存在性 SKIPPED，不阻断编排。
 # ------------------------------------------------------------------
-log_header "Case 2: 分布式调用链安装与卸载测试 (OpenSearch)"
+case_begin "2" "分布式调用链安装与卸载测试 (OpenSearch)"
 
 if (
     set -e
@@ -57,12 +60,11 @@ if (
     # 清理
     ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds
 ); then
-    record_test_result 0
+    case_end 0
 else
-    record_test_result 1
-    exit 1
+    case_end 1
 fi
 
 log_header "tracing 项目所有测试任务执行完成！"
 
-# 注意：print_test_summary 已通过 trap 注册，脚本退出时会自动执行，此处无需再次调用
+# 注意：report_finalize 已通过 trap 注册，脚本退出时自动汇总三层报告，此处无需再次调用

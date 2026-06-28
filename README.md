@@ -314,6 +314,34 @@ source "$FRAMEWORK_ROOT/framework/verify.sh"
 
 > 两个 `apply_kernel_compat_*` 受 `ENABLE_GW_LINUX_KERNEL_COMPAT` 门控（默认 false 时直接返回）。`run_as_root=false` → Scenario 1（仅去 sysctls，高端口网关）；`true` → Scenario 2（+ NET_BIND_SERVICE + root，特权端口网关）。多集群东西向网关与 ambient waypoint 传 `false`；监听 80 的 ambient ingress 网关用默认 `true`。
 
+## 测试结果统计（三层：Run → Case → DocTest）
+
+测试统计由 `framework/report.sh` 提供，数据源为每次运行的 `results.jsonl`（JSON Lines）。
+
+- **Run**：一次 `run-<project>-all.sh` 或一次独立 `./run.sh --file`。
+- **Case**：编排脚本中的一个用例组（`case_begin`/`case_end`），内含一到多个 `./run.sh`。
+- **DocTest**：一次 `./run.sh --file <doc>`，对应一篇文档的 `runme-test_<doc>.sh`。
+
+**失败策略**：跑完全部再汇总——致命前置（环境初始化）失败立即中止；普通 Case 失败记录后继续。
+
+**状态三态**：passed / failed / **skipped**（文档脚本用 `skip_test "原因"` 主动声明；编排层条件跳过用 `case_skip`）。
+
+**产物**（位于 `tmp/runs/<run-id>/`，`latest` 软链指向最近一次）：
+
+| 文件 | 说明 |
+| --- | --- |
+| `results.jsonl` | 唯一数据源，每行一条记录 |
+| `summary.json` | 三层结构化汇总（两套计数 + 每 Case 明细）|
+| `junit.xml` | 标准 JUnit，对接 CI |
+
+终端结束时打印美化摘要（总耗时、Case/DocTest 两套计数、每 Case 一行、失败/跳过明细）。退出码：有 failed→非 0。
+
+**运行报告层单元测试**（不依赖集群）：
+
+```bash
+bash framework/tests/report_test.sh
+```
+
 ## 编写新测试
 
 推荐使用 Claude Code 的 `/auto-test-creator` skill 自动生成测试脚本，定义见 `.claude/skills/auto-test-creator/SKILL.md`。它会分析 MDX、添加 `{name=}` 属性、生成测试脚本、更新本文档与编排脚本。

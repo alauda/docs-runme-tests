@@ -100,43 +100,13 @@ parse_csv_name_from_package() {
     parse_artifact_version_from_package "$1"
 }
 
-# 测试结果统计
-TESTS_TOTAL=0
-TESTS_PASSED=0
-TESTS_FAILED=0
-
-record_test_result() {
-    local result=$1
-    TESTS_TOTAL=$((TESTS_TOTAL + 1))
-    
-    if [ "$result" -eq 0 ]; then
-        TESTS_PASSED=$((TESTS_PASSED + 1))
-    else
-        TESTS_FAILED=$((TESTS_FAILED + 1))
-    fi
-}
-
-print_test_summary() {
-    echo ""
-    echo "========================================"
-    echo "测试总结"
-    echo "========================================"
-    echo "总计: $TESTS_TOTAL"
-    if [ "$TESTS_PASSED" -gt 0 ]; then
-        echo -e "${GREEN}通过: $TESTS_PASSED${NC}"
-    fi
-    if [ "$TESTS_FAILED" -gt 0 ]; then
-        echo -e "${RED}失败: $TESTS_FAILED${NC}"
-    fi
-    echo "========================================"
-    
-    if [ "$TESTS_FAILED" -eq 0 ]; then
-        log_success "所有测试通过!"
-        return 0
-    else
-        log_error "有 $TESTS_FAILED 个测试失败"
-        return 1
-    fi
+# 文档测试脚本主动声明「跳过」：设置标记后 return 0；
+# 引擎 run.sh 检测 __TEST_SKIPPED 后将该 DocTest 记为 status=skipped。
+skip_test() {
+    __TEST_SKIPPED=1
+    __TEST_SKIP_REASON="$1"
+    log_warn "SKIPPED: $1"
+    return 0
 }
 
 # Wait for resource to be created

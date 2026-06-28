@@ -138,6 +138,8 @@ if (
     # 出口网关 (Egress Gateway) 测试
     ./run.sh --project mesh --file routing-egress-traffic-via-k8s-gateway-api-in-ambient-mode --no-cleanup
     ./run.sh --project mesh --file routing-egress-traffic-via-k8s-gateway-api-in-ambient-mode --cleanup-only
+    # 卸载 kiali
+    ./run.sh --project mesh --file uninstalling-alauda-build-of-kiali
     # 卸载 ambient 网格
     ./run.sh --project mesh --file uninstalling-alauda-service-mesh-in-ambient-mode
     # 清理 bookinfo

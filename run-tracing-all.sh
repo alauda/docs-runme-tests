@@ -7,6 +7,9 @@
 #     若 TRACING_ACP_ES_CLUSTER 为空，则使用 TRACING_ES_ENDPOINT / TRACING_ES_USER / TRACING_ES_PASS。
 #   - OpenSearch 链（Case 2）: 仅支持手动配置 TRACING_OPENSEARCH_ENDPOINT / TRACING_OPENSEARCH_USER /
 #     TRACING_OPENSEARCH_PASS；未设置时 Case 2 自动 SKIPPED。
+#   - SPM 多副本（高可用）验证（Case 3/4）: 各自复用安装链装好 SPM 后，将 otel/jaeger 扩容到
+#     多副本并校验单写入者（每个 service 只被一个 Jaeger 副本聚合）；OpenSearch 未配置时
+#     Case 4 自动 SKIPPED。可选环境变量：SPM_HA_REPLICAS（默认 2）、SPM_HA_SVC_COUNT（默认 6）。
 
 set -e
 
@@ -57,6 +60,48 @@ case_begin "2" "分布式调用链安装与卸载测试 (OpenSearch)"
 if (
     set -e
     ./run.sh --project tracing --file installing-distributed-tracing-opensearch
+    # 清理
+    ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds
+); then
+    case_end 0
+else
+    case_end 1
+fi
+
+# ------------------------------------------------------------------
+# Case 3: SPM 多副本（高可用）验证 (Elasticsearch)
+# 复用安装链装好组件并启用 SPM（--skip-telemetrygen 仅跳过安装自带的 telemetrygen，
+# 不影响 SPM 新方案配置的应用）；再由 spm-ha 测试把 otel/jaeger 扩容到多副本，
+# 校验每个 service 只被一个 Jaeger 副本聚合 spanmetrics（单写入者），最后缩容并卸载。
+# 不修改任何 mdx 文档，多副本验证完全在测试脚本内通过 kubectl 完成。
+# ------------------------------------------------------------------
+case_begin "3" "SPM 多副本（高可用）验证 (Elasticsearch)"
+
+if (
+    set -e
+    ./run.sh --project tracing --file installing-distributed-tracing-elasticsearch --skip-telemetrygen
+    ./run.sh --project tracing --file spm-ha-elasticsearch --no-cleanup
+    ./run.sh --project tracing --file spm-ha-elasticsearch --cleanup-only
+    # 清理
+    ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds
+); then
+    case_end 0
+else
+    case_end 1
+fi
+
+# ------------------------------------------------------------------
+# Case 4: SPM 多副本（高可用）验证 (OpenSearch)
+# 同 Case 3，但走 OpenSearch 安装链。未设置 TRACING_OPENSEARCH_* 时安装 SKIPPED，
+# 随后 spm-ha-opensearch 因检测不到已安装的 otel 实例而自动 SKIPPED，不阻断编排。
+# ------------------------------------------------------------------
+case_begin "4" "SPM 多副本（高可用）验证 (OpenSearch)"
+
+if (
+    set -e
+    ./run.sh --project tracing --file installing-distributed-tracing-opensearch --skip-telemetrygen
+    ./run.sh --project tracing --file spm-ha-opensearch --no-cleanup
+    ./run.sh --project tracing --file spm-ha-opensearch --cleanup-only
     # 清理
     ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds
 ); then

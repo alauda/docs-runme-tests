@@ -4,6 +4,36 @@
 # 由 run.sh 引擎在 source framework/{common,verify,kubeconfig,tools}.sh 之后加载。
 
 # ==============================================================================
+# tracing 测试脚本辅助函数
+# ==============================================================================
+
+# telemetrygen 上游默认镜像（与各安装文档 deploy-telemetrygen 代码块、_spm-ha-common.sh 一致）。
+TRACING_TELEMETRYGEN_DEFAULT_IMAGE="ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest"
+
+# 解析 telemetrygen 的有效镜像并打印到 stdout，供三个 tracing 测试脚本复用：
+# installing 的 _deploy_telemetrygen（ES/OS）与 _spm-ha-common.sh 的 _spm_ha_deploy_telemetrygen。
+#   - 默认返回上游镜像 TRACING_TELEMETRYGEN_DEFAULT_IMAGE；
+#   - USE_MESH_V2_TEST_SUITE_PLUGIN=true 时，从 cpaas-system/mesh-v2-test-suite-manifest
+#     ConfigMap 的 data.registry 读取 ACP 内置镜像仓库，将上游 ghcr.io/open-telemetry/ 前缀
+#     改写到该仓库的 asm/ 命名空间下（镜像由插件预置）；
+#   - 声明启用插件却读不到 registry 时返回 1（报错退出，避免误用拉不到的上游镜像）。
+tracing_telemetrygen_image() {
+    local image="$TRACING_TELEMETRYGEN_DEFAULT_IMAGE"
+    if [ "${USE_MESH_V2_TEST_SUITE_PLUGIN:-false}" = "true" ]; then
+        local registry
+        registry=$(kubectl -n cpaas-system get cm mesh-v2-test-suite-manifest \
+            -o jsonpath='{.data.registry}' 2>/dev/null)
+        if [ -z "$registry" ]; then
+            log_error "USE_MESH_V2_TEST_SUITE_PLUGIN=true 但未能从 cpaas-system/mesh-v2-test-suite-manifest 读取 data.registry"
+            return 1
+        fi
+        log_info "使用 mesh-v2-test-suite 集群插件镜像仓库: $registry"
+        image="${registry}/asm/${image#ghcr.io/open-telemetry/}"
+    fi
+    printf '%s' "$image"
+}
+
+# ==============================================================================
 # 项目钩子（由 run.sh 引擎调用）
 # ==============================================================================
 

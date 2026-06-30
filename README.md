@@ -225,6 +225,7 @@ cd docs-runme-tests
 | 网格调用链集成配置           | `./run.sh --project mesh --file config-with-service-mesh`                                   |
 | Kiali 安装与配置             | `./run.sh --project mesh --file kiali`                                                      |
 | Bookinfo 应用部署（含网关）  | `./run.sh --project mesh --file deploying-the-bookinfo-application`                         |
+| 严格 mTLS（命名空间级）      | `./run.sh --project mesh --file mtls`                                                       |
 | Sidecar 网关 - Istio Gateway   | `./run.sh --project mesh --file exposing-a-service-via-istio-gateway`                       |
 | Sidecar 网关 - K8s Gateway API | `./run.sh --project mesh --file exposing-a-service-via-k8s-gateway-api-in-sidecar-mode`     |
 | Sidecar 出口网关 - Istio APIs   | `./run.sh --project mesh --file routing-egress-traffic-via-istio-apis`                      |

@@ -133,6 +133,7 @@ if (
     ./run.sh --project mesh --file deploying-ambient-bookinfo --no-cleanup
     # 为 bookinfo 命名空间启用严格 mTLS（PeerAuthentication STRICT）
     ./run.sh --project mesh --file mtls --no-cleanup
+    ./run.sh --project mesh --file config-with-service-mesh --no-cleanup
     ./run.sh --project mesh --file kiali
     ./run.sh --project mesh --file waypoint-proxies
     # L7 特性测试（独立测试，包含清理步骤）

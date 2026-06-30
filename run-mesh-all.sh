@@ -80,6 +80,8 @@ if (
     ./run.sh --project mesh --file routing-egress-traffic-via-k8s-gateway-api-in-sidecar-mode --cleanup-only
     ./run.sh --project mesh --file metrics-and-mesh
     ./run.sh --project mesh --file deploying-the-bookinfo-application --no-cleanup
+    # 为 bookinfo 命名空间启用严格 mTLS（PeerAuthentication STRICT）
+    ./run.sh --project mesh --file mtls --no-cleanup
     # 调用链集成：先装调用链平台，再配置网格上报，再装含调用链集成的 kiali
     # mesh 场景下由 bookinfo 业务流量产生 trace，无需 telemetrygen 端到端验证
     ./run.sh --project tracing --file installing-distributed-tracing-elasticsearch --skip-telemetrygen
@@ -89,6 +91,8 @@ if (
     ./run.sh --project mesh --file uninstalling-alauda-build-of-kiali
     ./run.sh --project mesh --file config-with-service-mesh --cleanup-only
     ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds
+    # 清理 bookinfo 命名空间的严格 mTLS 配置（在删除 bookinfo 前移除 PeerAuthentication）
+    ./run.sh --project mesh --file mtls --cleanup-only
     ./run.sh --project mesh --file deploying-the-bookinfo-application --cleanup-only
     ./run.sh --project mesh --file uninstalling-alauda-service-mesh
 ); then
@@ -127,6 +131,8 @@ if (
     ./run.sh --project mesh --file installing-ambient-mode --force-init
     ./run.sh --project mesh --file metrics-and-mesh
     ./run.sh --project mesh --file deploying-ambient-bookinfo --no-cleanup
+    # 为 bookinfo 命名空间启用严格 mTLS（PeerAuthentication STRICT）
+    ./run.sh --project mesh --file mtls --no-cleanup
     ./run.sh --project mesh --file kiali
     ./run.sh --project mesh --file waypoint-proxies
     # L7 特性测试（独立测试，包含清理步骤）
@@ -138,6 +144,8 @@ if (
     # 出口网关 (Egress Gateway) 测试
     ./run.sh --project mesh --file routing-egress-traffic-via-k8s-gateway-api-in-ambient-mode --no-cleanup
     ./run.sh --project mesh --file routing-egress-traffic-via-k8s-gateway-api-in-ambient-mode --cleanup-only
+    # 清理 bookinfo 命名空间的严格 mTLS 配置（在卸载网格前移除 PeerAuthentication）
+    ./run.sh --project mesh --file mtls --cleanup-only
     # 卸载 kiali
     ./run.sh --project mesh --file uninstalling-alauda-build-of-kiali
     # 卸载 ambient 网格

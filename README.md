@@ -31,7 +31,7 @@ docs-runme-tests/
 ├── projects/               # 各文档项目专属逻辑
 │   ├── mesh/project.sh     # mesh 钩子 + istioctl / 插件包 / operator 安装 / PLATFORM_CA
 │   ├── otel/project.sh     # otel 钩子
-│   └── tracing/            # tracing 钩子（project.sh）+ OpenSearch 自动安装（opensearch.sh）
+│   └── tracing/            # tracing 钩子（project.sh）+ OpenSearch / Elasticsearch 自动安装（opensearch.sh / elasticsearch.sh）
 ├── bin/                    # 工具缓存：runme / violet / istioctl（gitignore）
 ├── package/                # 插件包缓存（gitignore）
 └── .kubeconfig/            # kubeconfig 缓存（gitignore）
@@ -135,6 +135,15 @@ export TRACING_ACP_ES_CLUSTER=global
 export TRACING_ES_ENDPOINT='https://es.xx:9200'
 export TRACING_ES_USER='your-es-username'
 export TRACING_ES_PASS='your-es-password'
+# Elasticsearch 自动安装（默认关闭）：开启且 PKG_LOG_CENTER_URL 非空时，Elasticsearch 安装测试的
+# 步骤 0 会把 ACP 日志存储 Elasticsearch（"Alauda Container Platform Log Storage for Elasticsearch"，
+# logcenter 集群插件，Single Node 模式，Log/Kafka 共用一个节点）安装到 TRACING_ACP_ES_CLUSTER
+# 指定集群；对应集群已安装过则跳过（幂等）。插件包自动下载并 violet 上架到 global 集群
+# （集群插件只需上架 global）。安装逻辑见 projects/tracing/elasticsearch.sh。
+export TRACING_INSTALL_ES=false
+export PKG_LOG_CENTER_URL=xxx             # log-center 集群插件包（自动下载上架）
+# Log/Kafka 节点（可选，默认自动取目标集群第一个 Ready 节点）
+# export TRACING_ES_K8S_NODE=192.168.131.240
 # OpenSearch 自动安装（默认开启；前提：ACP 离线环境、业务集群至少 3 个节点、各节点有空闲磁盘）
 # 开启且下方两个插件包地址齐全时，OpenSearch 安装测试的步骤 0 会自动安装 TopoLVM + OpenSearch，
 # 并用实际安装结果覆盖 TRACING_OPENSEARCH_*（无需手动配置）；条件不满足时降级用手动配置。
@@ -169,7 +178,7 @@ export TRACING_TEST_SPM=true
 | ------- | ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | mesh    | `PKG_SERVICEMESH_OPERATOR2_URL` `PKG_KIALI_OPERATOR_URL` `PKG_OPENTELEMETRY_OPERATOR2_URL` `PKG_MULTUS_URL` | `ENABLE_METALLB=true` → `PKG_METALLB_URL` `PKG_METALLB_OPERATOR_URL`；`USE_MESH_V2_TEST_SUITE_PLUGIN=true` → `PKG_MESH_V2_TEST_SUITE_URL`                                                           |
 | otel    | `PKG_OPENTELEMETRY_OPERATOR2_URL`                                                                           | `USE_MESH_V2_TEST_SUITE_PLUGIN=true` → `PKG_MESH_V2_TEST_SUITE_URL`                                                                                                                                 |
-| tracing | `PKG_OPENTELEMETRY_OPERATOR2_URL`                                                                           | `USE_MESH_V2_TEST_SUITE_PLUGIN=true` → `PKG_MESH_V2_TEST_SUITE_URL`；ES：`TRACING_ACP_ES_CLUSTER` 或 `TRACING_ES_ENDPOINT/USER/PASS`；OpenSearch：默认自动安装（`TRACING_INSTALL_OPENSEARCH=true` + `PKG_ACP_STORAGE_OPERATOR_URL` `PKG_TOPOLVM_OPERATOR_URL`，opensearch-operator 包需手动上架），或降级手动 `TRACING_OPENSEARCH_ENDPOINT/USER/PASS` |
+| tracing | `PKG_OPENTELEMETRY_OPERATOR2_URL`                                                                           | `USE_MESH_V2_TEST_SUITE_PLUGIN=true` → `PKG_MESH_V2_TEST_SUITE_URL`；ES：`TRACING_ACP_ES_CLUSTER` 或 `TRACING_ES_ENDPOINT/USER/PASS`（`TRACING_INSTALL_ES=true` + `PKG_LOG_CENTER_URL` 时自动安装 logcenter 集群插件到 `TRACING_ACP_ES_CLUSTER`）；OpenSearch：默认自动安装（`TRACING_INSTALL_OPENSEARCH=true` + `PKG_ACP_STORAGE_OPERATOR_URL` `PKG_TOPOLVM_OPERATOR_URL`，opensearch-operator 包需手动上架），或降级手动 `TRACING_OPENSEARCH_ENDPOINT/USER/PASS` |
 
 > 注：`METALLB_EXTERNAL_ADDRESSES_JSON`（外部 IP 地址池地址，JSON 数组）在 `ENABLE_METALLB=true` 时由 `setup_external_ip_pools` 创建地址池时校验（不在 `project_check_env`）：多集群 Case 6/7 需含 `cluster=$EAST_CLUSTER_NAME`/`$WEST_CLUSTER_NAME` 条目；单集群入口网关 LoadBalancer 测试（Case 3/5 的 exposing-* 文档）需含 `cluster=$SINGLE_CLUSTER_NAME` 条目。
 
@@ -286,7 +295,7 @@ cd docs-runme-tests
 | 分布式调用链安装（OpenSearch）    | `./run.sh --project tracing --file installing-distributed-tracing-opensearch`    |
 | 分布式调用链卸载                  | `./run.sh --project tracing --file uninstalling-distributed-tracing`             |
 
-> Elasticsearch 安装测试默认从 `TRACING_ACP_ES_CLUSTER` 指定的 ACP 集群（默认 `global`）读取 log-center Elasticsearch 配置；将其设为空时改用 `TRACING_ES_*` 手动配置（该加载逻辑位于 Elasticsearch 安装测试脚本，不再由 `project_prepare` 全局执行）。OpenSearch 安装测试默认自动安装存储后端：`TRACING_INSTALL_OPENSEARCH=true`（默认）且 `PKG_ACP_STORAGE_OPERATOR_URL` / `PKG_TOPOLVM_OPERATOR_URL` 齐全时，步骤 0 自动安装 TopoLVM + OpenSearch（幂等，opensearch-operator 插件包目前需手动上架）并用实际结果覆盖 `TRACING_OPENSEARCH_*`；条件不满足时降级用手动 `TRACING_OPENSEARCH_ENDPOINT/USER/PASS`，两者皆缺则该测试 SKIPPED（安装逻辑见 `projects/tracing/opensearch.sh`）。卸载测试存储无关，按 Jaeger 命名空间是否存在判定是否执行；OpenSearch/TopoLVM 作为环境级存储后端不随卸载清理。安装测试会自动安装前置依赖 OpenTelemetry v2 Operator（其代码块位于 `opentelemetry-docs`）。
+> Elasticsearch 安装测试默认从 `TRACING_ACP_ES_CLUSTER` 指定的 ACP 集群（默认 `global`）读取 log-center Elasticsearch 配置；将其设为空时改用 `TRACING_ES_*` 手动配置（该加载逻辑位于 Elasticsearch 安装测试脚本，不再由 `project_prepare` 全局执行）。`TRACING_INSTALL_ES=true` 且 `PKG_LOG_CENTER_URL` 非空时，步骤 0 会先把 logcenter 集群插件（Single Node 模式）自动安装到该集群——对应集群已安装过则跳过（安装逻辑见 `projects/tracing/elasticsearch.sh`）。OpenSearch 安装测试默认自动安装存储后端：`TRACING_INSTALL_OPENSEARCH=true`（默认）且 `PKG_ACP_STORAGE_OPERATOR_URL` / `PKG_TOPOLVM_OPERATOR_URL` 齐全时，步骤 0 自动安装 TopoLVM + OpenSearch（幂等，opensearch-operator 插件包目前需手动上架）并用实际结果覆盖 `TRACING_OPENSEARCH_*`；条件不满足时降级用手动 `TRACING_OPENSEARCH_ENDPOINT/USER/PASS`，两者皆缺则该测试 SKIPPED（安装逻辑见 `projects/tracing/opensearch.sh`）。卸载测试存储无关，按 Jaeger 命名空间是否存在判定是否执行；OpenSearch/TopoLVM 作为环境级存储后端不随卸载清理。安装测试会自动安装前置依赖 OpenTelemetry v2 Operator（其代码块位于 `opentelemetry-docs`）。
 
 ## 工作原理
 

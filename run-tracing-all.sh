@@ -5,6 +5,9 @@
 # 要求:
 #   - Elasticsearch 链（Case 1）: 默认通过 TRACING_ACP_ES_CLUSTER（默认 global）自动读取 ACP ES 配置；
 #     若 TRACING_ACP_ES_CLUSTER 为空，则使用 TRACING_ES_ENDPOINT / TRACING_ES_USER / TRACING_ES_PASS。
+#     TRACING_INSTALL_ES=true 且 PKG_LOG_CENTER_URL 非空时，安装测试的步骤 0 会先把 logcenter
+#     集群插件（ACP 日志存储 Elasticsearch，Single Node 模式）自动安装到 TRACING_ACP_ES_CLUSTER
+#     指定集群——对应集群已安装过则跳过（幂等，见 projects/tracing/elasticsearch.sh）。
 #   - OpenSearch 链（Case 2）: 默认自动安装 OpenSearch（TRACING_INSTALL_OPENSEARCH=true 且
 #     PKG_ACP_STORAGE_OPERATOR_URL / PKG_TOPOLVM_OPERATOR_URL 齐全时，安装测试的步骤 0 自动
 #     安装 TopoLVM + OpenSearch 并覆盖 TRACING_OPENSEARCH_*，幂等；opensearch-operator 插件包
@@ -38,6 +41,7 @@ log_header "开始执行 tracing 项目所有测试任务"
 # Case 1: 分布式调用链安装与卸载测试 (Elasticsearch)
 # install --force-init 会自动上传 OTel Operator 插件包（安装的前置依赖）；
 # 安装测试步骤 1 负责安装 OTel Operator 本身。
+# TRACING_INSTALL_ES=true 时步骤 0 自动安装 logcenter 集群插件（幂等，已安装跳过）。
 # ------------------------------------------------------------------
 case_begin "1" "分布式调用链安装与卸载测试 (Elasticsearch)"
 

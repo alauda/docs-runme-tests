@@ -7,6 +7,10 @@
 # shellcheck disable=SC1091
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/opensearch.sh"
 
+# Elasticsearch 存储后端自动安装模块（logcenter 集群插件，供 Elasticsearch 安装测试前置调用）
+# shellcheck disable=SC1091
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/elasticsearch.sh"
+
 # ==============================================================================
 # tracing 测试脚本辅助函数
 # ==============================================================================
@@ -134,7 +138,10 @@ project_check_env() {
     fi
 
     # 存储后端配置为软依赖，分别由各安装测试脚本自检（缺失时对应测试以 SKIPPED 退出）：
-    #   - Elasticsearch: TRACING_ACP_ES_CLUSTER（默认 global，从 ACP 自动获取）或手动 TRACING_ES_ENDPOINT/USER/PASS
+    #   - Elasticsearch: TRACING_ACP_ES_CLUSTER（默认 global，从 ACP 自动获取）或手动 TRACING_ES_ENDPOINT/USER/PASS；
+    #     TRACING_INSTALL_ES=true 且 PKG_LOG_CENTER_URL 非空时，安装测试的步骤 0 会先把
+    #     logcenter 集群插件自动装到 TRACING_ACP_ES_CLUSTER 指定集群（已安装则跳过，见
+    #     projects/tracing/elasticsearch.sh）
     #   - OpenSearch:    默认自动安装（TRACING_INSTALL_OPENSEARCH=true 且
     #     PKG_ACP_STORAGE_OPERATOR_URL / PKG_TOPOLVM_OPERATOR_URL 齐全，见
     #     projects/tracing/opensearch.sh）；不满足时降级用手动 TRACING_OPENSEARCH_ENDPOINT/USER/PASS

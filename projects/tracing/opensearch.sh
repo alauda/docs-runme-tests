@@ -38,6 +38,9 @@ TRACING_OPENSEARCH_NS="${TRACING_OPENSEARCH_NS:-opensearch-demo}"
 TRACING_OPENSEARCH_NAME="${TRACING_OPENSEARCH_NAME:-my-opensearch}"
 TRACING_OPENSEARCH_VERSION="${TRACING_OPENSEARCH_VERSION:-3.3.1}"
 TRACING_OPENSEARCH_DASHBOARDS_VERSION="${TRACING_OPENSEARCH_DASHBOARDS_VERSION:-3.3.0}"
+# Dashboards 经 ALB Ingress 暴露的访问路径（留空则自动派生
+# /clusters/<集群名>/opensearch-dashboards，与 Jaeger UI 的 basepath 模式一致）
+TRACING_OPENSEARCH_DASHBOARDS_BASEPATH="${TRACING_OPENSEARCH_DASHBOARDS_BASEPATH:-}"
 
 # ==============================================================================
 # 判定函数
@@ -199,9 +202,28 @@ _tracing_install_topolvm() {
 # OpenSearch 安装
 # ==============================================================================
 
+# 解析 dashboards 访问路径并打印到 stdout（本函数经命令替换捕获，勿向 stdout 打日志）：
+# 优先取 TRACING_OPENSEARCH_DASHBOARDS_BASEPATH，否则按 Jaeger UI 的模式从
+# kube-public/global-info 派生 /clusters/<集群名>/opensearch-dashboards
+_tracing_dashboards_basepath() {
+    if [ -n "$TRACING_OPENSEARCH_DASHBOARDS_BASEPATH" ]; then
+        printf '%s' "$TRACING_OPENSEARCH_DASHBOARDS_BASEPATH"
+        return 0
+    fi
+    local cluster_name
+    cluster_name=$(kubectl -nkube-public get configmap global-info \
+        -o jsonpath='{.data.clusterName}' 2>/dev/null)
+    [ -n "$cluster_name" ] || return 1
+    printf '/clusters/%s/opensearch-dashboards' "$cluster_name"
+}
+
 # 内联渲染 OpenSearchCluster（同 OpenSearch_Installation_Guide.md 的安装 yaml，
-# 存储类与版本参数化；TLS 自动生成，dashboards 一并启用）
+# 存储类与版本参数化；TLS 自动生成，dashboards 一并启用）。
+# dashboards.basePath 使 operator 注入 SERVER_BASEPATH/SERVER_REWRITEBASEPATH，
+# dashboards 才能在 ALB 子路径下正确服务（见 _tracing_install_dashboards_ingress）。
+# 用法: _tracing_render_opensearchcluster <dashboards_basepath>
 _tracing_render_opensearchcluster() {
+    local dashboards_basepath="$1"
     cat <<EOF
 apiVersion: opensearch.opster.io/v1
 kind: OpenSearchCluster
@@ -224,6 +246,7 @@ spec:
     enable: true
     version: ${TRACING_OPENSEARCH_DASHBOARDS_VERSION}
     replicas: 1
+    basePath: ${dashboards_basepath}
     resources:
       requests:
         memory: "256Mi"
@@ -273,8 +296,13 @@ _tracing_install_opensearch_cluster() {
     if kubectl -n "$TRACING_OPENSEARCH_NS" get opensearchcluster "$TRACING_OPENSEARCH_NAME" >/dev/null 2>&1; then
         log_info "OpenSearchCluster $TRACING_OPENSEARCH_NAME 已存在，跳过创建"
     else
+        local dashboards_basepath
+        dashboards_basepath=$(_tracing_dashboards_basepath) || {
+            log_error "未能派生 dashboards 访问路径（读取 kube-public/global-info 的 clusterName 失败）"
+            return 1
+        }
         log_info "创建 OpenSearchCluster ${TRACING_OPENSEARCH_NS}/${TRACING_OPENSEARCH_NAME}"
-        _tracing_render_opensearchcluster | kubectl apply -f - || {
+        _tracing_render_opensearchcluster "$dashboards_basepath" | kubectl apply -f - || {
             log_error "创建 OpenSearchCluster 失败"
             return 1
         }
@@ -304,6 +332,160 @@ _tracing_install_opensearch_cluster() {
     return 0
 }
 
+# 内联渲染 Dashboards Ingress（仿 installing 文档 Jaeger UI Ingress 的写法：
+# ALB IngressClass + 子路径路由；dashboards 自带 OpenSearch 账号登录，
+# 无需 oauth2-proxy 等额外授权层，Ingress 直连 dashboards 5601 端口）
+# 用法: _tracing_render_dashboards_ingress <alb_class> <basepath>
+_tracing_render_dashboards_ingress() {
+    local alb_class="$1" basepath="$2"
+    cat <<EOF
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ${TRACING_OPENSEARCH_NAME}-dashboards
+  namespace: ${TRACING_OPENSEARCH_NS}
+  annotations:
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+spec:
+  ingressClassName: ${alb_class}
+  rules:
+    - http:
+        paths:
+          - path: ${basepath}
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: ${TRACING_OPENSEARCH_NAME}-dashboards
+                port:
+                  number: 5601
+EOF
+}
+
+# 通过 ALB Ingress 暴露 OpenSearch Dashboards（幂等，可重复调用）：
+#   1. 对齐 OpenSearchCluster 的 dashboards.basePath（不一致时 patch，operator 会
+#      滚动重建 dashboards Deployment，不影响 OpenSearch 数据节点）
+#   2. 等待 dashboards Deployment 就绪
+#   3. 创建 Ingress（已存在跳过）并等待 ALB 接管
+_tracing_install_dashboards_ingress() {
+    log_header "暴露 OpenSearch Dashboards（Ingress）"
+
+    local basepath alb_class
+    basepath=$(_tracing_dashboards_basepath) || {
+        log_error "未能派生 dashboards 访问路径（读取 kube-public/global-info 的 clusterName 失败）"
+        return 1
+    }
+    alb_class=$(kubectl -nkube-public get configmap global-info \
+        -o jsonpath='{.data.systemAlbIngressClassName}' 2>/dev/null)
+    if [ -z "$alb_class" ]; then
+        log_error "未能从 kube-public/global-info 读取 systemAlbIngressClassName"
+        return 1
+    fi
+
+    # 0. 确保命名空间归属 ALB 绑定的项目：系统 ALB 只接管归属其 projects 列表内
+    #    项目的命名空间中的 Ingress（实测无 cpaas.io/project 标签时 status 不回填、
+    #    路由规则不下发）
+    local alb_project ns_project labeled_now=""
+    alb_project=$(kubectl -n cpaas-system get alb2 "$alb_class" \
+        -o jsonpath='{.spec.config.projects[0]}' 2>/dev/null)
+    alb_project="${alb_project:-cpaas-system}"
+    ns_project=$(kubectl get namespace "$TRACING_OPENSEARCH_NS" \
+        -o jsonpath='{.metadata.labels.cpaas\.io/project}' 2>/dev/null)
+    if [ -z "$ns_project" ]; then
+        log_info "标记命名空间 $TRACING_OPENSEARCH_NS 归属项目 $alb_project（ALB 接管 Ingress 的前提）"
+        kubectl label namespace "$TRACING_OPENSEARCH_NS" "cpaas.io/project=${alb_project}" --overwrite || {
+            log_error "标记命名空间项目归属失败"
+            return 1
+        }
+        labeled_now="yes"
+    else
+        log_info "命名空间 $TRACING_OPENSEARCH_NS 已归属项目: $ns_project"
+        if [ "$ns_project" != "$alb_project" ]; then
+            log_warn "该项目与 ALB 绑定项目 ($alb_project) 不同，若 Ingress 长时间未就绪请检查 ALB 项目配置"
+        fi
+    fi
+
+    # 1. 对齐 dashboards.basePath（operator 将其写入 <name>-dashboards-config ConfigMap
+    #    的 opensearch_dashboards.yml：server.basePath + server.rewriteBasePath，并通过
+    #    Deployment 的 checksum/dashboards.yml pod 注解触发滚动重建）
+    local dashboards_deploy="${TRACING_OPENSEARCH_NAME}-dashboards"
+    local dashboards_cm="${TRACING_OPENSEARCH_NAME}-dashboards-config"
+    local checksum_jsonpath='{.spec.template.metadata.annotations.checksum/dashboards\.yml}'
+    local current_basepath
+    current_basepath=$(kubectl -n "$TRACING_OPENSEARCH_NS" get opensearchcluster "$TRACING_OPENSEARCH_NAME" \
+        -o jsonpath='{.spec.dashboards.basePath}' 2>/dev/null)
+    if [ "$current_basepath" = "$basepath" ]; then
+        log_info "dashboards basePath 已对齐: $basepath"
+    else
+        local old_checksum
+        old_checksum=$(kubectl -n "$TRACING_OPENSEARCH_NS" get deployment "$dashboards_deploy" \
+            -o jsonpath="$checksum_jsonpath" 2>/dev/null)
+        log_info "设置 dashboards basePath: ${current_basepath:-<未设置>} -> $basepath"
+        kubectl -n "$TRACING_OPENSEARCH_NS" patch opensearchcluster "$TRACING_OPENSEARCH_NAME" \
+            --type=merge -p "{\"spec\":{\"dashboards\":{\"basePath\":\"${basepath}\"}}}" || {
+            log_error "设置 dashboards basePath 失败"
+            return 1
+        }
+        # 等 operator 把 basePath 同步进 ConfigMap 并更新 Deployment 的 checksum 注解
+        local attempt synced=""
+        for ((attempt=1; attempt<=30; attempt++)); do
+            local new_checksum
+            new_checksum=$(kubectl -n "$TRACING_OPENSEARCH_NS" get deployment "$dashboards_deploy" \
+                -o jsonpath="$checksum_jsonpath" 2>/dev/null)
+            if [ "$new_checksum" != "$old_checksum" ] \
+                && kubectl -n "$TRACING_OPENSEARCH_NS" get configmap "$dashboards_cm" \
+                    -o jsonpath='{.data.opensearch_dashboards\.yml}' 2>/dev/null \
+                    | grep -q "server.basePath: ${basepath}$"; then
+                synced="yes"
+                break
+            fi
+            log_warn "等待 dashboards Deployment 同步 basePath 配置 (${attempt}/30)"
+            [ "$attempt" -lt 30 ] && sleep 5
+        done
+        if [ -z "$synced" ]; then
+            log_error "dashboards 配置未同步 basePath（ConfigMap ${dashboards_cm} / checksum 注解未更新）"
+            return 1
+        fi
+    fi
+
+    # 2. 等待 dashboards Deployment 就绪（basePath 变更会触发滚动重建）
+    kubectl -n "$TRACING_OPENSEARCH_NS" rollout status "deployment/$dashboards_deploy" --timeout=300s || {
+        log_error "dashboards Deployment 未就绪: ${TRACING_OPENSEARCH_NS}/${dashboards_deploy}"
+        return 1
+    }
+
+    # 3. 创建 Ingress（已存在则跳过）
+    local ingress_name="${TRACING_OPENSEARCH_NAME}-dashboards"
+    if kubectl -n "$TRACING_OPENSEARCH_NS" get ingress "$ingress_name" >/dev/null 2>&1; then
+        log_info "Ingress $ingress_name 已存在，跳过创建"
+        # 项目标签是本次新打的：ALB 不会因命名空间标签变化重新评估既有 Ingress，
+        # touch 一个注解触发 Ingress 更新事件（实测 touch 后约 30s 内接管）
+        if [ -n "$labeled_now" ]; then
+            kubectl -n "$TRACING_OPENSEARCH_NS" annotate ingress "$ingress_name" \
+                "cpaas.io/resync-at=$(date +%s)" --overwrite >/dev/null 2>&1 || true
+        fi
+    else
+        log_info "创建 Ingress ${TRACING_OPENSEARCH_NS}/${ingress_name} (class=$alb_class, path=$basepath)"
+        _tracing_render_dashboards_ingress "$alb_class" "$basepath" | kubectl apply -f - || {
+            log_error "创建 Ingress 失败"
+            return 1
+        }
+    fi
+
+    # 4. 等待 Ingress 被 ALB 接管（同 installing 文档 Jaeger Ingress 的等待方式）
+    kubectl wait --for=jsonpath='{.status.loadBalancer.ingress}' "ingress/$ingress_name" \
+        -n "$TRACING_OPENSEARCH_NS" --timeout=180s || {
+        log_error "Ingress 未在预期时间内就绪: ${TRACING_OPENSEARCH_NS}/${ingress_name}"
+        log_error "请检查命名空间项目归属（cpaas.io/project 标签）是否在 ALB $alb_class 的绑定项目列表内"
+        return 1
+    }
+
+    local platform_url
+    platform_url=$(kubectl -nkube-public get configmap global-info \
+        -o jsonpath='{.data.platformURL}' 2>/dev/null)
+    log_success "OpenSearch Dashboards 已暴露: ${platform_url}${basepath}（使用 OpenSearch admin 账号登录）"
+    return 0
+}
+
 # ==============================================================================
 # 对外入口
 # ==============================================================================
@@ -317,6 +499,7 @@ tracing_ensure_opensearch() {
     _tracing_opensearch_precheck || return 1
     _tracing_install_topolvm || return 1
     _tracing_install_opensearch_cluster || return 1
+    _tracing_install_dashboards_ingress || return 1
 
     # 等待 operator 生成的 admin 凭据 Secret
     local secret_name="${TRACING_OPENSEARCH_NAME}-admin-password"

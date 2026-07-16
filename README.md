@@ -138,6 +138,9 @@ export TRACING_ES_PASS='your-es-password'
 # OpenSearch 自动安装（默认开启；前提：ACP 离线环境、业务集群至少 3 个节点、各节点有空闲磁盘）
 # 开启且下方两个插件包地址齐全时，OpenSearch 安装测试的步骤 0 会自动安装 TopoLVM + OpenSearch，
 # 并用实际安装结果覆盖 TRACING_OPENSEARCH_*（无需手动配置）；条件不满足时降级用手动配置。
+# 安装完成后还会为 OpenSearch Dashboards 创建 ALB Ingress（仿 Jaeger UI 的子路径模式，
+# 访问 <platformURL>/clusters/<集群名>/opensearch-dashboards，用 OpenSearch admin 账号登录，
+# 无 oauth2-proxy 等额外授权层）。
 # 注意：opensearch-operator 插件包目前需手动 violet 上架到业务集群（下载地址为带签名的临时 URL；
 # 待支持在线环境后改为自动下载上架，见 projects/tracing/opensearch.sh 的 TODO）。
 export TRACING_INSTALL_OPENSEARCH=true
@@ -145,6 +148,8 @@ export PKG_ACP_STORAGE_OPERATOR_URL=xxx   # Alauda Container Platform Storage Es
 export PKG_TOPOLVM_OPERATOR_URL=xxx       # Alauda Build of TopoLVM 包（自动下载上架）
 # TopolvmCluster 使用的节点空闲磁盘设备（可选，默认 /dev/vdb）
 export TRACING_TOPOLVM_DEVICE=/dev/vdb
+# Dashboards Ingress 的访问路径（可选，默认自动派生 /clusters/<集群名>/opensearch-dashboards）
+# export TRACING_OPENSEARCH_DASHBOARDS_BASEPATH=/clusters/business-1/opensearch-dashboards
 # 手动 OpenSearch 配置（自动安装条件不满足时使用）
 export TRACING_OPENSEARCH_ENDPOINT='https://opensearch.xx:9200'
 export TRACING_OPENSEARCH_USER='your-opensearch-username'

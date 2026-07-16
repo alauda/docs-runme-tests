@@ -31,7 +31,8 @@ tracing_telemetrygen_image() {
             log_error "USE_MESH_V2_TEST_SUITE_PLUGIN=true 但未能从 cpaas-system/mesh-v2-test-suite-manifest 读取 data.registry"
             return 1
         fi
-        log_info "使用 mesh-v2-test-suite 集群插件镜像仓库: $registry"
+        # 诊断信息走 stderr：本函数经命令替换捕获 stdout，log_info 的 ANSI 色码会污染镜像名
+        log_info "使用 mesh-v2-test-suite 集群插件镜像仓库: $registry" >&2
         image="${registry}/asm/${image#ghcr.io/open-telemetry/}"
     fi
     printf '%s' "$image"

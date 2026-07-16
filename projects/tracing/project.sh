@@ -3,6 +3,10 @@
 #
 # 由 run.sh 引擎在 source framework/{common,verify,kubeconfig,tools}.sh 之后加载。
 
+# OpenSearch 存储后端自动安装模块（TopoLVM + OpenSearch，供 OpenSearch 安装测试前置调用）
+# shellcheck disable=SC1091
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/opensearch.sh"
+
 # ==============================================================================
 # tracing 测试脚本辅助函数
 # ==============================================================================
@@ -130,7 +134,9 @@ project_check_env() {
 
     # 存储后端配置为软依赖，分别由各安装测试脚本自检（缺失时对应测试以 SKIPPED 退出）：
     #   - Elasticsearch: TRACING_ACP_ES_CLUSTER（默认 global，从 ACP 自动获取）或手动 TRACING_ES_ENDPOINT/USER/PASS
-    #   - OpenSearch:    仅手动 TRACING_OPENSEARCH_ENDPOINT/USER/PASS（无 ACP 自动获取）
+    #   - OpenSearch:    默认自动安装（TRACING_INSTALL_OPENSEARCH=true 且
+    #     PKG_ACP_STORAGE_OPERATOR_URL / PKG_TOPOLVM_OPERATOR_URL 齐全，见
+    #     projects/tracing/opensearch.sh）；不满足时降级用手动 TRACING_OPENSEARCH_ENDPOINT/USER/PASS
     return 0
 }
 
@@ -161,6 +167,31 @@ project_init() {
             upload_package "$cluster" "$PKG_OPENTELEMETRY_OPERATOR2_URL" || return 1
         fi
     done
+
+    # OpenSearch 自动安装的插件包准备（开关与 PKG URL 判定见 opensearch.sh）：
+    #   - TopoLVM 两个插件包（acp-storage-operator / topolvm-operator）自动下载并上架
+    #   - opensearch-operator 插件包目前仅支持离线环境手动 violet 上架（下载地址为带
+    #     签名的临时 URL），此处仅检查 PackageManifest 是否存在并给出指引，不中断 init。
+    #     TODO: 待 OpenSearch 支持在线环境后，新增 PKG_OPENSEARCH_OPERATOR_URL 并在此
+    #     一并 download_package + upload_package 自动上架。
+    if tracing_opensearch_auto_install_enabled; then
+        log_info "OpenSearch 自动安装已启用，准备 TopoLVM 插件包..."
+        local pkg
+        for pkg in "$PKG_ACP_STORAGE_OPERATOR_URL" "$PKG_TOPOLVM_OPERATOR_URL"; do
+            download_package "$pkg" || return 1
+        done
+        for cluster in "${clusters[@]}"; do
+            for pkg in "$PKG_ACP_STORAGE_OPERATOR_URL" "$PKG_TOPOLVM_OPERATOR_URL"; do
+                if ! check_package_uploaded "$cluster" "$pkg"; then
+                    upload_package "$cluster" "$pkg" || return 1
+                fi
+            done
+            if ! kubectl --context="$cluster" get packagemanifest opensearch-operator >/dev/null 2>&1; then
+                log_warn "集群 $cluster 未检测到 opensearch-operator PackageManifest（插件包未上架）"
+                log_warn "请手动下载 opensearch-operator 插件包并 violet 上架到该集群，否则 OpenSearch 安装测试将失败"
+            fi
+        done
+    fi
 
     # mesh-v2-test-suite 集群插件，由开关控制，安装到各业务集群
     if [ "${USE_MESH_V2_TEST_SUITE_PLUGIN:-false}" = "true" ]; then

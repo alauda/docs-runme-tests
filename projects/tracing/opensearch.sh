@@ -38,7 +38,7 @@ TRACING_OPENSEARCH_NS="${TRACING_OPENSEARCH_NS:-opensearch-demo}"
 TRACING_OPENSEARCH_NAME="${TRACING_OPENSEARCH_NAME:-my-opensearch}"
 TRACING_OPENSEARCH_VERSION="${TRACING_OPENSEARCH_VERSION:-3.3.1}"
 TRACING_OPENSEARCH_DASHBOARDS_VERSION="${TRACING_OPENSEARCH_DASHBOARDS_VERSION:-3.3.0}"
-# Dashboards 经 ALB Ingress 暴露的访问路径（留空则自动派生
+# Dashboards 经 Ingress 暴露的访问路径（留空则自动派生
 # /clusters/<集群名>/opensearch-dashboards，与 Jaeger UI 的 basepath 模式一致）
 TRACING_OPENSEARCH_DASHBOARDS_BASEPATH="${TRACING_OPENSEARCH_DASHBOARDS_BASEPATH:-}"
 
@@ -219,8 +219,8 @@ _tracing_dashboards_basepath() {
 
 # 内联渲染 OpenSearchCluster（同 OpenSearch_Installation_Guide.md 的安装 yaml，
 # 存储类与版本参数化；TLS 自动生成，dashboards 一并启用）。
-# dashboards.basePath 使 operator 注入 SERVER_BASEPATH/SERVER_REWRITEBASEPATH，
-# dashboards 才能在 ALB 子路径下正确服务（见 _tracing_install_dashboards_ingress）。
+# dashboards.basePath 使 operator 下发 server.basePath/server.rewriteBasePath 配置，
+# dashboards 才能在 Ingress 子路径下正确服务（见 _tracing_install_dashboards_ingress）。
 # 用法: _tracing_render_opensearchcluster <dashboards_basepath>
 _tracing_render_opensearchcluster() {
     local dashboards_basepath="$1"
@@ -293,6 +293,12 @@ _tracing_install_opensearch_cluster() {
         log_error "创建命名空间失败: $TRACING_OPENSEARCH_NS"
         return 1
     }
+    # 命名空间归属 cpaas-system 项目（与 istio-system 一致）：系统 Ingress 控制器
+    # 只服务归属其项目的命名空间，无项目标签时 Dashboards Ingress 不会被接管
+    kubectl label namespace "$TRACING_OPENSEARCH_NS" "cpaas.io/project=cpaas-system" --overwrite >/dev/null || {
+        log_error "标记命名空间项目归属失败: $TRACING_OPENSEARCH_NS"
+        return 1
+    }
     if kubectl -n "$TRACING_OPENSEARCH_NS" get opensearchcluster "$TRACING_OPENSEARCH_NAME" >/dev/null 2>&1; then
         log_info "OpenSearchCluster $TRACING_OPENSEARCH_NAME 已存在，跳过创建"
     else
@@ -333,11 +339,11 @@ _tracing_install_opensearch_cluster() {
 }
 
 # 内联渲染 Dashboards Ingress（仿 installing 文档 Jaeger UI Ingress 的写法：
-# ALB IngressClass + 子路径路由；dashboards 自带 OpenSearch 账号登录，
+# 系统 IngressClass + 子路径路由；dashboards 自带 OpenSearch 账号登录，
 # 无需 oauth2-proxy 等额外授权层，Ingress 直连 dashboards 5601 端口）
-# 用法: _tracing_render_dashboards_ingress <alb_class> <basepath>
+# 用法: _tracing_render_dashboards_ingress <ingress_class> <basepath>
 _tracing_render_dashboards_ingress() {
-    local alb_class="$1" basepath="$2"
+    local ingress_class="$1" basepath="$2"
     cat <<EOF
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -347,7 +353,7 @@ metadata:
   annotations:
     nginx.ingress.kubernetes.io/enable-cors: "true"
 spec:
-  ingressClassName: ${alb_class}
+  ingressClassName: ${ingress_class}
   rules:
     - http:
         paths:
@@ -361,47 +367,24 @@ spec:
 EOF
 }
 
-# 通过 ALB Ingress 暴露 OpenSearch Dashboards（幂等，可重复调用）：
+# 通过 Ingress 暴露 OpenSearch Dashboards（幂等，可重复调用）：
 #   1. 对齐 OpenSearchCluster 的 dashboards.basePath（不一致时 patch，operator 会
 #      滚动重建 dashboards Deployment，不影响 OpenSearch 数据节点）
 #   2. 等待 dashboards Deployment 就绪
-#   3. 创建 Ingress（已存在跳过）并等待 ALB 接管
+#   3. 创建 Ingress（已存在跳过）并等待地址就绪
 _tracing_install_dashboards_ingress() {
     log_header "暴露 OpenSearch Dashboards（Ingress）"
 
-    local basepath alb_class
+    local basepath ingress_class
     basepath=$(_tracing_dashboards_basepath) || {
         log_error "未能派生 dashboards 访问路径（读取 kube-public/global-info 的 clusterName 失败）"
         return 1
     }
-    alb_class=$(kubectl -nkube-public get configmap global-info \
+    ingress_class=$(kubectl -nkube-public get configmap global-info \
         -o jsonpath='{.data.systemAlbIngressClassName}' 2>/dev/null)
-    if [ -z "$alb_class" ]; then
+    if [ -z "$ingress_class" ]; then
         log_error "未能从 kube-public/global-info 读取 systemAlbIngressClassName"
         return 1
-    fi
-
-    # 0. 确保命名空间归属 ALB 绑定的项目：系统 ALB 只接管归属其 projects 列表内
-    #    项目的命名空间中的 Ingress（实测无 cpaas.io/project 标签时 status 不回填、
-    #    路由规则不下发）
-    local alb_project ns_project labeled_now=""
-    alb_project=$(kubectl -n cpaas-system get alb2 "$alb_class" \
-        -o jsonpath='{.spec.config.projects[0]}' 2>/dev/null)
-    alb_project="${alb_project:-cpaas-system}"
-    ns_project=$(kubectl get namespace "$TRACING_OPENSEARCH_NS" \
-        -o jsonpath='{.metadata.labels.cpaas\.io/project}' 2>/dev/null)
-    if [ -z "$ns_project" ]; then
-        log_info "标记命名空间 $TRACING_OPENSEARCH_NS 归属项目 $alb_project（ALB 接管 Ingress 的前提）"
-        kubectl label namespace "$TRACING_OPENSEARCH_NS" "cpaas.io/project=${alb_project}" --overwrite || {
-            log_error "标记命名空间项目归属失败"
-            return 1
-        }
-        labeled_now="yes"
-    else
-        log_info "命名空间 $TRACING_OPENSEARCH_NS 已归属项目: $ns_project"
-        if [ "$ns_project" != "$alb_project" ]; then
-            log_warn "该项目与 ALB 绑定项目 ($alb_project) 不同，若 Ingress 长时间未就绪请检查 ALB 项目配置"
-        fi
     fi
 
     # 1. 对齐 dashboards.basePath（operator 将其写入 <name>-dashboards-config ConfigMap
@@ -457,25 +440,19 @@ _tracing_install_dashboards_ingress() {
     local ingress_name="${TRACING_OPENSEARCH_NAME}-dashboards"
     if kubectl -n "$TRACING_OPENSEARCH_NS" get ingress "$ingress_name" >/dev/null 2>&1; then
         log_info "Ingress $ingress_name 已存在，跳过创建"
-        # 项目标签是本次新打的：ALB 不会因命名空间标签变化重新评估既有 Ingress，
-        # touch 一个注解触发 Ingress 更新事件（实测 touch 后约 30s 内接管）
-        if [ -n "$labeled_now" ]; then
-            kubectl -n "$TRACING_OPENSEARCH_NS" annotate ingress "$ingress_name" \
-                "cpaas.io/resync-at=$(date +%s)" --overwrite >/dev/null 2>&1 || true
-        fi
     else
-        log_info "创建 Ingress ${TRACING_OPENSEARCH_NS}/${ingress_name} (class=$alb_class, path=$basepath)"
-        _tracing_render_dashboards_ingress "$alb_class" "$basepath" | kubectl apply -f - || {
+        log_info "创建 Ingress ${TRACING_OPENSEARCH_NS}/${ingress_name} (class=$ingress_class, path=$basepath)"
+        _tracing_render_dashboards_ingress "$ingress_class" "$basepath" | kubectl apply -f - || {
             log_error "创建 Ingress 失败"
             return 1
         }
     fi
 
-    # 4. 等待 Ingress 被 ALB 接管（同 installing 文档 Jaeger Ingress 的等待方式）
+    # 4. 等待 Ingress 地址就绪（同 installing 文档 Jaeger Ingress 的等待方式）
     kubectl wait --for=jsonpath='{.status.loadBalancer.ingress}' "ingress/$ingress_name" \
         -n "$TRACING_OPENSEARCH_NS" --timeout=180s || {
         log_error "Ingress 未在预期时间内就绪: ${TRACING_OPENSEARCH_NS}/${ingress_name}"
-        log_error "请检查命名空间项目归属（cpaas.io/project 标签）是否在 ALB $alb_class 的绑定项目列表内"
+        log_error "请检查命名空间 $TRACING_OPENSEARCH_NS 的项目标签 (cpaas.io/project) 与 Ingress 控制器状态"
         return 1
     }
 

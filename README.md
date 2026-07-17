@@ -136,21 +136,17 @@ export TRACING_ES_ENDPOINT='https://es.xx:9200'
 export TRACING_ES_USER='your-es-username'
 export TRACING_ES_PASS='your-es-password'
 # Elasticsearch 自动安装（默认关闭）：开启且 PKG_LOG_CENTER_URL 非空时，Elasticsearch 安装测试的
-# 步骤 0 会把 ACP 日志存储 Elasticsearch（"Alauda Container Platform Log Storage for Elasticsearch"，
-# logcenter 集群插件，Single Node 模式，Log/Kafka 共用一个节点）安装到 TRACING_ACP_ES_CLUSTER
-# 指定集群；对应集群已安装过则跳过（幂等）。插件包自动下载并 violet 上架到 global 集群
-# （集群插件只需上架 global）。安装逻辑见 projects/tracing/elasticsearch.sh。
+# ACP 日志存储 Elasticsearch（"Alauda Container Platform Log Storage for Elasticsearch"，
+# logcenter 集群插件）安装到 TRACING_ACP_ES_CLUSTER 指定集群；对应集群已安装过则跳过（幂等）。
 export TRACING_INSTALL_ES=false
 export PKG_LOG_CENTER_URL=xxx             # log-center 集群插件包（自动下载上架）
 # Log/Kafka 节点（可选，默认自动取目标集群第一个 Ready 节点）
-# export TRACING_ES_K8S_NODE=192.168.131.240
+# export TRACING_ES_K8S_NODE=xxx.xxx.xxx.xxx
+
 # OpenSearch 自动安装（默认开启；前提：ACP 离线环境、业务集群至少 3 个节点、各节点有空闲磁盘）
 # 开启且下方两个插件包地址齐全时，OpenSearch 安装测试的步骤 0 会自动安装 TopoLVM + OpenSearch，
 # 并用实际安装结果覆盖 TRACING_OPENSEARCH_*（无需手动配置）；条件不满足时降级用手动配置。
-# 安装完成后还会为 OpenSearch Dashboards 创建 Ingress（仿 Jaeger UI 的子路径模式，
-# 访问 <platformURL>/clusters/<集群名>/opensearch-dashboards，用 OpenSearch admin 账号登录，
-# 无 oauth2-proxy 等额外授权层）。
-# 注意：opensearch-operator 插件包目前需手动 violet 上架到业务集群（下载地址为带签名的临时 URL；
+# 注意：opensearch-operator 插件包目前需手动 violet 上架到业务集群（
 # 待支持在线环境后改为自动下载上架，见 projects/tracing/opensearch.sh 的 TODO）。
 export TRACING_INSTALL_OPENSEARCH=true
 export PKG_ACP_STORAGE_OPERATOR_URL=xxx   # Alauda Container Platform Storage Essentials 包（自动下载上架）
@@ -174,13 +170,13 @@ export TRACING_TEST_SPM=true
 
 **项目专属变量**（各项目 `project_check_env` 校验）：
 
-| 项目    | 必需                                                                                                        | 条件必需 / 软依赖                                                                                                                                                                                   |
-| ------- | ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| mesh    | `PKG_SERVICEMESH_OPERATOR2_URL` `PKG_KIALI_OPERATOR_URL` `PKG_OPENTELEMETRY_OPERATOR2_URL` `PKG_MULTUS_URL` | `ENABLE_METALLB=true` → `PKG_METALLB_URL` `PKG_METALLB_OPERATOR_URL`；`USE_MESH_V2_TEST_SUITE_PLUGIN=true` → `PKG_MESH_V2_TEST_SUITE_URL`                                                           |
-| otel    | `PKG_OPENTELEMETRY_OPERATOR2_URL`                                                                           | `USE_MESH_V2_TEST_SUITE_PLUGIN=true` → `PKG_MESH_V2_TEST_SUITE_URL`                                                                                                                                 |
+| 项目    | 必需                                                                                                        | 条件必需 / 软依赖                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| mesh    | `PKG_SERVICEMESH_OPERATOR2_URL` `PKG_KIALI_OPERATOR_URL` `PKG_OPENTELEMETRY_OPERATOR2_URL` `PKG_MULTUS_URL` | `ENABLE_METALLB=true` → `PKG_METALLB_URL` `PKG_METALLB_OPERATOR_URL`；`USE_MESH_V2_TEST_SUITE_PLUGIN=true` → `PKG_MESH_V2_TEST_SUITE_URL`                                                                                                                                                                                                                                                                                                                          |
+| otel    | `PKG_OPENTELEMETRY_OPERATOR2_URL`                                                                           | `USE_MESH_V2_TEST_SUITE_PLUGIN=true` → `PKG_MESH_V2_TEST_SUITE_URL`                                                                                                                                                                                                                                                                                                                                                                                                |
 | tracing | `PKG_OPENTELEMETRY_OPERATOR2_URL`                                                                           | `USE_MESH_V2_TEST_SUITE_PLUGIN=true` → `PKG_MESH_V2_TEST_SUITE_URL`；ES：`TRACING_ACP_ES_CLUSTER` 或 `TRACING_ES_ENDPOINT/USER/PASS`（`TRACING_INSTALL_ES=true` + `PKG_LOG_CENTER_URL` 时自动安装 logcenter 集群插件到 `TRACING_ACP_ES_CLUSTER`）；OpenSearch：默认自动安装（`TRACING_INSTALL_OPENSEARCH=true` + `PKG_ACP_STORAGE_OPERATOR_URL` `PKG_TOPOLVM_OPERATOR_URL`，opensearch-operator 包需手动上架），或降级手动 `TRACING_OPENSEARCH_ENDPOINT/USER/PASS` |
 
-> 注：`METALLB_EXTERNAL_ADDRESSES_JSON`（外部 IP 地址池地址，JSON 数组）在 `ENABLE_METALLB=true` 时由 `setup_external_ip_pools` 创建地址池时校验（不在 `project_check_env`）：多集群 Case 6/7 需含 `cluster=$EAST_CLUSTER_NAME`/`$WEST_CLUSTER_NAME` 条目；单集群入口网关 LoadBalancer 测试（Case 3/5 的 exposing-* 文档）需含 `cluster=$SINGLE_CLUSTER_NAME` 条目。
+> 注：`METALLB_EXTERNAL_ADDRESSES_JSON`（外部 IP 地址池地址，JSON 数组）在 `ENABLE_METALLB=true` 时由 `setup_external_ip_pools` 创建地址池时校验（不在 `project_check_env`）：多集群 Case 6/7 需含 `cluster=$EAST_CLUSTER_NAME`/`$WEST_CLUSTER_NAME` 条目；单集群入口网关 LoadBalancer 测试（Case 3/5 的 exposing-\* 文档）需含 `cluster=$SINGLE_CLUSTER_NAME` 条目。
 
 ### 4. kubeconfig 自动管理
 
@@ -239,39 +235,39 @@ cd docs-runme-tests
 
 ### mesh（servicemesh2-docs）
 
-| 文档名称                     | 执行命令                                                                                    |
-| ---------------------------- | ------------------------------------------------------------------------------------------- |
-| 双栈网格安装                 | `./run.sh --project mesh --file install-mesh-in-dual-stack-mode`                            |
-| 网格安装                     | `./run.sh --project mesh --file install-mesh`                                               |
-| Istio HA - 自动伸缩          | `./run.sh --project mesh --file configuring-istio-ha-by-using-autoscaling`                  |
-| Istio HA - 固定副本数        | `./run.sh --project mesh --file configuring-istio-ha-by-using-replica-count`                |
-| 指标与服务网格集成           | `./run.sh --project mesh --file metrics-and-mesh`                                           |
-| 网格调用链集成配置           | `./run.sh --project mesh --file config-with-service-mesh`                                   |
-| Kiali 安装与配置             | `./run.sh --project mesh --file kiali`                                                      |
-| Bookinfo 应用部署（含网关）  | `./run.sh --project mesh --file deploying-the-bookinfo-application`                         |
-| 严格 mTLS（命名空间级）      | `./run.sh --project mesh --file mtls`                                                       |
-| Sidecar 网关 - Istio Gateway   | `./run.sh --project mesh --file exposing-a-service-via-istio-gateway`                       |
-| Sidecar 网关 - K8s Gateway API | `./run.sh --project mesh --file exposing-a-service-via-k8s-gateway-api-in-sidecar-mode`     |
-| Sidecar 出口网关 - Istio APIs   | `./run.sh --project mesh --file routing-egress-traffic-via-istio-apis`                      |
+| 文档名称                           | 执行命令                                                                                    |
+| ---------------------------------- | ------------------------------------------------------------------------------------------- |
+| 双栈网格安装                       | `./run.sh --project mesh --file install-mesh-in-dual-stack-mode`                            |
+| 网格安装                           | `./run.sh --project mesh --file install-mesh`                                               |
+| Istio HA - 自动伸缩                | `./run.sh --project mesh --file configuring-istio-ha-by-using-autoscaling`                  |
+| Istio HA - 固定副本数              | `./run.sh --project mesh --file configuring-istio-ha-by-using-replica-count`                |
+| 指标与服务网格集成                 | `./run.sh --project mesh --file metrics-and-mesh`                                           |
+| 网格调用链集成配置                 | `./run.sh --project mesh --file config-with-service-mesh`                                   |
+| Kiali 安装与配置                   | `./run.sh --project mesh --file kiali`                                                      |
+| Bookinfo 应用部署（含网关）        | `./run.sh --project mesh --file deploying-the-bookinfo-application`                         |
+| 严格 mTLS（命名空间级）            | `./run.sh --project mesh --file mtls`                                                       |
+| Sidecar 网关 - Istio Gateway       | `./run.sh --project mesh --file exposing-a-service-via-istio-gateway`                       |
+| Sidecar 网关 - K8s Gateway API     | `./run.sh --project mesh --file exposing-a-service-via-k8s-gateway-api-in-sidecar-mode`     |
+| Sidecar 出口网关 - Istio APIs      | `./run.sh --project mesh --file routing-egress-traffic-via-istio-apis`                      |
 | Sidecar 出口网关 - K8s Gateway API | `./run.sh --project mesh --file routing-egress-traffic-via-k8s-gateway-api-in-sidecar-mode` |
-| Kiali 卸载                   | `./run.sh --project mesh --file uninstalling-alauda-build-of-kiali`                         |
-| 网格卸载                     | `./run.sh --project mesh --file uninstalling-alauda-service-mesh`                           |
-| InPlace 更新策略             | `./run.sh --project mesh --file update-inplace`                                             |
-| Istio CNI 升级               | `./run.sh --project mesh --file istio-cni`                                                  |
-| RevisionBased 更新策略       | `./run.sh --project mesh --file update-revisionbased`                                       |
-| RevisionBased + 版本标签     | `./run.sh --project mesh --file update-revisionbased-and-istiorevisiontag`                  |
-| Ambient Mode 安装            | `./run.sh --project mesh --file installing-ambient-mode`                                    |
-| Ambient Bookinfo 部署        | `./run.sh --project mesh --file deploying-ambient-bookinfo`                                 |
-| Waypoint 代理部署            | `./run.sh --project mesh --file waypoint-proxies`                                           |
-| Ambient L7 特性              | `./run.sh --project mesh --file ambient-l7-features`                                        |
-| Ambient Gateway API          | `./run.sh --project mesh --file exposing-a-service-via-k8s-gateway-api-in-ambient-mode`     |
-| Ambient Egress Gateway       | `./run.sh --project mesh --file routing-egress-traffic-via-k8s-gateway-api-in-ambient-mode` |
-| Ambient 模式网格卸载         | `./run.sh --project mesh --file uninstalling-alauda-service-mesh-in-ambient-mode`           |
-| Ambient 模式组件升级         | `./run.sh --project mesh --file updating-ambient-components`                                |
-| Ambient Waypoint 升级验证    | `./run.sh --project mesh --file updating-waypoint-proxies`                                  |
-| 多集群 - 配置概述（CA 证书） | `./run.sh --project mesh --file configuration-overview`                                     |
-| 多集群 - 多主多网络          | `./run.sh --project mesh --file install-multi-primary-multi-network`                        |
-| 多集群 - 主-远多网络         | `./run.sh --project mesh --file install-primary-remote-multi-network`                       |
+| Kiali 卸载                         | `./run.sh --project mesh --file uninstalling-alauda-build-of-kiali`                         |
+| 网格卸载                           | `./run.sh --project mesh --file uninstalling-alauda-service-mesh`                           |
+| InPlace 更新策略                   | `./run.sh --project mesh --file update-inplace`                                             |
+| Istio CNI 升级                     | `./run.sh --project mesh --file istio-cni`                                                  |
+| RevisionBased 更新策略             | `./run.sh --project mesh --file update-revisionbased`                                       |
+| RevisionBased + 版本标签           | `./run.sh --project mesh --file update-revisionbased-and-istiorevisiontag`                  |
+| Ambient Mode 安装                  | `./run.sh --project mesh --file installing-ambient-mode`                                    |
+| Ambient Bookinfo 部署              | `./run.sh --project mesh --file deploying-ambient-bookinfo`                                 |
+| Waypoint 代理部署                  | `./run.sh --project mesh --file waypoint-proxies`                                           |
+| Ambient L7 特性                    | `./run.sh --project mesh --file ambient-l7-features`                                        |
+| Ambient Gateway API                | `./run.sh --project mesh --file exposing-a-service-via-k8s-gateway-api-in-ambient-mode`     |
+| Ambient Egress Gateway             | `./run.sh --project mesh --file routing-egress-traffic-via-k8s-gateway-api-in-ambient-mode` |
+| Ambient 模式网格卸载               | `./run.sh --project mesh --file uninstalling-alauda-service-mesh-in-ambient-mode`           |
+| Ambient 模式组件升级               | `./run.sh --project mesh --file updating-ambient-components`                                |
+| Ambient Waypoint 升级验证          | `./run.sh --project mesh --file updating-waypoint-proxies`                                  |
+| 多集群 - 配置概述（CA 证书）       | `./run.sh --project mesh --file configuration-overview`                                     |
+| 多集群 - 多主多网络                | `./run.sh --project mesh --file install-multi-primary-multi-network`                        |
+| 多集群 - 主-远多网络               | `./run.sh --project mesh --file install-primary-remote-multi-network`                       |
 
 > 多集群测试需 `EAST_CLUSTER_NAME` / `WEST_CLUSTER_NAME` 双集群环境，并需先用双集群 `--init-only` 与 `configuration-overview` 完成 cacerts 下发。
 
@@ -331,11 +327,11 @@ source "$FRAMEWORK_ROOT/framework/verify.sh"
 
 `projects/mesh/project.sh` 提供以下网关相关公共函数（封装自 `gateways/gateway-installation/` 两篇文档），供 `directing-traffic-into-the-mesh` / `directing-outbound-traffic` / `install-*-multi-network` 等测试复用：
 
-| 函数                                                                  | 用途                                                                                                                                |
-| --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `install_gateway_via_injection <gw_name> <gw_ns> [context]`           | 通过 gateway injection 安装网关（含可选 HPA/PDB；去 infra 调度；`ENABLE_GW_LINUX_KERNEL_COMPAT=true` 时 Deployment 以 root 运行）  |
-| `apply_kernel_compat_istio_gateway [run_as_root=true] [context]`      | Istio Gateway（注入）路径内核兼容：修补 mesh 级注入模板并等待 Istio Ready；关时 no-op                                              |
-| `apply_kernel_compat_k8s_gateway_api <ns> <gw_name> [run_as_root=true] [context]` | K8s Gateway API 路径内核兼容：建 `asm-kube-gateway-options` ConfigMap 并给 Gateway 挂 `parametersRef`；关时 no-op       |
+| 函数                                                                              | 用途                                                                                                                              |
+| --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `install_gateway_via_injection <gw_name> <gw_ns> [context]`                       | 通过 gateway injection 安装网关（含可选 HPA/PDB；去 infra 调度；`ENABLE_GW_LINUX_KERNEL_COMPAT=true` 时 Deployment 以 root 运行） |
+| `apply_kernel_compat_istio_gateway [run_as_root=true] [context]`                  | Istio Gateway（注入）路径内核兼容：修补 mesh 级注入模板并等待 Istio Ready；关时 no-op                                             |
+| `apply_kernel_compat_k8s_gateway_api <ns> <gw_name> [run_as_root=true] [context]` | K8s Gateway API 路径内核兼容：建 `asm-kube-gateway-options` ConfigMap 并给 Gateway 挂 `parametersRef`；关时 no-op                 |
 
 > 两个 `apply_kernel_compat_*` 受 `ENABLE_GW_LINUX_KERNEL_COMPAT` 门控（默认 false 时直接返回）。`run_as_root=false` → Scenario 1（仅去 sysctls，高端口网关）；`true` → Scenario 2（+ NET_BIND_SERVICE + root，特权端口网关）。多集群东西向网关与 ambient waypoint 传 `false`；监听 80 的 ambient ingress 网关用默认 `true`。
 
@@ -353,11 +349,11 @@ source "$FRAMEWORK_ROOT/framework/verify.sh"
 
 **产物**（位于 `tmp/runs/<run-id>/`，`latest` 软链指向最近一次）：
 
-| 文件 | 说明 |
-| --- | --- |
-| `results.jsonl` | 唯一数据源，每行一条记录 |
-| `summary.json` | 三层结构化汇总（两套计数 + 每 Case 明细）|
-| `junit.xml` | 标准 JUnit，对接 CI |
+| 文件            | 说明                                      |
+| --------------- | ----------------------------------------- |
+| `results.jsonl` | 唯一数据源，每行一条记录                  |
+| `summary.json`  | 三层结构化汇总（两套计数 + 每 Case 明细） |
+| `junit.xml`     | 标准 JUnit，对接 CI                       |
 
 终端结束时打印美化摘要（总耗时、Case/DocTest 两套计数、每 Case 一行、失败/跳过明细）。退出码：有 failed→非 0。
 

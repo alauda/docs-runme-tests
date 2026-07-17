@@ -563,7 +563,7 @@ EOF
     _wait_for_resource csv "$namespace" "$starting_csv" || {
         log_warn "等待 CSV 资源创建超时,继续执行..."
     }
-    if ! retry_command "kubectl -n $namespace wait --for=jsonpath='{.status.phase}'=Succeeded csv/$starting_csv --timeout=3m" 3 10; then
+    if ! retry_command "kubectl -n $namespace wait --for=jsonpath='{.status.phase}'=Succeeded csv/$starting_csv --timeout=3m" 5 15; then
         log_error "CSV 安装超时或失败"
         log_info "当前 CSV 状态:"
         kubectl -n "$namespace" get csv

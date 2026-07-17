@@ -206,7 +206,8 @@ _tracing_install_logcenter_plugin() {
             return 1
         }
 
-        log_info "步骤 2: 创建 ModuleInfo 安装 logcenter 到 ${target_cluster}（Single Node 模式，Log/Kafka 节点: $node）"
+        # 日志中变量不与全角字符相邻（macOS bash 3.2 解析 $var 紧跟多字节字符时会输出坏字节）
+        log_info "步骤 2: 创建 ModuleInfo 安装 logcenter 到 ${target_cluster} (Single Node 模式, Log/Kafka 节点: ${node})"
         _tracing_render_logcenter_moduleinfo "$target_cluster" "$version" "$node" | kubectl apply -f - || {
             log_error "创建 ModuleInfo 失败"
             return 1

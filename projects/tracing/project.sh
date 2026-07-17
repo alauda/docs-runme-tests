@@ -176,30 +176,9 @@ project_init() {
         fi
     done
 
-    # OpenSearch 自动安装的插件包准备（开关与 PKG URL 判定见 opensearch.sh）：
-    #   - TopoLVM 两个插件包（acp-storage-operator / topolvm-operator）自动下载并上架
-    #   - opensearch-operator 插件包目前仅支持离线环境手动 violet 上架（下载地址为带
-    #     签名的临时 URL），此处仅检查 PackageManifest 是否存在并给出指引，不中断 init。
-    #     TODO: 待 OpenSearch 支持在线环境后，新增 PKG_OPENSEARCH_OPERATOR_URL 并在此
-    #     一并 download_package + upload_package 自动上架。
-    if tracing_opensearch_auto_install_enabled; then
-        log_info "OpenSearch 自动安装已启用，准备 TopoLVM 插件包..."
-        local pkg
-        for pkg in "$PKG_ACP_STORAGE_OPERATOR_URL" "$PKG_TOPOLVM_OPERATOR_URL"; do
-            download_package "$pkg" || return 1
-        done
-        for cluster in "${clusters[@]}"; do
-            for pkg in "$PKG_ACP_STORAGE_OPERATOR_URL" "$PKG_TOPOLVM_OPERATOR_URL"; do
-                if ! check_package_uploaded "$cluster" "$pkg"; then
-                    upload_package "$cluster" "$pkg" || return 1
-                fi
-            done
-            if ! kubectl --context="$cluster" get packagemanifest opensearch-operator >/dev/null 2>&1; then
-                log_warn "集群 $cluster 未检测到 opensearch-operator PackageManifest（插件包未上架）"
-                log_warn "请手动下载 opensearch-operator 插件包并 violet 上架到该集群，否则 OpenSearch 安装测试将失败"
-            fi
-        done
-    fi
+    # OpenSearch 自动安装的插件包（TopoLVM 两个包 + opensearch-operator 检查）不在此准备：
+    # 仅 OpenSearch 安装测试需要，由其步骤 0（tracing_ensure_opensearch）按需下载上架，
+    # 与 Elasticsearch 的 logcenter 插件包同模式，避免测试 ES 等场景连带处理无关插件包。
 
     # mesh-v2-test-suite 集群插件，由开关控制，安装到各业务集群
     if [ "${USE_MESH_V2_TEST_SUITE_PLUGIN:-false}" = "true" ]; then

@@ -67,6 +67,37 @@ _tracing_opensearch_precheck() {
     return 0
 }
 
+# 准备插件包（原属 project_init，挪到测试步骤 0 内闭环：仅 OpenSearch 安装测试
+# 需要这些包，测试 ES 等场景不应连带下载上架）：
+#   - TopoLVM 两个插件包（acp-storage-operator / topolvm-operator）下载并上架到当前业务集群
+#   - opensearch-operator 插件包目前仅支持离线环境手动 violet 上架（下载地址为带
+#     签名的临时 URL），此处仅检查 PackageManifest 是否存在并给出指引，不中断流程。
+#     TODO: 待 OpenSearch 支持在线环境后，新增 PKG_OPENSEARCH_OPERATOR_URL 并在此
+#     一并 download_package + upload_package 自动上架。
+_tracing_prepare_opensearch_packages() {
+    local cluster
+    cluster=$(kubectl config current-context 2>/dev/null)
+    if [ -z "$cluster" ]; then
+        log_error "无法确定当前业务集群 (kubectl config current-context 为空)"
+        return 1
+    fi
+
+    log_info "准备 TopoLVM 插件包 (下载并上架到集群 ${cluster})..."
+    local pkg
+    for pkg in "$PKG_ACP_STORAGE_OPERATOR_URL" "$PKG_TOPOLVM_OPERATOR_URL"; do
+        download_package "$pkg" || return 1
+        if ! check_package_uploaded "$cluster" "$pkg"; then
+            upload_package "$cluster" "$pkg" || return 1
+        fi
+    done
+
+    if ! kubectl get packagemanifest opensearch-operator >/dev/null 2>&1; then
+        log_warn "集群 ${cluster} 未检测到 opensearch-operator PackageManifest (插件包未上架)"
+        log_warn "请手动下载 opensearch-operator 插件包并 violet 上架到该集群，否则 OpenSearch 安装将失败"
+    fi
+    return 0
+}
+
 # ==============================================================================
 # TopoLVM 安装（OpenSearch 的存储依赖）
 # ==============================================================================
@@ -459,7 +490,7 @@ _tracing_install_dashboards_ingress() {
     local platform_url
     platform_url=$(kubectl -nkube-public get configmap global-info \
         -o jsonpath='{.data.platformURL}' 2>/dev/null)
-    log_success "OpenSearch Dashboards 已暴露: ${platform_url}${basepath}（使用 OpenSearch admin 账号登录）"
+    log_success "OpenSearch Dashboards 已暴露: ${platform_url}${basepath} (使用 OpenSearch admin 账号登录)"
     return 0
 }
 
@@ -474,6 +505,7 @@ tracing_ensure_opensearch() {
     log_header "OpenSearch 存储后端准备（自动安装）"
 
     _tracing_opensearch_precheck || return 1
+    _tracing_prepare_opensearch_packages || return 1
     _tracing_install_topolvm || return 1
     _tracing_install_opensearch_cluster || return 1
     _tracing_install_dashboards_ingress || return 1
@@ -502,7 +534,8 @@ tracing_ensure_opensearch() {
 
     # 用实际安装结果覆盖 TRACING_OPENSEARCH_*（自动安装模式下不要求用户设置，已设置的也以实际安装为准）
     if [ -n "${TRACING_OPENSEARCH_ENDPOINT:-}" ]; then
-        log_warn "TRACING_OPENSEARCH_* 将被自动安装结果覆盖（原 endpoint: $TRACING_OPENSEARCH_ENDPOINT）"
+        # 日志中变量不与全角字符相邻（macOS bash 3.2 解析 $var 紧跟多字节字符时会输出坏字节）
+        log_warn "TRACING_OPENSEARCH_* 将被自动安装结果覆盖 (原 endpoint: ${TRACING_OPENSEARCH_ENDPOINT})"
     fi
     export TRACING_OPENSEARCH_ENDPOINT="https://${TRACING_OPENSEARCH_NAME}.${TRACING_OPENSEARCH_NS}.svc.cluster.local:9200"
     export TRACING_OPENSEARCH_USER="$os_user"

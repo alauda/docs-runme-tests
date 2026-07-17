@@ -58,10 +58,9 @@ fi
 
 # ------------------------------------------------------------------
 # Case 2: 分布式调用链安装与卸载测试 (OpenSearch)
-# 环境已由 Case 1 --force-init 初始化（OTel Operator 插件包、kubeconfig；OpenSearch
-# 自动安装启用时还包括 TopoLVM 插件包自动上架），此处无需重复。
-# 安装测试步骤 0 负责准备 OpenSearch 存储后端（默认自动安装 TopoLVM + OpenSearch，
-# 幂等），步骤 1 负责安装 OTel Operator 本身。
+# 环境已由 Case 1 --force-init 初始化（OTel Operator 插件包、kubeconfig），此处无需重复。
+# 安装测试步骤 0 负责准备 OpenSearch 存储后端（默认自动安装：TopoLVM 插件包下载上架
+# 也在步骤 0 内按需执行，TopoLVM + OpenSearch 安装幂等），步骤 1 负责安装 OTel Operator 本身。
 # 自动安装与手动 TRACING_OPENSEARCH_* 均不可用时安装测试 SKIPPED、
 # 卸载按命名空间存在性 SKIPPED，不阻断编排。
 # ------------------------------------------------------------------

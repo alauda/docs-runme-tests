@@ -161,7 +161,7 @@ download_package() {
     filename=$(basename "$url")
 
     if [ -f "$PKG_DIR/$filename" ]; then
-        log_info "插件包已存在: $filename"
+        log_info "插件包在本机已经存在: $filename"
         return 0
     fi
 

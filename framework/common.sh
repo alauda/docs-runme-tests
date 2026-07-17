@@ -431,6 +431,151 @@ install_operator() {
     return 0
 }
 
+# 通用 operator 安装函数（纯 kubectl 版，不依赖文档 runme 块）
+# 用法: install_operator_cli <operator_name> <namespace> [channel] [approval]
+# 参数:
+#   operator_name  - operator 名称，与 PackageManifest 名一致 (如 topolvm-operator)
+#   namespace      - 安装的 namespace (如 nativestor-system)
+#   channel        - 订阅 channel，缺省取 PackageManifest 的 defaultChannel
+#   approval       - InstallPlan 审批策略 Automatic(默认) / Manual，Manual 时自动批准
+# 说明:
+#   - 与 install_operator 平级互补：install_operator 按安装文档的 runme 块执行（适用
+#     于有 CLI 安装文档的 operator）；本函数用于仅有 UI 安装文档的 operator（如
+#     TopoLVM / OpenSearch），以纯 kubectl 复刻 UI 的安装动作
+#   - Subscription 的 source / sourceNamespace / startingCSV 均从 PackageManifest 派生，
+#     故要求对应插件包已上架（否则等待 PackageManifest 超时报错）
+#   - Subscription 形态对齐 UI 安装产物：带 cpaas.io/target-namespaces:"" 注解与
+#     catalog: platform 标签；OperatorGroup 由 ACP 平台自动创建，无需手动创建
+# NOTE: 调用该函数前请确保已切换到正确的 kubectl context
+install_operator_cli() {
+    local operator_name="$1"
+    local namespace="$2"
+    local channel="${3:-}"
+    local approval="${4:-Automatic}"
+
+    if [ -z "$operator_name" ] || [ -z "$namespace" ]; then
+        log_error "install_operator_cli: 缺少必要参数"
+        log_error "用法: install_operator_cli <operator_name> <namespace> [channel] [approval]"
+        return 1
+    fi
+
+    log_info "=========================================="
+    log_info "安装 $operator_name 到 namespace $namespace (CLI 模式)"
+    log_info "=========================================="
+
+    # 0. 幂等检查：Subscription 已存在且其 installedCSV 已 Succeeded 则跳过
+    local installed_csv csv_phase
+    installed_csv=$(kubectl -n "$namespace" get subscription "$operator_name" \
+        -o jsonpath='{.status.installedCSV}' 2>/dev/null || echo "")
+    if [ -n "$installed_csv" ]; then
+        csv_phase=$(kubectl -n "$namespace" get csv "$installed_csv" \
+            -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+        if [ "$csv_phase" = "Succeeded" ]; then
+            log_success "$operator_name 已安装 (CSV: $installed_csv)"
+            return 0
+        fi
+        log_error "$operator_name 的 Subscription 已存在但 CSV 状态异常: $installed_csv phase=${csv_phase:-<none>}"
+        return 1
+    fi
+
+    # 1. 等待 PackageManifest 出现（插件包上架后由平台 catalog 异步生成，可能滞后）
+    log_info "步骤 1: 等待 PackageManifest $operator_name 出现"
+    if ! retry_command "kubectl get packagemanifest $operator_name >/dev/null 2>&1" 20 5; then
+        log_error "未找到 PackageManifest: $operator_name"
+        log_error "对应插件包可能未上架，请先通过 violet 将插件包上架到当前集群"
+        return 1
+    fi
+
+    # 2. 从 PackageManifest 派生 catalogSource / channel / startingCSV
+    log_info "步骤 2: 解析 PackageManifest"
+    local pm_json source source_ns starting_csv
+    pm_json=$(kubectl get packagemanifest "$operator_name" -o json 2>/dev/null) || {
+        log_error "获取 PackageManifest 失败: $operator_name"
+        return 1
+    }
+    source=$(printf '%s' "$pm_json" | jq -r '.status.catalogSource // empty')
+    source_ns=$(printf '%s' "$pm_json" | jq -r '.status.catalogSourceNamespace // empty')
+    if [ -z "$channel" ]; then
+        channel=$(printf '%s' "$pm_json" | jq -r '.status.defaultChannel // empty')
+    fi
+    starting_csv=$(printf '%s' "$pm_json" | jq -r --arg ch "$channel" \
+        '.status.channels[] | select(.name == $ch) | .currentCSV // empty')
+    if [ -z "$source" ] || [ -z "$source_ns" ] || [ -z "$channel" ] || [ -z "$starting_csv" ]; then
+        log_error "PackageManifest 解析不完整: source=$source sourceNamespace=$source_ns channel=$channel startingCSV=$starting_csv"
+        return 1
+    fi
+    log_success "目标: channel=$channel startingCSV=$starting_csv catalogSource=$source_ns/$source"
+
+    # 3. 创建命名空间（容忍已存在）
+    log_info "步骤 3: 创建 $namespace 命名空间"
+    kubectl create namespace "$namespace" 2>/dev/null || true
+    kubectl get namespace "$namespace" >/dev/null || {
+        log_error "创建命名空间失败: $namespace"
+        return 1
+    }
+
+    # 4. 创建 Subscription（OperatorGroup 由 ACP 平台自动创建）
+    log_info "步骤 4: 创建 Subscription (installPlanApproval=$approval)"
+    kubectl apply -f - <<EOF || { log_error "创建 Subscription 失败"; return 1; }
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  annotations:
+    cpaas.io/target-namespaces: ""
+  labels:
+    catalog: platform
+  name: ${operator_name}
+  namespace: ${namespace}
+spec:
+  channel: ${channel}
+  installPlanApproval: ${approval}
+  name: ${operator_name}
+  source: ${source}
+  sourceNamespace: ${source_ns}
+  startingCSV: ${starting_csv}
+EOF
+
+    # 5. Manual 审批：等待 InstallPlan 挂起后批准（同 install-otel 文档的批准逻辑）
+    if [ "$approval" = "Manual" ]; then
+        log_info "步骤 5: 等待并批准 InstallPlan (Manual)"
+        kubectl -n "$namespace" wait --for=condition=InstallPlanPending \
+            "subscription/$operator_name" --timeout=2m || {
+            log_error "等待 InstallPlan 挂起超时"
+            return 1
+        }
+        local plan
+        plan=$(kubectl -n "$namespace" get subscription "$operator_name" \
+            -o jsonpath='{.status.installPlanRef.name}' 2>/dev/null)
+        if [ -z "$plan" ]; then
+            log_error "未找到 InstallPlan (subscription: $operator_name)"
+            return 1
+        fi
+        kubectl -n "$namespace" patch installplan "$plan" --type=json \
+            -p='[{"op": "replace", "path": "/spec/approved", "value": true}]' || {
+            log_error "批准 InstallPlan 失败: $plan"
+            return 1
+        }
+        log_success "InstallPlan 已批准: $plan"
+    fi
+
+    # 6. 等待 CSV 创建并安装完成
+    log_info "步骤 6: 等待 CSV $starting_csv 安装完成"
+    _wait_for_resource csv "$namespace" "$starting_csv" || {
+        log_warn "等待 CSV 资源创建超时,继续执行..."
+    }
+    if ! retry_command "kubectl -n $namespace wait --for=jsonpath='{.status.phase}'=Succeeded csv/$starting_csv --timeout=3m" 5 15; then
+        log_error "CSV 安装超时或失败"
+        log_info "当前 CSV 状态:"
+        kubectl -n "$namespace" get csv
+        return 1
+    fi
+
+    log_success "=========================================="
+    log_success "$operator_name 安装完成 (CSV: $starting_csv)"
+    log_success "=========================================="
+    return 0
+}
+
 # ==============================================================================
 # 集群插件（ACP Cluster Plugin）通用安装
 #

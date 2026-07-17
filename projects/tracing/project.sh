@@ -3,6 +3,14 @@
 #
 # 由 run.sh 引擎在 source framework/{common,verify,kubeconfig,tools}.sh 之后加载。
 
+# OpenSearch 存储后端自动安装模块（TopoLVM + OpenSearch，供 OpenSearch 安装测试前置调用）
+# shellcheck disable=SC1091
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/opensearch.sh"
+
+# Elasticsearch 存储后端自动安装模块（logcenter 集群插件，供 Elasticsearch 安装测试前置调用）
+# shellcheck disable=SC1091
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/elasticsearch.sh"
+
 # ==============================================================================
 # tracing 测试脚本辅助函数
 # ==============================================================================
@@ -27,7 +35,8 @@ tracing_telemetrygen_image() {
             log_error "USE_MESH_V2_TEST_SUITE_PLUGIN=true 但未能从 cpaas-system/mesh-v2-test-suite-manifest 读取 data.registry"
             return 1
         fi
-        log_info "使用 mesh-v2-test-suite 集群插件镜像仓库: $registry"
+        # 诊断信息走 stderr：本函数经命令替换捕获 stdout，log_info 的 ANSI 色码会污染镜像名
+        log_info "使用 mesh-v2-test-suite 集群插件镜像仓库: $registry" >&2
         image="${registry}/asm/${image#ghcr.io/open-telemetry/}"
     fi
     printf '%s' "$image"
@@ -129,8 +138,13 @@ project_check_env() {
     fi
 
     # 存储后端配置为软依赖，分别由各安装测试脚本自检（缺失时对应测试以 SKIPPED 退出）：
-    #   - Elasticsearch: TRACING_ACP_ES_CLUSTER（默认 global，从 ACP 自动获取）或手动 TRACING_ES_ENDPOINT/USER/PASS
-    #   - OpenSearch:    仅手动 TRACING_OPENSEARCH_ENDPOINT/USER/PASS（无 ACP 自动获取）
+    #   - Elasticsearch: TRACING_ACP_ES_CLUSTER（默认 global，从 ACP 自动获取）或手动 TRACING_ES_ENDPOINT/USER/PASS；
+    #     TRACING_INSTALL_ES=true 且 PKG_LOG_CENTER_URL 非空时，安装测试的步骤 0 会先把
+    #     logcenter 集群插件自动装到 TRACING_ACP_ES_CLUSTER 指定集群（已安装则跳过，见
+    #     projects/tracing/elasticsearch.sh）
+    #   - OpenSearch:    默认自动安装（TRACING_INSTALL_OPENSEARCH=true 且
+    #     PKG_ACP_STORAGE_OPERATOR_URL / PKG_TOPOLVM_OPERATOR_URL 齐全，见
+    #     projects/tracing/opensearch.sh）；不满足时降级用手动 TRACING_OPENSEARCH_ENDPOINT/USER/PASS
     return 0
 }
 
@@ -161,6 +175,10 @@ project_init() {
             upload_package "$cluster" "$PKG_OPENTELEMETRY_OPERATOR2_URL" || return 1
         fi
     done
+
+    # OpenSearch 自动安装的插件包（TopoLVM 两个包 + opensearch-operator 检查）不在此准备：
+    # 仅 OpenSearch 安装测试需要，由其步骤 0（tracing_ensure_opensearch）按需下载上架，
+    # 与 Elasticsearch 的 logcenter 插件包同模式，避免测试 ES 等场景连带处理无关插件包。
 
     # mesh-v2-test-suite 集群插件，由开关控制，安装到各业务集群
     if [ "${USE_MESH_V2_TEST_SUITE_PLUGIN:-false}" = "true" ]; then

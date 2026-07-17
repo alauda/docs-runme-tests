@@ -5,11 +5,18 @@
 # 要求:
 #   - Elasticsearch 链（Case 1）: 默认通过 TRACING_ACP_ES_CLUSTER（默认 global）自动读取 ACP ES 配置；
 #     若 TRACING_ACP_ES_CLUSTER 为空，则使用 TRACING_ES_ENDPOINT / TRACING_ES_USER / TRACING_ES_PASS。
-#   - OpenSearch 链（Case 2）: 仅支持手动配置 TRACING_OPENSEARCH_ENDPOINT / TRACING_OPENSEARCH_USER /
-#     TRACING_OPENSEARCH_PASS；未设置时 Case 2 自动 SKIPPED。
+#     TRACING_INSTALL_ES=true 且 PKG_LOG_CENTER_URL 非空时，安装测试的步骤 0 会先把 logcenter
+#     集群插件（ACP 日志存储 Elasticsearch，Single Node 模式）自动安装到 TRACING_ACP_ES_CLUSTER
+#     指定集群——对应集群已安装过则跳过（幂等，见 projects/tracing/elasticsearch.sh）。
+#   - OpenSearch 链（Case 2）: 默认自动安装 OpenSearch（TRACING_INSTALL_OPENSEARCH=true 且
+#     PKG_ACP_STORAGE_OPERATOR_URL / PKG_TOPOLVM_OPERATOR_URL 齐全时，安装测试的步骤 0 自动
+#     安装 TopoLVM + OpenSearch 并覆盖 TRACING_OPENSEARCH_*，幂等；opensearch-operator 插件包
+#     目前需手动 violet 上架，见 projects/tracing/opensearch.sh 的 TODO）。自动安装条件不满足时
+#     降级用手动 TRACING_OPENSEARCH_ENDPOINT / USER / PASS；两者皆缺则 Case 2 自动 SKIPPED。
+#     前提：ACP 离线环境、业务集群至少 3 个节点、各节点有空闲磁盘（默认 /dev/vdb）。
 #   - SPM 多副本（高可用）验证（Case 3/4）: 各自复用安装链装好 SPM 后，将 otel/jaeger 扩容到
-#     多副本并校验单写入者（每个 service 只被一个 Jaeger 副本聚合）；OpenSearch 未配置时
-#     Case 4 自动 SKIPPED。可选环境变量：SPM_HA_REPLICAS（默认 2）、SPM_HA_SVC_COUNT（默认 6）。
+#     多副本并校验单写入者（每个 service 只被一个 Jaeger 副本聚合）；OpenSearch 存储后端
+#     不可用时 Case 4 自动 SKIPPED。可选环境变量：SPM_HA_REPLICAS（默认 2）、SPM_HA_SVC_COUNT（默认 6）。
 
 set -e
 
@@ -34,6 +41,7 @@ log_header "开始执行 tracing 项目所有测试任务"
 # Case 1: 分布式调用链安装与卸载测试 (Elasticsearch)
 # install --force-init 会自动上传 OTel Operator 插件包（安装的前置依赖）；
 # 安装测试步骤 1 负责安装 OTel Operator 本身。
+# TRACING_INSTALL_ES=true 时步骤 0 自动安装 logcenter 集群插件（幂等，已安装跳过）。
 # ------------------------------------------------------------------
 case_begin "1" "分布式调用链安装与卸载测试 (Elasticsearch)"
 
@@ -51,8 +59,9 @@ fi
 # ------------------------------------------------------------------
 # Case 2: 分布式调用链安装与卸载测试 (OpenSearch)
 # 环境已由 Case 1 --force-init 初始化（OTel Operator 插件包、kubeconfig），此处无需重复。
-# 安装测试步骤 1 负责安装 OTel Operator 本身。
-# 仅在设置了手动 TRACING_OPENSEARCH_* 时实际执行；否则安装测试 SKIPPED、
+# 安装测试步骤 0 负责准备 OpenSearch 存储后端（默认自动安装：TopoLVM 插件包下载上架
+# 也在步骤 0 内按需执行，TopoLVM + OpenSearch 安装幂等），步骤 1 负责安装 OTel Operator 本身。
+# 自动安装与手动 TRACING_OPENSEARCH_* 均不可用时安装测试 SKIPPED、
 # 卸载按命名空间存在性 SKIPPED，不阻断编排。
 # ------------------------------------------------------------------
 case_begin "2" "分布式调用链安装与卸载测试 (OpenSearch)"
@@ -92,8 +101,9 @@ fi
 
 # ------------------------------------------------------------------
 # Case 4: SPM 多副本（高可用）验证 (OpenSearch)
-# 同 Case 3，但走 OpenSearch 安装链。未设置 TRACING_OPENSEARCH_* 时安装 SKIPPED，
-# 随后 spm-ha-opensearch 因检测不到已安装的 otel 实例而自动 SKIPPED，不阻断编排。
+# 同 Case 3，但走 OpenSearch 安装链（步骤 0 的 OpenSearch 自动安装幂等，Case 2 已装好
+# 时直接复用）。OpenSearch 存储后端不可用时安装 SKIPPED，随后 spm-ha-opensearch 因
+# 检测不到已安装的 otel 实例而自动 SKIPPED，不阻断编排。
 # ------------------------------------------------------------------
 case_begin "4" "SPM 多副本（高可用）验证 (OpenSearch)"
 

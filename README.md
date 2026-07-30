@@ -377,11 +377,6 @@ bash framework/tests/report_test.sh
 | 测试脚本在多个项目重名    | 用 `--project` 显式指定                                                    |
 | 测试执行失败              | `cd` 到对应文档仓库手动执行失败的 `runme run <block>` 调试                 |
 
-## TODO
-
-- [x] Multus / MetalLB / mesh-v2-test-suite 集群插件自动安装
-- [ ] 优化测试 case 结果统计
-
 ## 参考资料
 
 - [runme 官方文档](https://runme.dev)

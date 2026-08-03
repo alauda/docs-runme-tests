@@ -1,0 +1,240 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-demo-consumer-for-test
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      project.cpaas.io/name: ran
+      service.cpaas.io/name: deployment-otel-demo-consumer-for-test
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        project.cpaas.io/name: ran
+        service.cpaas.io/name: deployment-otel-demo-consumer-for-test
+        app.kubernetes.io/name: consumer-demo
+      annotations:
+        instrumentation.opentelemetry.io/inject-java: otelv2-java-demo/acp-common-java
+    spec:
+      affinity: {}
+      containers:
+      - env:
+        - name: JAVA_HOME
+          value: /opt/java/openjdk-8
+        - name: PROVIDER_ADDR
+          value: otel-demo-provider-for-test
+        - name: JAVA_OPTS
+          value: -XX:+PrintFlagsFinal -XX:MaxRAMPercentage=75.0
+        image: {{ include "mesh-v2-test-suite.image" (dict "ctx" . "name" "otel-demo-consumer-java-for-test") }}
+        imagePullPolicy: IfNotPresent
+        name: otel-demo-consumer-for-test
+        ports:
+        - containerPort: 8081
+          name: http-8081
+          protocol: TCP
+        readinessProbe:
+          failureThreshold: 8
+          httpGet:
+            path: /actuator/health
+            port: 8081
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 10
+        resources:
+          limits:
+            cpu: 500m
+            memory: 1000Mi
+          requests:
+            cpu: 300m
+            memory: 300Mi
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-demo-consumer-for-test
+spec:
+  internalTrafficPolicy: Cluster
+  ports:
+  - appProtocol: http
+    name: http-8081-8081
+    port: 8081
+    protocol: TCP
+    targetPort: 8081
+  selector:
+    service.cpaas.io/name: deployment-otel-demo-consumer-for-test
+  sessionAffinity: None
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-demo-provider-for-test
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      project.cpaas.io/name: ran
+      service.cpaas.io/name: deployment-otel-demo-provider-for-test
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        project.cpaas.io/name: ran
+        service.cpaas.io/name: deployment-otel-demo-provider-for-test
+        app.kubernetes.io/name: provider-demo
+      annotations:
+        instrumentation.opentelemetry.io/inject-java: otelv2-java-demo/acp-common-java
+    spec:
+      affinity: {}
+      containers:
+      - env:
+        - name: JAVA_HOME
+          value: /opt/java/openjdk-21
+        - name: JAVA_OPTS
+          value: -XX:+PrintFlagsFinal -XX:MaxRAMPercentage=75.0
+        image: {{ include "mesh-v2-test-suite.image" (dict "ctx" . "name" "otel-demo-provider-java-for-test") }}
+        imagePullPolicy: IfNotPresent
+        name: otel-demo-provider-for-test
+        ports:
+        - containerPort: 8080
+          name: http-8080
+          protocol: TCP
+        readinessProbe:
+          failureThreshold: 8
+          httpGet:
+            path: /actuator/health
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 10
+        resources:
+          limits:
+            cpu: 500m
+            memory: 1000Mi
+          requests:
+            cpu: 300m
+            memory: 300Mi
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-demo-provider-for-test
+spec:
+  internalTrafficPolicy: Cluster
+  ports:
+  - appProtocol: http
+    name: http-8080-8080
+    port: 8080
+    protocol: TCP
+    targetPort: 8080
+  selector:
+    service.cpaas.io/name: deployment-otel-demo-provider-for-test
+  sessionAffinity: None
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: asm-client
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      project.cpaas.io/name: ran
+      service.cpaas.io/name: deployment-asm-client
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+    type: RollingUpdate
+  template:
+    metadata:
+      annotations:
+        cpaas.io/creator: admin@cpaas.io
+      creationTimestamp: null
+      labels:
+        project.cpaas.io/name: ran
+        service.cpaas.io/name: deployment-asm-client
+    spec:
+      affinity: {}
+      containers:
+      - command:
+        - sh
+        - -c
+        - |
+          (while true; do curl 'otel-demo-consumer-for-test:8081/proxy/get?url=http://otel-demo-provider-for-test:8080/hello?foo=bar'; echo; curl 'otel-demo-consumer-for-test:8081/proxy/get?url=http://otel-demo-provider-for-test:8080/hello?aaa=bbb'; echo; curl otel-demo-consumer-for-test:8081/get/503; echo; curl otel-demo-consumer-for-test:8081/get/418; echo; echo "---"; sleep 18.5; done;) &
+          (while true; do curl 'otel-demo-consumer-for-test:8081/proxy/get?url=http://otel-demo-provider-for-test:8080/delay/2000'; echo; echo "---"; sleep 17.5; done;) &
+          exec http-server
+        image: {{ include "mesh-v2-test-suite.image" (dict "ctx" . "name" "asm-test-image") }}
+        imagePullPolicy: Always
+        name: asm-test-image
+        ports:
+        - containerPort: 80
+          protocol: TCP
+          name: http-80
+        resources:
+          limits:
+            cpu: 40m
+            memory: 80Mi
+          requests:
+            cpu: 40m
+            memory: 80Mi
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: asm-client
+spec:
+  internalTrafficPolicy: Cluster
+  ports:
+  - appProtocol: http
+    name: http-80-80
+    port: 80
+    protocol: TCP
+    targetPort: 80
+  selector:
+    project.cpaas.io/name: ran
+    service.cpaas.io/name: deployment-asm-client
+  sessionAffinity: None
+  type: ClusterIP

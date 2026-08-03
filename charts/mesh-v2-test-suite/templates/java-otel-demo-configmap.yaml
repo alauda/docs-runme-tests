@@ -1,0 +1,46 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mesh-v2-test-suite.name" . }}-java-otel-demo
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "mesh-v2-test-suite.labels" . | nindent 4 }}
+data:
+  description: |-
+    本 ConfigMap 由 mesh-v2-test-suite 集群插件创建，用于创建 Java OTel 示例服务。
+    其中 data.java-instrumentation.yaml 与 data.java-otel-test-service.yaml 分别保存
+    OTel Instrumentation 注入配置和示例工作负载（consumer / provider / asm-client）
+    的 manifest；data.otel-java-http-monitor-dashboard.yaml 与
+    data.otel-java-jvm-monitor-dashboard.yaml 保存配套的自定义监控面板
+    （HTTP / JVM MonitorDashboard）。安装后可通过下列命令一键部署：
+
+    # 1. 创建示例命名空间
+    kubectl create ns otelv2-java-demo
+
+    # 2. 部署 Instrumentation（OTel javaagent 注入配置）
+    kubectl get cm {{ include "mesh-v2-test-suite.name" . }}-java-otel-demo -n {{ .Values.global.namespace }} -o jsonpath='{.data.java-instrumentation\.yaml}' | kubectl apply -n otelv2-java-demo -f -
+
+    # 3. 部署示例工作负载
+    kubectl get cm {{ include "mesh-v2-test-suite.name" . }}-java-otel-demo -n {{ .Values.global.namespace }} -o jsonpath='{.data.java-otel-test-service\.yaml}' | kubectl apply -n otelv2-java-demo -f -
+
+    # 4. 在 Operations Center / Monitor / Dashboards 中创建自定义监控面板
+    kubectl get cm {{ include "mesh-v2-test-suite.name" . }}-java-otel-demo -n {{ .Values.global.namespace }} -o jsonpath='{.data.otel-java-http-monitor-dashboard\.yaml}' | kubectl apply -f -
+    kubectl get cm {{ include "mesh-v2-test-suite.name" . }}-java-otel-demo -n {{ .Values.global.namespace }} -o jsonpath='{.data.otel-java-jvm-monitor-dashboard\.yaml}' | kubectl apply -f -
+
+    卸载（清理上述资源，与部署顺序相反）：
+
+    # 1. 删除自定义监控面板
+    kubectl get cm {{ include "mesh-v2-test-suite.name" . }}-java-otel-demo -n {{ .Values.global.namespace }} -o jsonpath='{.data.otel-java-http-monitor-dashboard\.yaml}' | kubectl delete -f -
+    kubectl get cm {{ include "mesh-v2-test-suite.name" . }}-java-otel-demo -n {{ .Values.global.namespace }} -o jsonpath='{.data.otel-java-jvm-monitor-dashboard\.yaml}' | kubectl delete -f -
+
+    # 2. 删除示例命名空间（连同 Instrumentation 与所有工作负载一并清理）
+    kubectl delete ns otelv2-java-demo
+  java-instrumentation.yaml: |
+{{ tpl (.Files.Get "files/java-otel-demo/java-instrumentation.yaml") . | indent 4 }}
+  java-otel-test-service.yaml: |
+{{ tpl (.Files.Get "files/java-otel-demo/java-otel-test-service.yaml") . | indent 4 }}
+{{/* Dashboards are embedded with plain .Files.Get (NOT tpl): their Grafana legendFormat uses double-brace label syntax that tpl would wrongly evaluate as Helm templates. */}}
+  otel-java-http-monitor-dashboard.yaml: |
+{{ .Files.Get "files/java-otel-demo/dashboard/otel-java-http-monitor-dashboard.yaml" | indent 4 }}
+  otel-java-jvm-monitor-dashboard.yaml: |
+{{ .Files.Get "files/java-otel-demo/dashboard/otel-java-jvm-monitor-dashboard.yaml" | indent 4 }}

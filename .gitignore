@@ -4,3 +4,4 @@ package/
 .kubeconfig/
 *.tar.gz
 tmp/
+*.tgz

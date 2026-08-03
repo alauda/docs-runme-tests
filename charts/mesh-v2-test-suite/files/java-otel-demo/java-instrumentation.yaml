@@ -1,0 +1,21 @@
+apiVersion: opentelemetry.io/v1alpha1
+kind: Instrumentation
+metadata:
+  name: acp-common-java
+spec:
+  java:
+    image: {{ include "mesh-v2-test-suite.image" (dict "ctx" . "name" "autoinstrumentation-java") }}
+    env:
+      - name: OTEL_JAVAAGENT_DEBUG
+        value: "false"
+  exporter:
+    endpoint: http://otel-collector.jaeger-system.svc:4318
+  env:
+    - name: OTEL_RESOURCE_ATTRIBUTES
+      value: deployment.environment=development
+  sampler:
+    type: parentbased_traceidratio
+    argument: "1"
+  propagators:
+    - tracecontext
+    - baggage

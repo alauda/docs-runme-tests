@@ -32,6 +32,8 @@ docs-runme-tests/
 │   ├── mesh/project.sh     # mesh 钩子 + istioctl / 插件包 / operator 安装 / PLATFORM_CA
 │   ├── otel/project.sh     # otel 钩子
 │   └── tracing/            # tracing 钩子（project.sh）+ OpenSearch / Elasticsearch 自动安装（opensearch.sh / elasticsearch.sh）
+├── charts/
+│   └── mesh-v2-test-suite/ # Mesh v2 测试套件 ACP 集群插件
 ├── bin/                    # 工具缓存：runme / violet / istioctl（gitignore）
 ├── package/                # 插件包缓存（gitignore）
 └── .kubeconfig/            # kubeconfig 缓存（gitignore）
@@ -40,6 +42,8 @@ docs-runme-tests/
 ├── <doc>.mdx               # 文档（含 {name=...} 代码块）
 └── runme-test_<doc>.sh     # 测试脚本，与文档同目录
 ```
+
+`charts/mesh-v2-test-suite` 用于将 Mesh v2 / OpenTelemetry 测试镜像预置到 ACP 内置镜像仓库，并提供 Java OTel 示例资源。打包、上架及版本维护方式见 [Chart 说明](charts/mesh-v2-test-suite/README.md)。
 
 ## 支持的文档项目
 

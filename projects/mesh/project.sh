@@ -525,7 +525,8 @@ fetch_platform_ca() {
         return 0
     fi
 
-    log_warn "fetch_platform_ca: config-kiali:get-ca-certificate 返回空，回退到 alternative 块"
+    # 此函数通过命令替换向调用方返回证书，stdout 必须保持为纯 base64 数据。
+    log_warn "fetch_platform_ca: config-kiali:get-ca-certificate 返回空，回退到 alternative 块" >&2
     ca=$(_run_runme_block_isolated config-kiali:get-ca-certificate-alternative "$global_kc")
     if [ -n "$ca" ]; then
         printf '%s' "$ca"

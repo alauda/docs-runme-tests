@@ -31,7 +31,7 @@ docs-runme-tests/
 ├── projects/               # 各文档项目专属逻辑
 │   ├── mesh/project.sh     # mesh 钩子 + istioctl / 插件包 / operator 安装 / PLATFORM_CA
 │   ├── otel/project.sh     # otel 钩子
-│   └── tracing/            # tracing 钩子（project.sh）+ OpenSearch / Elasticsearch 自动安装（opensearch.sh / elasticsearch.sh）
+│   └── tracing/            # tracing 钩子（project.sh）+ OpenSearch / Elasticsearch 自动安装（opensearch.sh / elasticsearch.sh）+ Jaeger v2 集群插件共享安装（jaeger-plugin.sh）
 ├── charts/
 │   └── mesh-v2-test-suite/ # Mesh v2 测试套件 ACP 集群插件
 ├── bin/                    # 工具缓存：runme / violet / istioctl（gitignore）
@@ -131,6 +131,9 @@ export PKG_METALLB_URL=xxx
 export PKG_METALLB_OPERATOR_URL=xxx
 # 集群插件包：仅 USE_MESH_V2_TEST_SUITE_PLUGIN=true 时需要（mesh / otel / tracing 共用）
 export PKG_MESH_V2_TEST_SUITE_URL=xxx
+# 集群插件包：tracing 需要（Alauda Build of Jaeger v2，两篇安装文档的前置依赖；
+# 安装测试步骤 1 经文档 CLI 代码块安装，未上架时自动下载并 violet push 到 Global）
+export PKG_JAEGER_CLUSTER_PLUGIN_URL=xxx
 
 # ── 分布式调用链测试专用 ────────────────────────────────────
 # ACP ES 所在集群（可选，默认 global；设为空则使用下方 TRACING_ES_* 手动配置）
@@ -178,7 +181,7 @@ export TRACING_TEST_SPM=true
 | ------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | mesh    | `PKG_SERVICEMESH_OPERATOR2_URL` `PKG_KIALI_OPERATOR_URL` `PKG_OPENTELEMETRY_OPERATOR2_URL` `PKG_MULTUS_URL` | `ENABLE_METALLB=true` → `PKG_METALLB_URL` `PKG_METALLB_OPERATOR_URL`；`USE_MESH_V2_TEST_SUITE_PLUGIN=true` → `PKG_MESH_V2_TEST_SUITE_URL`                                                                                                                                                                                                                                                                                                                          |
 | otel    | `PKG_OPENTELEMETRY_OPERATOR2_URL`                                                                           | `USE_MESH_V2_TEST_SUITE_PLUGIN=true` → `PKG_MESH_V2_TEST_SUITE_URL`                                                                                                                                                                                                                                                                                                                                                                                                |
-| tracing | `PKG_OPENTELEMETRY_OPERATOR2_URL`                                                                           | `USE_MESH_V2_TEST_SUITE_PLUGIN=true` → `PKG_MESH_V2_TEST_SUITE_URL`；ES：`TRACING_ACP_ES_CLUSTER` 或 `TRACING_ES_ENDPOINT/USER/PASS`（`TRACING_INSTALL_ES=true` + `PKG_LOG_CENTER_URL` 时自动安装 logcenter 集群插件到 `TRACING_ACP_ES_CLUSTER`）；OpenSearch：默认自动安装（`TRACING_INSTALL_OPENSEARCH=true` + `PKG_ACP_STORAGE_OPERATOR_URL` `PKG_TOPOLVM_OPERATOR_URL`，opensearch-operator 包需手动上架），或降级手动 `TRACING_OPENSEARCH_ENDPOINT/USER/PASS` |
+| tracing | `PKG_OPENTELEMETRY_OPERATOR2_URL` `PKG_JAEGER_CLUSTER_PLUGIN_URL`                                           | `USE_MESH_V2_TEST_SUITE_PLUGIN=true` → `PKG_MESH_V2_TEST_SUITE_URL`；ES：`TRACING_ACP_ES_CLUSTER` 或 `TRACING_ES_ENDPOINT/USER/PASS`（`TRACING_INSTALL_ES=true` + `PKG_LOG_CENTER_URL` 时自动安装 logcenter 集群插件到 `TRACING_ACP_ES_CLUSTER`）；OpenSearch：默认自动安装（`TRACING_INSTALL_OPENSEARCH=true` + `PKG_ACP_STORAGE_OPERATOR_URL` `PKG_TOPOLVM_OPERATOR_URL`，opensearch-operator 包需手动上架），或降级手动 `TRACING_OPENSEARCH_ENDPOINT/USER/PASS` |
 
 > 注：`METALLB_EXTERNAL_ADDRESSES_JSON`（外部 IP 地址池地址，JSON 数组）在 `ENABLE_METALLB=true` 时由 `setup_external_ip_pools` 创建地址池时校验（不在 `project_check_env`）：多集群 Case 6/7 需含 `cluster=$EAST_CLUSTER_NAME`/`$WEST_CLUSTER_NAME` 条目；单集群入口网关 LoadBalancer 测试（Case 3/5 的 exposing-\* 文档）需含 `cluster=$SINGLE_CLUSTER_NAME` 条目。
 
@@ -295,7 +298,7 @@ cd docs-runme-tests
 | 分布式调用链安装（OpenSearch）    | `./run.sh --project tracing --file installing-distributed-tracing-opensearch`    |
 | 分布式调用链卸载                  | `./run.sh --project tracing --file uninstalling-distributed-tracing`             |
 
-> Elasticsearch 安装测试默认从 `TRACING_ACP_ES_CLUSTER` 指定的 ACP 集群（默认 `global`）读取 log-center Elasticsearch 配置；将其设为空时改用 `TRACING_ES_*` 手动配置（该加载逻辑位于 Elasticsearch 安装测试脚本，不再由 `project_prepare` 全局执行）。`TRACING_INSTALL_ES=true` 且 `PKG_LOG_CENTER_URL` 非空时，步骤 0 会先把 logcenter 集群插件（Single Node 模式）自动安装到该集群——对应集群已安装过则跳过（安装逻辑见 `projects/tracing/elasticsearch.sh`）。OpenSearch 安装测试默认自动安装存储后端：`TRACING_INSTALL_OPENSEARCH=true`（默认）且 `PKG_ACP_STORAGE_OPERATOR_URL` / `PKG_TOPOLVM_OPERATOR_URL` 齐全时，步骤 0 自动安装 TopoLVM + OpenSearch（幂等，opensearch-operator 插件包目前需手动上架）并用实际结果覆盖 `TRACING_OPENSEARCH_*`；条件不满足时降级用手动 `TRACING_OPENSEARCH_ENDPOINT/USER/PASS`，两者皆缺则该测试 SKIPPED（安装逻辑见 `projects/tracing/opensearch.sh`）。卸载测试存储无关，按 Jaeger 命名空间是否存在判定是否执行；OpenSearch/TopoLVM 作为环境级存储后端不随卸载清理。安装测试会自动安装前置依赖 OpenTelemetry v2 Operator（其代码块位于 `opentelemetry-docs`）。
+> Elasticsearch 安装测试默认从 `TRACING_ACP_ES_CLUSTER` 指定的 ACP 集群（默认 `global`）读取 log-center Elasticsearch 配置；将其设为空时改用 `TRACING_ES_*` 手动配置（该加载逻辑位于 Elasticsearch 安装测试脚本，不再由 `project_prepare` 全局执行）。`TRACING_INSTALL_ES=true` 且 `PKG_LOG_CENTER_URL` 非空时，步骤 0 会先把 logcenter 集群插件（Single Node 模式）自动安装到该集群——对应集群已安装过则跳过（安装逻辑见 `projects/tracing/elasticsearch.sh`）。OpenSearch 安装测试默认自动安装存储后端：`TRACING_INSTALL_OPENSEARCH=true`（默认）且 `PKG_ACP_STORAGE_OPERATOR_URL` / `PKG_TOPOLVM_OPERATOR_URL` 齐全时，步骤 0 自动安装 TopoLVM + OpenSearch（幂等，opensearch-operator 插件包目前需手动上架）并用实际结果覆盖 `TRACING_OPENSEARCH_*`；条件不满足时降级用手动 `TRACING_OPENSEARCH_ENDPOINT/USER/PASS`，两者皆缺则该测试 SKIPPED（安装逻辑见 `projects/tracing/opensearch.sh`）。卸载测试存储无关，按 Jaeger 命名空间是否存在判定是否执行；OpenSearch/TopoLVM 作为环境级存储后端不随卸载清理。两个安装测试的步骤 1 会先按文档「Installing the Alauda Build of Jaeger v2 Cluster Plugin」CLI 章节安装 Jaeger v2 集群插件（需 `PKG_JAEGER_CLUSTER_PLUGIN_URL`，未上架时自动下载并 violet push 到 Global，已安装则幂等复用；两篇文档该章节内容一致，安装逻辑抽象为按 runme 前缀参数化的共享函数，见 `projects/tracing/jaeger-plugin.sh`），步骤 2 自动安装前置依赖 OpenTelemetry v2 Operator（其代码块位于 `opentelemetry-docs`）。
 
 ## 工作原理
 

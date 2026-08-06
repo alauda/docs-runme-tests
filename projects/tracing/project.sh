@@ -11,6 +11,11 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/opensearch.sh"
 # shellcheck disable=SC1091
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/elasticsearch.sh"
 
+# Alauda Build of Jaeger v2 集群插件安装模块（两篇安装文档 CLI 章节的共享测试逻辑，
+# 按 runme 前缀参数化，供 ES / OpenSearch 安装测试的步骤 1 调用）
+# shellcheck disable=SC1091
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/jaeger-plugin.sh"
+
 # ==============================================================================
 # tracing 测试脚本辅助函数
 # ==============================================================================
@@ -128,6 +133,13 @@ _tracing_load_acp_es_config() {
 project_check_env() {
     if [ -z "$PKG_OPENTELEMETRY_OPERATOR2_URL" ]; then
         log_error "tracing 项目缺少必要的环境变量: PKG_OPENTELEMETRY_OPERATOR2_URL"
+        return 1
+    fi
+
+    # Jaeger v2 集群插件包：两篇安装文档的前置依赖（安装测试步骤 1 经文档代码块安装，
+    # 未上架时自动下载并 violet push 到 Global，见 projects/tracing/jaeger-plugin.sh）
+    if [ -z "$PKG_JAEGER_CLUSTER_PLUGIN_URL" ]; then
+        log_error "tracing 项目缺少必要的环境变量: PKG_JAEGER_CLUSTER_PLUGIN_URL"
         return 1
     fi
 

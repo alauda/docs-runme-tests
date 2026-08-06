@@ -770,7 +770,7 @@ install_cluster_plugin() {
 
     # 2 & 3. 仅当不存在 ModuleInfo 时才解析版本并创建；已存在则复用并等待其就绪（避免重复创建）
     if [ -n "$existing_name" ]; then
-        log_info "检测到已存在的 ModuleInfo: $existing_name (phase=${existing_phase:-<none>})，复用并等待就绪"
+        log_info "检测到已存在的 ModuleInfo: ${existing_name} (phase=${existing_phase:-<none>})，复用并等待就绪"
     else
         # 2. 等待 ModuleConfig 就绪并解析版本
         #    上架成功后平台需异步创建 ModulePlugin / ModuleConfig（ModuleConfig 可能滞后于

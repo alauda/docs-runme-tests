@@ -40,7 +40,8 @@ log_header "开始执行 tracing 项目所有测试任务"
 # ------------------------------------------------------------------
 # Case 1: 分布式调用链安装与卸载测试 (Elasticsearch)
 # install --force-init 会自动上传 OTel Operator 插件包（安装的前置依赖）；
-# 安装测试步骤 1 负责安装 OTel Operator 本身。
+# 安装测试步骤 1 按文档 CLI 章节安装 Jaeger v2 集群插件（PKG_JAEGER_CLUSTER_PLUGIN_URL，
+# 未上架时自动下载上架，幂等），步骤 2 负责安装 OTel Operator 本身。
 # TRACING_INSTALL_ES=true 时步骤 0 自动安装 logcenter 集群插件（幂等，已安装跳过）。
 # ------------------------------------------------------------------
 case_begin "1" "分布式调用链安装与卸载测试 (Elasticsearch)"
@@ -60,7 +61,8 @@ fi
 # Case 2: 分布式调用链安装与卸载测试 (OpenSearch)
 # 环境已由 Case 1 --force-init 初始化（OTel Operator 插件包、kubeconfig），此处无需重复。
 # 安装测试步骤 0 负责准备 OpenSearch 存储后端（默认自动安装：TopoLVM 插件包下载上架
-# 也在步骤 0 内按需执行，TopoLVM + OpenSearch 安装幂等），步骤 1 负责安装 OTel Operator 本身。
+# 也在步骤 0 内按需执行，TopoLVM + OpenSearch 安装幂等），步骤 1 安装 Jaeger v2 集群插件
+# （Case 1 已装则幂等复用），步骤 2 负责安装 OTel Operator 本身。
 # 自动安装与手动 TRACING_OPENSEARCH_* 均不可用时安装测试 SKIPPED、
 # 卸载按命名空间存在性 SKIPPED，不阻断编排。
 # ------------------------------------------------------------------

@@ -194,7 +194,7 @@ _tracing_install_logcenter_plugin() {
 
     # 2. 仅当不存在 ModuleInfo 时才解析版本并创建；已存在则复用并等待其就绪（避免重复创建）
     if [ -n "$existing_name" ]; then
-        log_info "检测到已存在的 ModuleInfo: $existing_name (phase=${existing_phase:-<none>})，复用并等待就绪"
+        log_info "检测到已存在的 ModuleInfo: ${existing_name} (phase=${existing_phase:-<none>})，复用并等待就绪"
     else
         local version
         version=$(_cluster_plugin_resolve_version logcenter "$PKG_LOG_CENTER_URL") || return 1

@@ -81,7 +81,7 @@ _tracing_jaeger_plugin_install_via_global() {
     existing_name=$(kubectl get moduleinfo -l "$selector" \
         -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
     if [ -n "$existing_name" ]; then
-        log_info "检测到已存在的 ModuleInfo: $existing_name，复用并等待就绪"
+        log_info "检测到已存在的 ModuleInfo: ${existing_name}，复用并等待就绪"
     else
         # 文档代码块 2: 替换 <target-cluster> / <plugin-version> 占位符后创建 ModuleInfo
         log_info "创建 ModuleInfo 安装插件到 $target_cluster (${runme_prefix}:create-jaeger-plugin-moduleinfo)"

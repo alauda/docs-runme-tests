@@ -15,7 +15,7 @@
       }
     ]
   },
-  "description": "HTTP request dashboard for Java services auto-instrumented by the OpenTelemetry Operator (autoinstrumentation-java:2.26.1). Covers both HTTP server (inbound) and HTTP client (outbound) RED metrics: rate, errors, duration.",
+  "description": "HTTP request dashboard for Java services auto-instrumented by the OpenTelemetry Operator (autoinstrumentation-java). Covers both HTTP server (inbound) and HTTP client (outbound) RED metrics: rate, errors, duration.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,

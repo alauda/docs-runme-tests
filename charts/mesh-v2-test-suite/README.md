@@ -182,6 +182,20 @@ kubectl get cm mesh-v2-test-suite-java-otel-demo -n cpaas-system \
 - `mesh-v2-test-suite.imageList`：将所有镜像拼成完整可拉取地址列表，渲染到占位 ConfigMap 的 `images` 字段。
 - `mesh-v2-test-suite.image`：按镜像名（即 `global.images` 的 key）拼出单个完整地址，供 `files/java-otel-demo/` 等模板 manifest 引用。新增供示例 manifest 使用的镜像后，直接在 manifest 中写 `{{ include "mesh-v2-test-suite.image" (dict "ctx" . "name" "<image-key>") }}` 即可。
 
+### 更新 autoinstrumentation-java 镜像
+
+1. 同步镜像
+
+```bash
+crane index filter \
+ ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-java:<version> \
+  -t build-harbor.alauda.cn/asm/opentelemetry-operator/autoinstrumentation-java:<version> \
+  --platform linux/amd64 \
+  --platform linux/arm64
+```
+
+2. 将 `charts/mesh-v2-test-suite/values.yaml` 的 `autoinstrumentation-java.tag` 值更新为新版本。
+
 ## 如何更新插件版本
 
 chart 版本号同时记录在两个文件中，且必须保持一致：

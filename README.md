@@ -14,6 +14,12 @@
 
 测试脚本 `runme-test_*.sh` 仍与被测 `.mdx` 同仓同目录（runme 按 CWD 所在 git 仓库扫描代码块；文档与测试同 PR 演进）。本仓库提供引擎、通用函数库、各项目初始化逻辑与全量编排。
 
+## 发版管理
+
+创建 `release-mesh-2.x` 分支，用于对应测试的项目。
+
+注：目前 mesh，OTel 和 Tracing 会同时发版，所以只创建 mesh 发版分支。mesh 2.1 对应 OTel 2.0 和 Tracing 2.0，以此类推。
+
 ## 目录结构
 
 ```bash

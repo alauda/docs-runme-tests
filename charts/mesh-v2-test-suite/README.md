@@ -9,7 +9,7 @@ Mesh v2 测试套件——一个仅用于分发测试镜像的 ACP 集群插件�
 本插件**不部署任何工作负载**，安装时只在 `cpaas-system` 命名空间下创建两个 ConfigMap：
 
 - `mesh-v2-test-suite-manifest`：占位 ConfigMap，声明插件已安装并提供镜像清单。
-- `mesh-v2-test-suite-java-otel-demo`：承载 Java OTel 示例服务的 manifest（Instrumentation + consumer / provider / asm-client）及配套的自定义监控面板（HTTP / JVM MonitorDashboard），需要时由用户用 `kubectl apply` 一键部署，详见 [部署 Java OTel 示例服务](#部署-java-otel-示例服务)。
+- `mesh-v2-test-suite-java-otel-demo`：承载 Java OTel 示例服务的 manifest（Instrumentation + consumer / provider / curl-client）及配套的自定义监控面板（HTTP / JVM MonitorDashboard），需要时由用户用 `kubectl apply` 一键部署，详见 [部署 Java OTel 示例服务](#部署-java-otel-示例服务)。
 
 ## 包含的镜像
 
@@ -42,7 +42,7 @@ mesh-v2-test-suite/
 ├── files/
 │   └── java-otel-demo/                  Java OTel 示例服务的 manifest 源文件（带 Helm 模板语法）
 │       ├── java-instrumentation.yaml    OTel javaagent 注入配置
-│       ├── java-otel-test-service.yaml  consumer / provider / asm-client 工作负载
+│       ├── java-otel-test-service.yaml  consumer / provider / curl-client 工作负载
 │       └── dashboard/                   自定义监控面板源文件（MonitorDashboard，原样嵌入不经 tpl）
 │           ├── otel-java-http-monitor-dashboard.yaml   HTTP RED 指标面板
 │           ├── otel-java-jvm-monitor-dashboard.yaml    JVM 运行时指标面板
@@ -131,7 +131,7 @@ spec:
 
 - `data.description`：本节命令的说明文本。
 - `data.java-instrumentation.yaml`：OTel Operator 注入 javaagent 用的 `Instrumentation` 资源。
-- `data.java-otel-test-service.yaml`：示例工作负载（`otel-demo-consumer-for-test` / `otel-demo-provider-for-test` / `asm-client`）及对应 Service。其中 `asm-client` 启动后会持续向 consumer 发起两条循环测试请求，自动产生分布式追踪数据。
+- `data.java-otel-test-service.yaml`：示例工作负载（`otel-demo-consumer-for-test` / `otel-demo-provider-for-test` / `curl-client`）及对应 Service。其中 `curl-client` 启动后会持续向 consumer 发起两条循环测试请求，自动产生分布式追踪数据。
 - `data.otel-java-http-monitor-dashboard.yaml`：HTTP RED 指标的自定义监控面板（`MonitorDashboard`，资源自带 `namespace: cpaas-system`）。
 - `data.otel-java-jvm-monitor-dashboard.yaml`：JVM 运行时指标的自定义监控面板（`MonitorDashboard`，资源自带 `namespace: cpaas-system`）。
 

@@ -167,7 +167,7 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: asm-client
+  name: curl-client
 spec:
   progressDeadlineSeconds: 600
   replicas: 1
@@ -175,7 +175,7 @@ spec:
   selector:
     matchLabels:
       project.cpaas.io/name: ran
-      service.cpaas.io/name: deployment-asm-client
+      service.cpaas.io/name: deployment-curl-client
   strategy:
     rollingUpdate:
       maxSurge: 1
@@ -188,7 +188,7 @@ spec:
       creationTimestamp: null
       labels:
         project.cpaas.io/name: ran
-        service.cpaas.io/name: deployment-asm-client
+        service.cpaas.io/name: deployment-curl-client
     spec:
       affinity: {}
       containers:
@@ -198,10 +198,10 @@ spec:
         - |
           (while true; do curl 'otel-demo-consumer-for-test:8081/proxy/get?url=http://otel-demo-provider-for-test:8080/hello?foo=bar'; echo; curl 'otel-demo-consumer-for-test:8081/proxy/get?url=http://otel-demo-provider-for-test:8080/hello?aaa=bbb'; echo; curl otel-demo-consumer-for-test:8081/get/503; echo; curl otel-demo-consumer-for-test:8081/get/418; echo; echo "---"; sleep 18.5; done;) &
           (while true; do curl 'otel-demo-consumer-for-test:8081/proxy/get?url=http://otel-demo-provider-for-test:8080/delay/2000'; echo; echo "---"; sleep 17.5; done;) &
-          exec http-server
-        image: {{ include "mesh-v2-test-suite.image" (dict "ctx" . "name" "asm-test-image") }}
+          wait
+        image: {{ include "mesh-v2-test-suite.image" (dict "ctx" . "name" "curl") }}
         imagePullPolicy: Always
-        name: asm-test-image
+        name: curl-client
         ports:
         - containerPort: 80
           protocol: TCP
@@ -224,7 +224,7 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: asm-client
+  name: curl-client
 spec:
   internalTrafficPolicy: Cluster
   ports:
@@ -235,6 +235,6 @@ spec:
     targetPort: 80
   selector:
     project.cpaas.io/name: ran
-    service.cpaas.io/name: deployment-asm-client
+    service.cpaas.io/name: deployment-curl-client
   sessionAffinity: None
   type: ClusterIP

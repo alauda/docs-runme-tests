@@ -9,7 +9,7 @@ data:
   description: |-
     本 ConfigMap 由 mesh-v2-test-suite 集群插件创建，用于创建 Java OTel 示例服务。
     其中 data.java-instrumentation.yaml 与 data.java-otel-test-service.yaml 分别保存
-    OTel Instrumentation 注入配置和示例工作负载（consumer / provider / asm-client）
+    OTel Instrumentation 注入配置和示例工作负载（consumer / provider / curl-client）
     的 manifest；data.otel-java-http-monitor-dashboard.yaml 与
     data.otel-java-jvm-monitor-dashboard.yaml 保存配套的自定义监控面板
     （HTTP / JVM MonitorDashboard）。安装后可通过下列命令一键部署：

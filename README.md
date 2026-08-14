@@ -25,7 +25,7 @@
 | docs-runme-tests 分支 | mesh-v2-test-suite 版本 |
 | --------------------- | ----------------------- |
 | release-mesh-2.1      | v1.0.x                  |
-| release-mesh-2.2      | v2.2.x                  |
+| release-mesh-2.2      | v2.2.x-rN               |
 
 ## 目录结构
 

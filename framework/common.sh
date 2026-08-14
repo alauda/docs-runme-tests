@@ -658,36 +658,81 @@ spec:
 EOF
 }
 
+# 从集群插件包名解析完整版本
+# 版本以 vX.Y.Z 开头，后缀可选且不限制内容：
+#   metallb.v4.0.4.tgz                 -> v4.0.4
+#   mesh.amd64.v2.2.0.20260814.tgz     -> v2.2.0.20260814
+#   mesh.amd64.v2.2.0-rc.1+build.7.tgz -> v2.2.0-rc.1+build.7
+# 用法: version=$(_cluster_plugin_package_version <package_url>)
+# 输出: 包名不含以 vX.Y.Z 开头的版本时输出为空，返回码仍为 0
+_cluster_plugin_package_version() {
+    local package_url="$1"
+    local clean_url filename
+    clean_url="${package_url%%\?*}"
+    clean_url="${clean_url%%\#*}"
+    filename=$(basename "$clean_url")
+    filename="${filename%.tgz}"
+
+    if [[ "$filename" =~ v[0-9]+\.[0-9]+\.[0-9]+.*$ ]]; then
+        printf '%s' "${BASH_REMATCH[0]}"
+    fi
+    return 0
+}
+
+# 列出指定插件已发布的全部 ModuleConfig 版本（每行一个）
+# NOTE: 依赖调用方已将 KUBECONFIG 指向 Global 集群
+_cluster_plugin_versions() {
+    local module_name="$1"
+    kubectl get moduleconfigs -l "cpaas.io/module-name=${module_name}" \
+        -o jsonpath='{range .items[*]}{.spec.version}{"\n"}{end}' 2>/dev/null
+}
+
+# 判断指定插件版本是否已有对应 ModuleConfig
+_cluster_plugin_version_published() {
+    local module_name="$1"
+    local version="$2"
+    local versions
+
+    [ -n "$version" ] || return 1
+    versions=$(_cluster_plugin_versions "$module_name")
+    [ -n "$versions" ] && printf '%s\n' "$versions" | grep -Fqx -- "$version"
+}
+
 # 解析集群插件目标版本（从 Global 集群已发布的 ModuleConfig 读取）
 # 用法: version=$(_cluster_plugin_resolve_version <module_name> <package_url>)
-# 策略: 优先用包名解析出的 vX.Y.Z 去匹配 ModuleConfig，否则取最高版本（sort -V）
+# 策略: 包名含以 vX.Y.Z 开头的版本时，完整版本（含可选后缀）必须精确匹配；
+#       仅当包名无法解析版本时才回退最高版本（sort -V）
 # 输出: 标准输出仅打印版本号（如 v4.0.4）；诊断信息走 log_error(stderr) 以免污染捕获
 # NOTE: 依赖调用方已将 KUBECONFIG 指向 Global 集群
 _cluster_plugin_resolve_version() {
     local module_name="$1"
     local package_url="$2"
 
-    # 从包名解析期望版本（如 metallb.v4.0.4.tgz -> v4.0.4），可能为空
+    # 从包名解析期望版本，可能为空
     local pkg_version
-    pkg_version=$(basename "$package_url" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)
+    pkg_version=$(_cluster_plugin_package_version "$package_url")
 
     # 列出该 module 已发布的所有 ModuleConfig 版本（每行一个）
     local versions
-    versions=$(kubectl get moduleconfigs -l "cpaas.io/module-name=${module_name}" \
-        -o jsonpath='{range .items[*]}{.spec.version}{"\n"}{end}' 2>/dev/null)
+    versions=$(_cluster_plugin_versions "$module_name")
 
     if [ -z "$versions" ]; then
         log_error "未找到 ModuleConfig (module-name=${module_name})，插件可能尚未上架完成"
         return 1
     fi
 
-    # 包名版本存在于已发布版本中则直接采用
-    if [ -n "$pkg_version" ] && echo "$versions" | grep -qx "$pkg_version"; then
-        printf '%s' "$pkg_version"
-        return 0
+    # URL 已明确版本时必须精确采用，不能静默安装其他已发布版本。
+    if [ -n "$pkg_version" ]; then
+        if printf '%s\n' "$versions" | grep -Fqx -- "$pkg_version"; then
+            printf '%s' "$pkg_version"
+            return 0
+        fi
+        log_error "插件包要求 ${module_name} 版本 ${pkg_version}，但对应 ModuleConfig 尚未发布"
+        log_error "当前已发布版本: $(printf '%s\n' "$versions" | tr '\n' ' ')"
+        return 1
     fi
 
-    # 否则取最高版本
+    # 仅兼容无法从旧式包名解析版本的场景：取最高已发布版本。
     local latest
     latest=$(echo "$versions" | sort -V | tail -n 1)
     if [ -z "$latest" ]; then
@@ -715,6 +760,27 @@ _wait_for_moduleconfig() {
             return 0
         fi
         log_warn "等待 ModuleConfig 创建: module-name=$module_name (${attempt}/${max_retries})"
+        [ "$attempt" -lt "$max_retries" ] && sleep "$interval"
+    done
+    return 1
+}
+
+# 等待指定版本的 ModuleConfig 被创建。
+# 旧版本 ModuleConfig 已存在时，不能将“任意版本存在”误判为目标版本已经发布。
+# 用法: _wait_for_moduleconfig_version <module_name> <version> [max_retries] [interval]
+# NOTE: 依赖调用方已将 KUBECONFIG 指向 Global 集群
+_wait_for_moduleconfig_version() {
+    local module_name="$1"
+    local version="$2"
+    local max_retries="${3:-30}"
+    local interval="${4:-10}"
+    local attempt
+
+    for ((attempt=1; attempt<=max_retries; attempt++)); do
+        if _cluster_plugin_version_published "$module_name" "$version"; then
+            return 0
+        fi
+        log_warn "等待目标 ModuleConfig 创建: module-name=$module_name, version=$version (${attempt}/${max_retries})"
         [ "$attempt" -lt "$max_retries" ] && sleep "$interval"
     done
     return 1
@@ -768,7 +834,9 @@ install_cluster_plugin() {
         return 1
     fi
     shift 3
-    local prereq_urls=("$@")
+
+    local package_version
+    package_version=$(_cluster_plugin_package_version "$package_url")
 
     local global_cluster="${GLOBAL_CLUSTER_NAME:-global}"
     local global_kc="$KUBECONFIG_DIR/${global_cluster}.yaml"
@@ -788,11 +856,18 @@ install_cluster_plugin() {
 
     local selector="cpaas.io/module-name=${module_name},cpaas.io/cluster-name=${target_cluster}"
 
-    # 0. 幂等检查：已 Running 直接跳过
-    local existing_phase existing_name
+    # 0. 幂等检查：仅当已 Running 的版本与 URL 目标版本一致时跳过。
+    local existing_phase existing_name existing_version
     existing_phase=$(kubectl get moduleinfo -l "$selector" \
         -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "")
+    existing_version=$(kubectl get moduleinfo -l "$selector" \
+        -o jsonpath='{.items[0].spec.version}' 2>/dev/null || echo "")
     if [ "$existing_phase" = "Running" ]; then
+        if [ -n "$package_version" ] && [ "$existing_version" != "$package_version" ]; then
+            log_error "集群插件 $module_name 已安装于 ${target_cluster}，但当前版本 ${existing_version:-<unknown>} 与目标版本 $package_version 不一致"
+            log_error "请先卸载或升级现有 ModuleInfo，再重新执行初始化"
+            return 1
+        fi
         log_success "集群插件 $module_name 已安装于 $target_cluster (phase=Running)，跳过"
         return 0
     fi
@@ -805,32 +880,51 @@ install_cluster_plugin() {
     #    使此前因依赖缺失而卡住的安装能够自愈。
     log_info "步骤 1: 上架插件包"
     local pkg
-    for pkg in "$package_url" "${prereq_urls[@]}"; do
+    download_package "$package_url" || return 1
+    for pkg in "$@"; do
         download_package "$pkg" || return 1
     done
-    # 主包：若对应 ModuleConfig 已存在则跳过 push
-    if kubectl get moduleconfigs -l "cpaas.io/module-name=${module_name}" -o name 2>/dev/null | grep -q .; then
-        log_info "插件 $module_name 已上架（ModuleConfig 存在），跳过 push"
+
+    # 主包：URL 可解析版本时按精确版本判断，不能被同插件的旧 ModuleConfig 误判为已上架。
+    if [ -n "$package_version" ] && _cluster_plugin_version_published "$module_name" "$package_version"; then
+        log_info "插件 $module_name 目标版本 $package_version 已上架（ModuleConfig 存在），跳过 push"
+    elif [ -z "$package_version" ] && \
+        kubectl get moduleconfigs -l "cpaas.io/module-name=${module_name}" -o name 2>/dev/null | grep -q .; then
+        log_info "插件 $module_name 已上架（包名无法解析版本且 ModuleConfig 存在），跳过 push"
     else
         upload_package "$global_cluster" "$package_url" || return 1
     fi
+
     # 前置包：上架到目标业务集群（与其他 operator 一致，仅上架不安装、不创建 ModuleInfo）
-    for pkg in "${prereq_urls[@]}"; do
+    for pkg in "$@"; do
         log_info "上架前置插件包到业务集群 $target_cluster (仅上架不安装): $(basename "$pkg")"
         upload_package "$target_cluster" "$pkg" || return 1
     done
 
     # 2 & 3. 仅当不存在 ModuleInfo 时才解析版本并创建；已存在则复用并等待其就绪（避免重复创建）
     if [ -n "$existing_name" ]; then
+        if [ -n "$package_version" ] && [ "$existing_version" != "$package_version" ]; then
+            log_error "检测到未就绪的 ModuleInfo ${existing_name}，但其版本 ${existing_version:-<unknown>} 与目标版本 $package_version 不一致"
+            log_error "请先处理该 ModuleInfo，再重新执行初始化"
+            return 1
+        fi
         log_info "检测到已存在的 ModuleInfo: ${existing_name} (phase=${existing_phase:-<none>})，复用并等待就绪"
     else
         # 2. 等待 ModuleConfig 就绪并解析版本
         #    上架成功后平台需异步创建 ModulePlugin / ModuleConfig（ModuleConfig 可能滞后于
         #    ModulePlugin），故轮询等待 ModuleConfig 出现，它是版本解析与后续安装的前置。
-        log_info "步骤 2: 等待 ModuleConfig (module-name=$module_name) 就绪"
-        if ! _wait_for_moduleconfig "$module_name"; then
-            log_error "等待 ModuleConfig 超时: module-name=$module_name (上架后平台未在预期时间内创建 ModuleConfig)"
-            return 1
+        if [ -n "$package_version" ]; then
+            log_info "步骤 2: 等待目标 ModuleConfig (module-name=$module_name, version=$package_version) 就绪"
+            if ! _wait_for_moduleconfig_version "$module_name" "$package_version"; then
+                log_error "等待目标 ModuleConfig 超时: module-name=$module_name, version=$package_version"
+                return 1
+            fi
+        else
+            log_info "步骤 2: 等待 ModuleConfig (module-name=$module_name) 就绪"
+            if ! _wait_for_moduleconfig "$module_name"; then
+                log_error "等待 ModuleConfig 超时: module-name=$module_name (上架后平台未在预期时间内创建 ModuleConfig)"
+                return 1
+            fi
         fi
         local version
         version=$(_cluster_plugin_resolve_version "$module_name" "$package_url") || return 1

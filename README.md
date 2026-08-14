@@ -20,6 +20,13 @@
 
 注：目前 mesh，OTel 和 Tracing 会同时发版，所以只创建 mesh 发版分支。mesh 2.1 对应 OTel 2.0 和 Tracing 2.0，以此类推。
 
+### docs-runme-tests 与 mesh-v2-test-suite 矩阵关系
+
+| docs-runme-tests 分支 | mesh-v2-test-suite 版本 |
+| --------------------- | ----------------------- |
+| release-mesh-2.1      | v1.0.x                  |
+| release-mesh-2.2      | v2.2.x                  |
+
 ## 目录结构
 
 ```bash
@@ -248,12 +255,12 @@ cd docs-runme-tests
 
 所有经 `install_operator` 安装的 OLM Operator（`servicemesh-operator2` / `kiali-operator` / `opentelemetry-operator2`）都支持在**已安装**的环境上重复执行安装测试，无需先手工清理集群。安装前会先做重入探测（`framework/common.sh:_operator_reentry_probe`）：
 
-| 集群现状                                     | 行为                                              |
-| -------------------------------------------- | ------------------------------------------------- |
-| 目标 CSV 为 `Succeeded`                      | 跳过安装，直接进入后续测试步骤                    |
-| 目标 CSV 处于中间态（Installing/Pending 等） | 等待其收敛为 `Succeeded`（默认 12 × 10s）后再判定 |
+| 集群现状                                     | 行为                                                              |
+| -------------------------------------------- | ----------------------------------------------------------------- |
+| 目标 CSV 为 `Succeeded`                      | 跳过安装，直接进入后续测试步骤                                    |
+| 目标 CSV 处于中间态（Installing/Pending 等） | 等待其收敛为 `Succeeded`（默认 12 × 10s）后再判定                 |
 | 目标 CSV 不存在                              | 走完整安装流程（创建 Subscription → 批准 InstallPlan → 等待 CSV） |
-| 目标 CSV 停在 `Failed` 或长期未收敛          | 报错退出，交由人工处理（框架不会自行删除集群资源） |
+| 目标 CSV 停在 `Failed` 或长期未收敛          | 报错退出，交由人工处理（框架不会自行删除集群资源）                |
 
 > 卸载 Operator 时平台会把 CSV 连同 Subscription 一并清理，因此重入时不存在需要框架清理的 CSV 残留；框架只做「已安装则跳过」的判定，不会删除集群里的既有资源。
 >

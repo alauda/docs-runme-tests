@@ -16,7 +16,7 @@ spec:
   - chartVersions:
     - name: asm/mesh-v2-test-suite
       releaseName: mesh-v2-test-suite
-      version: v1.0.4
+      version: v2.2.0
     name: mesh-v2-test-suite
   deleteable: true
   description:

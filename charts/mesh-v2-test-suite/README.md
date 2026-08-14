@@ -187,6 +187,7 @@ kubectl get cm mesh-v2-test-suite-java-otel-demo -n cpaas-system \
 1. 同步镜像
 
 ```bash
+# <version> 示例：`2.30.0`
 crane index filter \
  ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-java:<version> \
   -t build-harbor.alauda.cn/asm/opentelemetry-operator/autoinstrumentation-java:<version> \

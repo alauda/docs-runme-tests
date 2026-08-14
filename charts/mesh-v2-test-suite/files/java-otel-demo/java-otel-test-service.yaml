@@ -196,8 +196,8 @@ spec:
         - sh
         - -c
         - |
-          (while true; do curl 'otel-demo-consumer-for-test:8081/proxy/get?url=http://otel-demo-provider-for-test:8080/hello?foo=bar'; echo; curl 'otel-demo-consumer-for-test:8081/proxy/get?url=http://otel-demo-provider-for-test:8080/hello?aaa=bbb'; echo; curl otel-demo-consumer-for-test:8081/get/503; echo; curl otel-demo-consumer-for-test:8081/get/418; echo; echo "---"; sleep 18.5; done;) &
-          (while true; do curl 'otel-demo-consumer-for-test:8081/proxy/get?url=http://otel-demo-provider-for-test:8080/delay/2000'; echo; echo "---"; sleep 17.5; done;) &
+          (while true; do curl -sS 'otel-demo-consumer-for-test:8081/proxy/get?url=http://otel-demo-provider-for-test:8080/hello?foo=bar'; echo; curl -sS 'otel-demo-consumer-for-test:8081/proxy/get?url=http://otel-demo-provider-for-test:8080/hello?aaa=bbb'; echo; curl -sS otel-demo-consumer-for-test:8081/get/503; echo; curl -sS otel-demo-consumer-for-test:8081/get/418; echo; echo "---"; sleep 18.5; done;) &
+          (while true; do curl -sS 'otel-demo-consumer-for-test:8081/proxy/get?url=http://otel-demo-provider-for-test:8080/delay/2000'; echo; echo "---"; sleep 17.5; done;) &
           wait
         image: {{ include "mesh-v2-test-suite.image" (dict "ctx" . "name" "curl") }}
         imagePullPolicy: Always

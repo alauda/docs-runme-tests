@@ -280,6 +280,60 @@ retry_command() {
     return 1
 }
 
+# ==============================================================================
+# Operator 安装重入（幂等）支持
+#
+# 重复执行安装测试时，集群里可能已经装好目标 Operator，或上一次安装尚未收敛：
+#   - CSV 为 Succeeded —— 已安装，直接跳过安装流程
+#   - CSV 处于中间态（Pending/InstallReady/Installing/Replacing）—— 等其收敛后再判定
+#   - CSV 不存在 —— 走完整安装流程
+# NOTE: 卸载 Operator 时平台会把 CSV 连同 Subscription 一并清理，框架不需要（也不应该）
+#       自行删除集群里的既有 CSV；CSV 停在 Failed 等异常终态时按错误上报，交由人工处理。
+# ==============================================================================
+
+# 安装前的重入探测：判断目标 CSV 的当前状态，决定跳过安装还是执行安装流程
+# 用法: _operator_reentry_probe <namespace> <csv_name>
+# 返回:
+#   0 - Operator 已安装且可用，调用方可跳过安装流程
+#   2 - 尚未安装，需要执行完整安装流程
+#   1 - CSV 存在但处于异常状态，需人工处理
+# 环境变量:
+#   OPERATOR_REENTRY_WAIT_RETRIES / OPERATOR_REENTRY_WAIT_INTERVAL
+#       CSV 处于中间态时等待其收敛的轮次与间隔，默认 12 × 10s
+#       （覆盖上一次安装尚未完成就被中断的情况）
+_operator_reentry_probe() {
+    local namespace="$1"
+    local csv_name="$2"
+    local retries="${OPERATOR_REENTRY_WAIT_RETRIES:-12}"
+    local interval="${OPERATOR_REENTRY_WAIT_INTERVAL:-10}"
+    local phase="" attempt
+
+    # 目标 CSV 不存在 —— 尚未安装
+    if ! kubectl -n "$namespace" get csv "$csv_name" >/dev/null 2>&1; then
+        return 2
+    fi
+
+    # CSV 已存在：等待中间态收敛（Failed 为终态，不再等待）
+    for ((attempt=1; attempt<=retries; attempt++)); do
+        phase=$(kubectl -n "$namespace" get csv "$csv_name" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+        if [ "$phase" = "Succeeded" ] || [ "$phase" = "Failed" ]; then
+            break
+        fi
+        log_warn "CSV $csv_name 当前状态: ${phase:-<none>}，等待其变为 Succeeded (${attempt}/${retries})"
+        if [ "$attempt" -lt "$retries" ]; then
+            sleep "$interval"
+        fi
+    done
+
+    if [ "$phase" = "Succeeded" ]; then
+        log_success "$csv_name 已安装 (phase=Succeeded)"
+        return 0
+    fi
+
+    log_error "$csv_name 存在但状态不是 Succeeded，当前状态: ${phase:-<none>}"
+    return 1
+}
+
 # 通用 operator 安装函数
 # 用法: install_operator <operator_name> <namespace> <package_url> <runme_prefix>
 # 参数:
@@ -308,19 +362,17 @@ install_operator() {
     local csv_name
     csv_name=$(parse_csv_name_from_package "$package_url")
 
-    # 检查是否已经安装
-    if kubectl -n "$namespace" get csv "$csv_name" 2>/dev/null; then
-        local csv_phase
-        csv_phase=$(kubectl -n "$namespace" get csv "$csv_name" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
-
-        if [ "$csv_phase" = "Succeeded" ]; then
-            log_success "$operator_name 已安装"
+    # 重入探测：已安装则跳过，未安装才走完整安装流程（见 _operator_reentry_probe）
+    local probe_rc=0
+    _operator_reentry_probe "$namespace" "$csv_name" || probe_rc=$?
+    case "$probe_rc" in
+        0)
+            log_success "跳过 $operator_name 安装（已安装）"
             return 0
-        else
-            log_error "$operator_name 存在但状态不是 Succeeded，当前状态: $csv_phase"
-            return 1
-        fi
-    fi
+            ;;
+        2) : ;;  # 继续执行完整安装流程
+        *) return 1 ;;
+    esac
 
     # 定义 check_packagemanifest_version 内部函数
     _check_packagemanifest_version() {

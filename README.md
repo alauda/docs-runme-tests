@@ -30,7 +30,7 @@ docs-runme-tests/
 ├── run-tracing-all.sh      # tracing 项目全量编排
 ├── repos.conf              # 文档仓库注册表
 ├── framework/              # 通用引擎函数库（零项目耦合）
-│   ├── common.sh           # 日志 / 结果统计 / install_operator / install_operator_cli / install_cluster_plugin / setup_external_ip_pools / _wait_* / kubectl_apply_runme_block
+│   ├── common.sh           # 日志 / 结果统计 / install_operator（含重入探测）/ install_operator_cli / install_cluster_plugin / setup_external_ip_pools / _wait_* / kubectl_apply_runme_block
 │   ├── verify.sh           # __cmp_* 输出比对
 │   ├── kubeconfig.sh       # ACP kubeconfig 拉取 / 合并 / 复用
 │   └── tools.sh            # 必备工具检查 / runme·violet 安装 / 插件包下载上传
@@ -243,6 +243,21 @@ cd docs-runme-tests
 ```
 
 三个编排脚本相互独立、可单独运行，适合 CI/CD 或全量回归。
+
+### Operator 安装重入（幂等）
+
+所有经 `install_operator` 安装的 OLM Operator（`servicemesh-operator2` / `kiali-operator` / `opentelemetry-operator2`）都支持在**已安装**的环境上重复执行安装测试，无需先手工清理集群。安装前会先做重入探测（`framework/common.sh:_operator_reentry_probe`）：
+
+| 集群现状                                     | 行为                                              |
+| -------------------------------------------- | ------------------------------------------------- |
+| 目标 CSV 为 `Succeeded`                      | 跳过安装，直接进入后续测试步骤                    |
+| 目标 CSV 处于中间态（Installing/Pending 等） | 等待其收敛为 `Succeeded`（默认 12 × 10s）后再判定 |
+| 目标 CSV 不存在                              | 走完整安装流程（创建 Subscription → 批准 InstallPlan → 等待 CSV） |
+| 目标 CSV 停在 `Failed` 或长期未收敛          | 报错退出，交由人工处理（框架不会自行删除集群资源） |
+
+> 卸载 Operator 时平台会把 CSV 连同 Subscription 一并清理，因此重入时不存在需要框架清理的 CSV 残留；框架只做「已安装则跳过」的判定，不会删除集群里的既有资源。
+>
+> 可选环境变量：`OPERATOR_REENTRY_WAIT_RETRIES` / `OPERATOR_REENTRY_WAIT_INTERVAL` 调整中间态的等待轮次与间隔。逻辑单测见 `framework/tests/install_operator_test.sh`（伪造 kubectl/runme，不依赖集群）。
 
 ## 各项目测试清单
 

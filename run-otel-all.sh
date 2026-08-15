@@ -26,14 +26,28 @@ log_header "开始执行 otel 项目所有测试任务"
 # 安装覆盖 install-opentelemetry.mdx 全部 CLI 章节（Operator + Collector）
 # 卸载覆盖 uninstalling-opentelemetry.mdx 全部 CLI 章节（Instrumentation/Collector/Subscription/CRDs）
 # 注：跨 suite 复用 OTel Operator 的场景，调用方可加 --skip-operator-and-crds 保留 Operator 与 CRDs。
+#
+# 执行顺序（前后依赖）：
+#   1) rbac-resources：先授予 Operator 管理集群级 RBAC 的权限。须在装 Operator 之前完成，
+#      Operator 启动即可探测到该能力（文档中重启 Operator 为可选步骤）。带 --force-init
+#      承担本 Case 的环境初始化。
+#   2) install-opentelemetry：安装 Operator + 部署 Collector。
+#   3) without-sidecar：以 deployment 模式部署带 k8s_attributes 处理器的 Collector，
+#      观察日志 30s 无 error，验证 Operator 自动创建集群级 RBAC 确实生效。
+#   4) 清理按依赖逆序：without-sidecar（Collector 的 finalizer 需要 Operator 与 RBAC 授权
+#      仍在位才能回收自动生成的集群级 RBAC）→ uninstalling-opentelemetry → rbac-resources。
 # ------------------------------------------------------------------
 case_begin "1" "OpenTelemetry v2 安装与卸载测试"
 
 if (
     set -e
+    ./run.sh --project otel --file rbac-resources --force-init --no-cleanup
     ./run.sh --project otel --file install-opentelemetry --force-init
+    ./run.sh --project otel --file without-sidecar --no-cleanup
     # 清理
+    ./run.sh --project otel --file without-sidecar --cleanup-only
     ./run.sh --project otel --file uninstalling-opentelemetry
+    ./run.sh --project otel --file rbac-resources --cleanup-only
 ); then
     case_end 0
 else

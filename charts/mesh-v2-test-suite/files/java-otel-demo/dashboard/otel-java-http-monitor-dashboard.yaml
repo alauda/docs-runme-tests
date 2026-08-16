@@ -25,7 +25,7 @@ spec:
           name: Annotations & Alerts
           type: dashboard
     description: "HTTP request dashboard for Java services auto-instrumented by the
-      OpenTelemetry Operator (autoinstrumentation-java:2.26.1). Covers both HTTP
+      OpenTelemetry Operator (autoinstrumentation-java). Covers both HTTP
       server (inbound) and HTTP client (outbound) RED metrics: rate, errors,
       duration."
     editable: true

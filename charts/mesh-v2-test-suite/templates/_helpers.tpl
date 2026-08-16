@@ -29,7 +29,7 @@ registry 地址来自 .Values.global.registry.address，在 ACP 安装时由 plu
 registry 同样来自 .Values.global.registry.address，安装时会被 valuesTemplates 重写为
 平台内置镜像仓库，所以渲染结果就是用户可直接使用的最终镜像地址。
 用法：
-  image: {{ include "mesh-v2-test-suite.image" (dict "ctx" . "name" "asm-test-image") }}
+  image: {{ include "mesh-v2-test-suite.image" (dict "ctx" . "name" "curl") }}
 */}}
 {{- define "mesh-v2-test-suite.image" -}}
 {{- $img := index .ctx.Values.global.images .name -}}

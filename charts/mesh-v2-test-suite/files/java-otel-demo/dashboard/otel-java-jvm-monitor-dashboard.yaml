@@ -25,7 +25,7 @@ spec:
           name: Annotations & Alerts
           type: dashboard
     description: JVM runtime dashboard for Java services auto-instrumented by the
-      OpenTelemetry Operator (autoinstrumentation-java:2.26.1). Covers CPU,
+      OpenTelemetry Operator (autoinstrumentation-java). Covers CPU,
       memory (heap/non-heap pools), garbage collection, threads, and classes.
     editable: true
     fiscalYearStartMonth: 0

@@ -14,6 +14,19 @@
 
 测试脚本 `runme-test_*.sh` 仍与被测 `.mdx` 同仓同目录（runme 按 CWD 所在 git 仓库扫描代码块；文档与测试同 PR 演进）。本仓库提供引擎、通用函数库、各项目初始化逻辑与全量编排。
 
+## 发版管理
+
+创建 `release-mesh-2.x` 分支，用于对应测试的项目。
+
+注：目前 mesh，OTel 和 Tracing 会同时发版，所以只创建 mesh 发版分支。mesh 2.1 对应 OTel 2.0 和 Tracing 2.0，以此类推。
+
+### docs-runme-tests 与 mesh-v2-test-suite 矩阵关系
+
+| docs-runme-tests 分支 | mesh-v2-test-suite 版本 |
+| --------------------- | ----------------------- |
+| release-mesh-2.1      | v1.0.x                  |
+| release-mesh-2.2      | v2.2.x-rN               |
+
 ## 目录结构
 
 ```bash
@@ -24,7 +37,7 @@ docs-runme-tests/
 ├── run-tracing-all.sh      # tracing 项目全量编排
 ├── repos.conf              # 文档仓库注册表
 ├── framework/              # 通用引擎函数库（零项目耦合）
-│   ├── common.sh           # 日志 / 结果统计 / install_operator / install_operator_cli / install_cluster_plugin / setup_external_ip_pools / _wait_* / kubectl_apply_runme_block
+│   ├── common.sh           # 日志 / 结果统计 / install_operator（含重入探测）/ install_operator_cli / install_cluster_plugin / setup_external_ip_pools / _wait_* / kubectl_apply_runme_block
 │   ├── verify.sh           # __cmp_* 输出比对
 │   ├── kubeconfig.sh       # ACP kubeconfig 拉取 / 合并 / 复用
 │   └── tools.sh            # 必备工具检查 / runme·violet 安装 / 插件包下载上传
@@ -238,6 +251,21 @@ cd docs-runme-tests
 
 三个编排脚本相互独立、可单独运行，适合 CI/CD 或全量回归。
 
+### Operator 安装重入（幂等）
+
+所有经 `install_operator` 安装的 OLM Operator（`servicemesh-operator2` / `kiali-operator` / `opentelemetry-operator2`）都支持在**已安装**的环境上重复执行安装测试，无需先手工清理集群。安装前会先做重入探测（`framework/common.sh:_operator_reentry_probe`）：
+
+| 集群现状                                     | 行为                                                              |
+| -------------------------------------------- | ----------------------------------------------------------------- |
+| 目标 CSV 为 `Succeeded`                      | 跳过安装，直接进入后续测试步骤                                    |
+| 目标 CSV 处于中间态（Installing/Pending 等） | 等待其收敛为 `Succeeded`（默认 12 × 10s）后再判定                 |
+| 目标 CSV 不存在                              | 走完整安装流程（创建 Subscription → 批准 InstallPlan → 等待 CSV） |
+| 目标 CSV 停在 `Failed` 或长期未收敛          | 报错退出，交由人工处理（框架不会自行删除集群资源）                |
+
+> 卸载 Operator 时平台会把 CSV 连同 Subscription 一并清理，因此重入时不存在需要框架清理的 CSV 残留；框架只做「已安装则跳过」的判定，不会删除集群里的既有资源。
+>
+> 可选环境变量：`OPERATOR_REENTRY_WAIT_RETRIES` / `OPERATOR_REENTRY_WAIT_INTERVAL` 调整中间态的等待轮次与间隔。逻辑单测见 `framework/tests/install_operator_test.sh`（伪造 kubectl/runme，不依赖集群）。
+
 ## 各项目测试清单
 
 ### mesh（servicemesh2-docs）
@@ -280,15 +308,21 @@ cd docs-runme-tests
 
 ### otel（opentelemetry-docs）
 
-| 文档名称              | 执行命令                                                                               |
-| --------------------- | -------------------------------------------------------------------------------------- |
-| OpenTelemetry v2 安装 | `./run.sh --project otel --file install-opentelemetry`                                 |
-| OpenTelemetry v2 卸载 | `./run.sh --project otel --file uninstalling-opentelemetry [--skip-operator-and-crds]` |
-| Java 自动注入示例     | `./run.sh --project otel --file java-instrumentation`                                  |
+| 文档名称                 | 执行命令                                                                               |
+| ------------------------ | -------------------------------------------------------------------------------------- |
+| 自动创建 RBAC 资源       | `./run.sh --project otel --file rbac-resources`                                        |
+| OpenTelemetry v2 安装    | `./run.sh --project otel --file install-opentelemetry`                                 |
+| 无 Sidecar 发送遥测数据  | `./run.sh --project otel --file without-sidecar`                                       |
+| OpenTelemetry v2 卸载    | `./run.sh --project otel --file uninstalling-opentelemetry [--skip-operator-and-crds]` |
+| Java 自动注入示例        | `./run.sh --project otel --file java-instrumentation`                                  |
 
 > 安装覆盖 `install-opentelemetry.mdx` 的「Installing the Operator」与「Deploying the OpenTelemetry Collector」CLI 章节；卸载覆盖 `uninstalling-opentelemetry.mdx` 的「Uninstalling via the CLI」与「Deleting custom resource definitions」章节。`--skip-operator-and-crds` 保留 Operator subscription 与 CRDs，便于跨 suite 场景复用。
 >
-> Java 自动注入示例（`java-instrumentation`）需 `USE_MESH_V2_TEST_SUITE_PLUGIN=true`：部署 / 卸载 `mesh-v2-test-suite` 集群插件预置的 Java OTel demo（namespace `otelv2-java-demo`，含 consumer/provider/asm-client 工作负载与 Instrumentation），并校验 Operator 已自动注入 Java agent。该脚本含 cleanup，编排中以 `--no-cleanup` 安装、`--cleanup-only` 卸载。原文档 `java-instrumentation.mdx` 示例不可运行，故不加 `{name=}` 标注。
+> 自动创建 RBAC 资源（`rbac-resources`）覆盖 `installing/rbac-resources.mdx` 的「Procedure」与「Removing the RBAC resources」章节，给 Operator 授予管理集群级 `ClusterRole` / `ClusterRoleBinding` 的权限。须在安装 Operator **之前**执行（Operator 启动即可探测到该能力，文档中重启 Operator 为可选步骤，Operator 未安装时该步骤为空操作）。含 cleanup，编排中以 `--no-cleanup` 授权、`--cleanup-only` 回收。
+>
+> 无 Sidecar 发送遥测数据（`without-sidecar`）只覆盖 `configuration/send-telemetry-data/without-sidecar.mdx`「Procedure」步骤 1：以 `deployment` 模式部署带 `k8s_attributes` 处理器的 Collector（namespace `observability`），部署成功后观察日志 30s，断言无 `error` 关键词（不区分大小写）且容器未重启，用于验证 Operator 自动创建集群级 RBAC 在 `k8s_attributes` 场景下生效。因此该测试依赖先执行 `rbac-resources`。文档步骤 2 的示例应用使用占位镜像不可运行，未加 `{name=}` 标注；exporter endpoint 的 `<jaeger-instance-name>` 占位值不影响部署，保持原样。该代码块的语言标记是 `yaml`，而 `runme run` 对 `yaml` 块只回显不执行（且返回 0），故测试脚本用 `runme print` 取内容后 `eval` 执行。`observability` 命名空间的创建与清理由测试脚本负责（创建时打 `runme-test/created-by=without-sidecar` 标签，cleanup 只删带该标签的命名空间）。含 cleanup，编排中以 `--no-cleanup` 部署、`--cleanup-only` 清理，且必须在卸载 Operator 与回收 `rbac-resources` 授权之前清理（Collector 的 finalizer 依赖两者回收自动生成的集群级 RBAC）。
+>
+> Java 自动注入示例（`java-instrumentation`）需 `USE_MESH_V2_TEST_SUITE_PLUGIN=true`：部署 / 卸载 `mesh-v2-test-suite` 集群插件预置的 Java OTel demo（namespace `otelv2-java-demo`，含 consumer/provider/curl-client 工作负载与 Instrumentation），并校验 Operator 已自动注入 Java agent。该脚本含 cleanup，编排中以 `--no-cleanup` 安装、`--cleanup-only` 卸载。原文档 `java-instrumentation.mdx` 示例不可运行，故不加 `{name=}` 标注。
 
 ### tracing（distributed-tracing-docs）
 

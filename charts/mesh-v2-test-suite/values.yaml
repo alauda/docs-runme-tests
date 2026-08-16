@@ -60,27 +60,21 @@ global:
       tag: "1.0"
       support_arm: true
       thirdparty: true
-    # ASM Test Images
-    asm-test-image:
-      repository: asm/asm-test-image
-      tag: "latest"
-      support_arm: true
-      thirdparty: false
     # ASM OpenTelemetry Demo Images
     otel-demo-consumer-java-for-test:
       repository: asm/demo/otel-demo-consumer-java-for-test
-      tag: "v4.0.1"
+      tag: "v4.0.2"
       support_arm: true
       thirdparty: false
     otel-demo-provider-java-for-test:
       repository: asm/demo/otel-demo-provider-java-for-test
-      tag: "v4.0.1"
+      tag: "v4.0.2"
       support_arm: true
       thirdparty: false
     # OpenTelemetry Images
     autoinstrumentation-java:
       repository: asm/opentelemetry-operator/autoinstrumentation-java
-      tag: "2.26.1"
+      tag: "2.30.0"
       support_arm: true
       thirdparty: true
     telemetrygen:

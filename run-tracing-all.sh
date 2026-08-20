@@ -44,17 +44,17 @@ log_header "开始执行 tracing 项目所有测试任务"
 # 未上架时自动下载上架，幂等），步骤 2 负责安装 OTel Operator 本身。
 # TRACING_INSTALL_ES=true 时步骤 0 自动安装 logcenter 集群插件（幂等，已安装跳过）。
 # ------------------------------------------------------------------
-case_begin "1" "分布式调用链安装与卸载测试 (Elasticsearch)"
-
-if (
-    set -e
-    ./run.sh --project tracing --file installing-distributed-tracing-elasticsearch --force-init
-    # 清理
-    ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds
-); then
-    case_end 0
-else
-    case_end 1
+if case_begin_if "1" "分布式调用链安装与卸载测试 (Elasticsearch)" smoke install elasticsearch; then
+    if (
+        set -e
+        ./run.sh --project tracing --file installing-distributed-tracing-elasticsearch --force-init
+        # 清理
+        ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds
+    ); then
+        case_end 0
+    else
+        case_end 1
+    fi
 fi
 
 # ------------------------------------------------------------------
@@ -66,17 +66,17 @@ fi
 # 自动安装与手动 TRACING_OPENSEARCH_* 均不可用时安装测试 SKIPPED、
 # 卸载按命名空间存在性 SKIPPED，不阻断编排。
 # ------------------------------------------------------------------
-case_begin "2" "分布式调用链安装与卸载测试 (OpenSearch)"
-
-if (
-    set -e
-    ./run.sh --project tracing --file installing-distributed-tracing-opensearch
-    # 清理
-    ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds
-); then
-    case_end 0
-else
-    case_end 1
+if case_begin_if "2" "分布式调用链安装与卸载测试 (OpenSearch)" install opensearch; then
+    if (
+        set -e
+        ./run.sh --project tracing --file installing-distributed-tracing-opensearch
+        # 清理
+        ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds
+    ); then
+        case_end 0
+    else
+        case_end 1
+    fi
 fi
 
 # ------------------------------------------------------------------
@@ -86,19 +86,19 @@ fi
 # 校验每个 service 只被一个 Jaeger 副本聚合 spanmetrics（单写入者），最后缩容并卸载。
 # 不修改任何 mdx 文档，多副本验证完全在测试脚本内通过 kubectl 完成。
 # ------------------------------------------------------------------
-case_begin "3" "SPM 多副本（高可用）验证 (Elasticsearch)"
-
-if (
-    set -e
-    ./run.sh --project tracing --file installing-distributed-tracing-elasticsearch --skip-telemetrygen
-    ./run.sh --project tracing --file spm-ha-elasticsearch --no-cleanup
-    ./run.sh --project tracing --file spm-ha-elasticsearch --cleanup-only
-    # 清理
-    ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds
-); then
-    case_end 0
-else
-    case_end 1
+if case_begin_if "3" "SPM 多副本（高可用）验证 (Elasticsearch)" smoke ha elasticsearch; then
+    if (
+        set -e
+        ./run.sh --project tracing --file installing-distributed-tracing-elasticsearch --skip-telemetrygen
+        ./run.sh --project tracing --file spm-ha-elasticsearch --no-cleanup
+        ./run.sh --project tracing --file spm-ha-elasticsearch --cleanup-only
+        # 清理
+        ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds
+    ); then
+        case_end 0
+    else
+        case_end 1
+    fi
 fi
 
 # ------------------------------------------------------------------
@@ -107,19 +107,19 @@ fi
 # 时直接复用）。OpenSearch 存储后端不可用时安装 SKIPPED，随后 spm-ha-opensearch 因
 # 检测不到已安装的 otel 实例而自动 SKIPPED，不阻断编排。
 # ------------------------------------------------------------------
-case_begin "4" "SPM 多副本（高可用）验证 (OpenSearch)"
-
-if (
-    set -e
-    ./run.sh --project tracing --file installing-distributed-tracing-opensearch --skip-telemetrygen
-    ./run.sh --project tracing --file spm-ha-opensearch --no-cleanup
-    ./run.sh --project tracing --file spm-ha-opensearch --cleanup-only
-    # 清理
-    ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds
-); then
-    case_end 0
-else
-    case_end 1
+if case_begin_if "4" "SPM 多副本（高可用）验证 (OpenSearch)" ha opensearch; then
+    if (
+        set -e
+        ./run.sh --project tracing --file installing-distributed-tracing-opensearch --skip-telemetrygen
+        ./run.sh --project tracing --file spm-ha-opensearch --no-cleanup
+        ./run.sh --project tracing --file spm-ha-opensearch --cleanup-only
+        # 清理
+        ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds
+    ); then
+        case_end 0
+    else
+        case_end 1
+    fi
 fi
 
 log_header "tracing 项目所有测试任务执行完成！"

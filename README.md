@@ -330,6 +330,34 @@ cd docs-runme-tests
 报告产物：`$TEST_RESULT_DIR/allure-result/` 与 `$TEST_RESULT_DIR/allure-report/`。
 用例粒度为一篇文档的一次执行（DocTest），Case 作为 allure suite 分组。
 
+### Case 标签与 CASE_TYPE
+
+`CASE_TYPE` 只支持 `and` 连接的合取式与 `not` 取反（`or` 与括号会报错退出）。
+保留标签 `always` 恒被选中，用于环境初始化这类必须先跑的前置 Case。
+`CASE_TYPE` 未设置时全部选中——本地手工跑行为不变。
+
+| 项目 | Case | 标签 |
+| --- | --- | --- |
+| mesh | 1 环境初始化 | `always install` |
+| mesh | 2 双栈网格安装 | `dualstack install` |
+| mesh | 3 单网格安装与应用（含调用链） | `smoke install sidecar` |
+| mesh | 4 Istio HA 配置 | `ha install` |
+| mesh | 5 Ambient Mode 安装 | `smoke install ambient` |
+| mesh | 6 / 7 多集群 | `multicluster` |
+| mesh | 8 / 9 / 10 更新策略 | `update` |
+| mesh | 11 Ambient 更新 | `update ambient` |
+| otel | 1 安装与卸载 | `smoke install` |
+| otel | 2 Java 自动注入示例 | `smoke install java` |
+| tracing | 1 安装与卸载（ES） | `smoke install elasticsearch` |
+| tracing | 2 安装与卸载（OpenSearch） | `install opensearch` |
+| tracing | 3 SPM 多副本（ES） | `smoke ha elasticsearch` |
+| tracing | 4 SPM 多副本（OpenSearch） | `ha opensearch` |
+
+DocTest 级标签只有 `egress`（mesh Case 3 / 5 中的三篇 `routing-egress-traffic-*`）。
+
+首批 dailybuild 用 `CASE_TYPE="smoke and not egress"`。
+OpenSearch 就绪后给 tracing Case 2/4 补 `smoke` 标签即可纳入，表达式不用改。
+
 ## 各项目测试清单
 
 ### mesh（servicemesh2-docs）

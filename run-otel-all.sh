@@ -37,21 +37,21 @@ log_header "开始执行 otel 项目所有测试任务"
 #   4) 清理按依赖逆序：without-sidecar（Collector 的 finalizer 需要 Operator 与 RBAC 授权
 #      仍在位才能回收自动生成的集群级 RBAC）→ uninstalling-opentelemetry → rbac-resources。
 # ------------------------------------------------------------------
-case_begin "1" "OpenTelemetry v2 安装与卸载测试"
-
-if (
-    set -e
-    ./run.sh --project otel --file rbac-resources --force-init --no-cleanup
-    ./run.sh --project otel --file install-opentelemetry --force-init
-    ./run.sh --project otel --file without-sidecar --no-cleanup
-    # 清理
-    ./run.sh --project otel --file without-sidecar --cleanup-only
-    ./run.sh --project otel --file uninstalling-opentelemetry
-    ./run.sh --project otel --file rbac-resources --cleanup-only
-); then
-    case_end 0
-else
-    case_end 1
+if case_begin_if "1" "OpenTelemetry v2 安装与卸载测试" smoke install; then
+    if (
+        set -e
+        ./run.sh --project otel --file rbac-resources --force-init --no-cleanup
+        ./run.sh --project otel --file install-opentelemetry --force-init
+        ./run.sh --project otel --file without-sidecar --no-cleanup
+        # 清理
+        ./run.sh --project otel --file without-sidecar --cleanup-only
+        ./run.sh --project otel --file uninstalling-opentelemetry
+        ./run.sh --project otel --file rbac-resources --cleanup-only
+    ); then
+        case_end 0
+    else
+        case_end 1
+    fi
 fi
 
 # ------------------------------------------------------------------
@@ -62,19 +62,19 @@ fi
 # 顺序：先装分布式调用链（提供 jaeger-system 的 OTel Collector 作为 javaagent 导出端点）
 #       → 部署 Java OTel demo → 卸载 Java OTel demo → 卸载分布式调用链。
 # ------------------------------------------------------------------
-case_begin "2" "Java 自动注入示例服务 + 分布式调用链 (Java Instrumentation Demo)"
-
-if (
-    set -e
-    ./run.sh --project tracing --file installing-distributed-tracing-elasticsearch --skip-telemetrygen --force-init
-    ./run.sh --project otel --file java-instrumentation --no-cleanup
-    # 清理
-    ./run.sh --project otel --file java-instrumentation --cleanup-only
-    ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds
-); then
-    case_end 0
-else
-    case_end 1
+if case_begin_if "2" "Java 自动注入示例服务 + 分布式调用链 (Java Instrumentation Demo)" smoke install java; then
+    if (
+        set -e
+        ./run.sh --project tracing --file installing-distributed-tracing-elasticsearch --skip-telemetrygen --force-init
+        ./run.sh --project otel --file java-instrumentation --no-cleanup
+        # 清理
+        ./run.sh --project otel --file java-instrumentation --cleanup-only
+        ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds
+    ); then
+        case_end 0
+    else
+        case_end 1
+    fi
 fi
 
 log_header "otel 项目所有测试任务执行完成！"

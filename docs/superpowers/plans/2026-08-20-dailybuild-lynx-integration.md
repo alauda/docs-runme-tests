@@ -19,13 +19,38 @@
 - **`CASE_TYPE` 语法**：只支持 `and` 连接的合取式与 `not` 取反；出现 `or` 必须报错退出。
 - **保留标签 `always`**：带该标签的 Case 恒被选中，不参与表达式求值。
 - **skip 前缀**：环境不支持 → `[env] `；预期不测试 → `[expected] `。
-- **镜像 tag 规则**：`master` → `latest` + `master-<短 commit>`；`release-mesh-2.x` → `release-<ACP 大版本>` + `<branch>-<短 commit>`。
+- **镜像 tag 规则**：`main` → `latest` + `main-<短 commit>`；`release-mesh-2.x` → `release-<ACP 大版本>` + `<branch>-<短 commit>`。
 - **镜像仓库**：`build-harbor.alauda.cn/asm/docs-runme-tests`。
 - **单测必须不依赖集群与平台**：新增单测一律用伪造的 `kubectl` / `runme` / `allure`。
 - **提交规范**：不使用 `git commit --amend`；提交信息不含 `Co-Authored-By` 与 `Claude-Session`。
 - **注释与日志用中文**，与现有代码风格一致。
 
 **当前分支**：`feat/dailybuild-lynx-integration`（已创建，设计文档已提交）。
+
+---
+
+## 执行期修订记录
+
+> 12 个任务（17 个 commit）执行期间，发现并人工裁决了 7 处计划缺陷（代码侧均已正确落实），
+> 外加 1 处 `.dockerignore` 遗漏，合计 8 条。裁决记录原本只存于
+> `.superpowers/sdd/2026-08-20-dailybuild-lynx-integration/progress.md`——该文件被
+> `.superpowers/sdd/.gitignore`（内容为 `*`）整体排除、不随合并进入仓库，本节是这些裁决
+> 唯一会留在库里的记录。
+>
+> 下表第 1、3、6、7 行涉及的具体错误值（`jq -nc`、`eval "$content"`、三处 `master`）已经
+> 直接改在下方对应 Task 正文里；第 2、4、5、8 行是结构性/清单性差异，正文不逐字对应改动，
+> 以本表描述为准。
+
+| # | 位置 | 原计划 | 实际 | 理由 |
+| --- | --- | --- | --- | --- |
+| 1 | Task 3 Step 3 | `allure_emit_broken` 用 `jq -nc` | `jq -n`（去 `-c`） | 与同文件 `allure_emit_results` 的 pretty 格式一致；`allure-result/*.json` 是独立 JSON 文档，不是 `results.jsonl` 那种一行一条的 JSON Lines，没有单行约束。原写法与 Step 1 的断言矛盾，必然假失败 |
+| 2 | Task 3 | `allure_emit_results` 只遍历 `type=doctest` | 增补「整 Case 跳过」的占位用例（见 `lynx/allure.sh` 里补发 orphan Case 结果的那段） | 否则整条 Case 被 `case_skip` 时在 allure 报告里完全不存在；首批 CASE_TYPE 下 17 个 Case 约 9 个走这条路径 |
+| 3 | Task 4 Step 3 | `runme_run_with_assets` 用 `eval "$content"` | `bash -e -c "$content"` | 与 `runme run` 的「块内多条命令失败即停」对齐。调用方写成 `f X \|\| {...}` 时 bash 抑制 errexit 并传导进 eval/子 shell，多命令块前面的失败会被静默吞掉 |
+| 4 | Task 6 Step 6 | 只改内层 `_tracing_jaeger_plugin_install_via_global` | 外层 `tracing_install_jaeger_plugin` 的硬校验也降级为 `log_info`（`projects/tracing/jaeger-plugin.sh`） | 外层校验在调用内层之前，只改内层会让改动变成死代码——外层仍会在真正走到内层前就先报错退出 |
+| 5 | Task 7 Step 1 | stub kubectl 只回答 owner 查询 | stub 区分 owner / 可用地址数两类查询（`framework/tests/ip_pool_test.sh` 的 `setup_stub`） | 复用分支会调 `_wait_ipaddresspool_available` 查 `.status.availableIPv4`，原 stub 让它拿到 owner 字符串、耗尽 30×10s 重试。裁决保留该等待（它检查的是「池里还有没有空闲 IP」，前序 Case 可能占着唯一 IP） |
+| 6 | Task 10 | 三个文档仓库 REF 默认值都是 `master` | mesh 保持 `master`，otel/tracing 改 `main` | 三个仓库默认分支实际不一致（已用 `git ls-remote --symref` 核实），原值会让 `git clone` 直接失败 |
+| 7 | Task 10/11 | `docs-runme-tests` 主干按 `master` | 全部改 `main` | 本仓库远端默认分支是 `main`；连带影响 `.tekton` 触发正则、`compute-tags.sh` 的分支判断与输出前缀 |
+| 8 | Task 10 Step 1 | `.dockerignore` 未排除 `.superpowers/` | 补排 `.superpowers`（见 commit `d293988`） | `.superpowers/sdd/` 是本次 SDD 工作流的调研/审查产物目录，体积可达 900K；不排除会被 `COPY . /app/docs-runme-tests` 整个烤进镜像 |
 
 ---
 
@@ -692,7 +717,7 @@ allure_emit_broken() {
     local uuid now
     uuid=$(_allure_uuid)
     now=$(( $(date +%s) * 1000 ))
-    jq -nc --arg uuid "$uuid" --arg msg "$message" --argjson now "$now" \
+    jq -n --arg uuid "$uuid" --arg msg "$message" --argjson now "$now" \
         '{uuid: $uuid, name: "docs-test 执行中断", fullName: "docs-test/aborted",
           historyId: "docs-test/aborted", status: "broken",
           statusDetails: {message: $msg}, start: $now, stop: $now,
@@ -1107,7 +1132,7 @@ runme_run_with_assets() {
         return 1
     fi
     content=$(rewrite_urls_to_assets "$content")
-    eval "$content"
+    bash -e -c "$content"
 }
 ```
 
@@ -2925,7 +2950,7 @@ docs/superpowers
 
 ```
 # docs-runme-tests 分支 → ACP 大版本，供构建流水线决定 release tag
-# master 不在此表内，固定出 latest
+# main 不在此表内，固定出 latest
 release-mesh-2.2	4.5
 release-mesh-2.1	4.4
 ```
@@ -2943,8 +2968,8 @@ release-mesh-2.1	4.4
 FROM ubuntu:22.04
 
 ARG MESH_DOCS_REF=master
-ARG OTEL_DOCS_REF=master
-ARG TRACING_DOCS_REF=master
+ARG OTEL_DOCS_REF=main
+ARG TRACING_DOCS_REF=main
 ARG RUNME_VERSION=3.16.11
 ARG ALLURE_VERSION=2.24.1
 ARG KUBECTL_VERSION=v1.31.4
@@ -3068,8 +3093,8 @@ ENTRYPOINT ["/app/docs-runme-tests/lynx/entrypoint.sh"]
 ```bash
 docker build \
   --build-arg MESH_DOCS_REF=master \
-  --build-arg OTEL_DOCS_REF=master \
-  --build-arg TRACING_DOCS_REF=master \
+  --build-arg OTEL_DOCS_REF=main \
+  --build-arg TRACING_DOCS_REF=main \
   --build-arg IMAGE_TAG=local-dev \
   -t docs-runme-tests:local-dev .
 ```
@@ -3147,8 +3172,8 @@ docker run --rm --network none \
 ```bash
 docker build \
   --build-arg MESH_DOCS_REF=master \
-  --build-arg OTEL_DOCS_REF=master \
-  --build-arg TRACING_DOCS_REF=master \
+  --build-arg OTEL_DOCS_REF=main \
+  --build-arg TRACING_DOCS_REF=main \
   --build-arg IMAGE_TAG=local-dev \
   -t docs-runme-tests:local-dev .
 ```
@@ -3158,7 +3183,7 @@ docker build \
 文档引用的 17 个外部 sample YAML 按 `lynx/assets-manifest.tsv` 落到 `assets/`。
 构建期会跑 `lynx/check-manifest.sh` 与 `lynx/check-case-ids.sh`，任一不通过即构建失败。
 
-tag 规则：`master` → `latest` + `master-<短 commit>`；`release-mesh-2.x` → 按
+tag 规则：`main` → `latest` + `main-<短 commit>`；`release-mesh-2.x` → 按
 `lynx/release-matrix.tsv` 映射到 `release-<ACP 大版本>` + `<branch>-<短 commit>`。
 
 文档仓库若为私有仓库，构建时加 `--build-arg GIT_TOKEN=<只读 token>`。
@@ -3214,7 +3239,7 @@ metadata:
       (
         event == "push" &&
         !last_commit_title.contains("ci skip") &&
-        source_branch.matches("^(master|release-mesh-[0-9]+([.][0-9]+)+)$")
+        source_branch.matches("^(main|release-mesh-[0-9]+([.][0-9]+)+)$")
       )
 spec:
   timeouts:
@@ -3269,8 +3294,8 @@ short="${commit:0:7}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MATRIX="$SCRIPT_DIR/release-matrix.tsv"
 
-if [ "$branch" = "master" ]; then
-    printf 'latest,master-%s\n' "$short"
+if [ "$branch" = "main" ]; then
+    printf 'latest,main-%s\n' "$short"
     exit 0
 fi
 
@@ -3286,16 +3311,16 @@ printf 'release-%s,%s-%s\n' "$acp_version" "$branch" "$short"
 
 ```bash
 chmod +x lynx/compute-tags.sh
-bash lynx/compute-tags.sh master abcdef1234567890
+bash lynx/compute-tags.sh main abcdef1234567890
 bash lynx/compute-tags.sh release-mesh-2.2 abcdef1234567890
 bash lynx/compute-tags.sh release-mesh-9.9 abcdef1234567890; echo "rc=$?"
 ```
 
-预期依次输出：`latest,master-abcdef1`、`release-4.5,release-mesh-2.2-abcdef1`、未登记分支报错且 `rc=1`。
+预期依次输出：`latest,main-abcdef1`、`release-4.5,release-mesh-2.2-abcdef1`、未登记分支报错且 `rc=1`。
 
 - [ ] **Step 4: 触发一次构建并确认镜像可拉**
 
-推分支后在 PR 里评论 `/image-build` 触发，或直接 push 到 `master`。构建完成后：
+推分支后在 PR 里评论 `/image-build` 触发，或直接 push 到 `main`。构建完成后：
 
 ```bash
 docker pull build-harbor.alauda.cn/asm/docs-runme-tests:latest
@@ -3315,8 +3340,8 @@ docker inspect build-harbor.alauda.cn/asm/docs-runme-tests:latest \
 git add .tekton/image-build.yaml lynx/compute-tags.sh lynx/release-matrix.tsv
 git commit -m "ci: 新增镜像构建流水线
 
-- .tekton/image-build.yaml：push master / release-mesh-* 或评论 /image-build 触发
-- lynx/compute-tags.sh：master→latest，release-mesh-x.y→按 release-matrix 映射 release-<ACP>
+- .tekton/image-build.yaml：push main / release-mesh-* 或评论 /image-build 触发
+- lynx/compute-tags.sh：main→latest，release-mesh-x.y→按 release-matrix 映射 release-<ACP>
 - 镜像推送到 build-harbor.alauda.cn/asm/docs-runme-tests"
 ```
 

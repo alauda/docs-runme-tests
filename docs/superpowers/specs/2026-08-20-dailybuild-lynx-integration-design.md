@@ -31,7 +31,7 @@
 | D1 | lynx 中按项目拆 **3 个测试项**：`docs-mesh` / `docs-otel` / `docs-tracing`，用 `order` 串行 |
 | D2 | 镜像由 **Tekton PaC** 构建并推到 **build-harbor.alauda.cn 的 ASM 命名空间** |
 | D3 | 三个文档仓库在**构建时按 ref clone** 进镜像 |
-| D4 | tag 规则：`master` → `latest`，`release-mesh-2.x` → `release-<ACP 大版本>` |
+| D4 | tag 规则：`main` → `latest`，`release-mesh-2.x` → `release-<ACP 大版本>` |
 | D5 | 首批范围：otel 全部 + tracing Elasticsearch 链 + mesh Case 1/3/5；升级类与多集群类稳定后再放开 |
 | D6 | Elasticsearch 由 **EnvironmentTemplate 的 `log_storage`** 部署在业务集群 1，框架只读 `Feature` CR |
 | D7 | 插件包全部由 **dailybuild 预上架**，框架侧改为「只校验不下载不上架」 |
@@ -108,19 +108,19 @@
 | ARG | 默认 | 写入 label |
 | --- | --- | --- |
 | `MESH_DOCS_REF` | `master` | `io.alauda.docs.mesh-ref` |
-| `OTEL_DOCS_REF` | `master` | `io.alauda.docs.otel-ref` |
-| `TRACING_DOCS_REF` | `master` | `io.alauda.docs.tracing-ref` |
+| `OTEL_DOCS_REF` | `main` | `io.alauda.docs.otel-ref` |
+| `TRACING_DOCS_REF` | `main` | `io.alauda.docs.tracing-ref` |
 | `RUNME_VERSION` | `3.16.11` | `io.alauda.runme-version` |
 
 `ENTRYPOINT ["/app/docs-runme-tests/lynx/entrypoint.sh"]`，并在 `/usr/local/bin/docs-test` 放一个指向它的软链，使 lynx 的 `command: docs-test` 可用。
 
 #### 5.1.3 构建流水线
 
-新增 `.tekton/image-build.yaml`（PaC），触发条件对齐文档仓库现有写法：push 到 `master` 或 `release-*` 分支。镜像仓库 `build-harbor.alauda.cn/asm/docs-runme-tests`（ASM 自有命名空间；若实际命名空间不是 `asm`，只需改流水线的 `IMAGE_REPO` 参数与 TestTemplate 里的 `image` 字段）。tag 规则：
+新增 `.tekton/image-build.yaml`（PaC），触发条件对齐文档仓库现有写法：push 到 `main` 或 `release-*` 分支。镜像仓库 `build-harbor.alauda.cn/asm/docs-runme-tests`（ASM 自有命名空间；若实际命名空间不是 `asm`，只需改流水线的 `IMAGE_REPO` 参数与 TestTemplate 里的 `image` 字段）。tag 规则：
 
 | 分支 | tag |
 | --- | --- |
-| `master` | `latest` + `master-<短 commit>` |
+| `main` | `latest` + `main-<短 commit>` |
 | `release-mesh-2.x` | `release-<ACP 大版本>` + `<branch>-<短 commit>` |
 
 mesh 版本与 ACP 大版本的对应关系维护在 `lynx/release-matrix.tsv`（两列：`docs-runme-tests 分支` / `ACP 大版本`），构建脚本读取它决定 tag。这是 D4 要求的映射表的落地位置。

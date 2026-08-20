@@ -74,6 +74,36 @@ test_case_skip() {
     rm -rf "$RUNME_TEST_RUN_DIR"
 }
 
+# ── 测试：case_begin 标签进入 case 记录 ──
+test_case_tags() {
+    printf '\n== case_begin tags ==\n'
+    new_sandbox
+    case_begin 3 "单网格" "smoke install sidecar" >/dev/null
+    case_end 0 >/dev/null
+    local line; line="$(cat "$RUNME_TEST_RUN_DIR/results.jsonl")"
+    check_contains "tags 写入 case 记录" "$line" '"tags":"smoke install sidecar"'
+    rm -rf "$RUNME_TEST_RUN_DIR"
+}
+
+# ── 测试：case_begin_if 按 CASE_TYPE 门控 ──
+test_case_begin_if() {
+    printf '\n== case_begin_if ==\n'
+    new_sandbox
+    CASE_TYPE="smoke and not egress"
+    if case_begin_if 3 "命中" smoke install >/dev/null; then
+        case_end 0 >/dev/null
+        check_eq "命中时进入 Case" "1" "1"
+    else
+        check_eq "命中时进入 Case" "0" "1"
+    fi
+    case_begin_if 8 "未命中" update >/dev/null || true
+    local body; body="$(cat "$RUNME_TEST_RUN_DIR/results.jsonl")"
+    check_contains "未命中记为 case_skip" "$body" '"type":"case_skip"'
+    check_contains "未命中原因含 CASE_TYPE" "$body" 'CASE_TYPE'
+    unset CASE_TYPE
+    rm -rf "$RUNME_TEST_RUN_DIR"
+}
+
 # ── 测试：最小 finalize 退出码 ──
 test_finalize_exit() {
     printf '\n== report_finalize 退出码 ==\n'
@@ -209,6 +239,8 @@ main() {
     test_name_parse
     test_record_doctest
     test_case_skip
+    test_case_tags
+    test_case_begin_if
     test_finalize_exit
     test_finalize_idempotent
     test_aggregate

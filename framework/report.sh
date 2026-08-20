@@ -7,6 +7,47 @@
 #
 # 依赖：framework/common.sh 的 log_* 函数（调用方须先 source common.sh）。
 
+# ── 可选加载 CASE_TYPE 过滤器（lynx 层，缺失时 case_selected 恒为真）──
+if [ -f "${FRAMEWORK_ROOT:-}/lynx/case-filter.sh" ]; then
+    # shellcheck disable=SC1090
+    . "${FRAMEWORK_ROOT}/lynx/case-filter.sh"
+fi
+
+# ── case_selected <tag>... ──
+# 依据 CASE_TYPE 判断某组标签是否被选中。过滤器未加载时恒为真（本地行为不变）。
+# 表达式非法时立刻退出——静默跳过全部用例比报错危险得多。
+case_selected() {
+    if ! declare -F _case_type_matches >/dev/null 2>&1; then
+        return 0
+    fi
+    local rc=0
+    _case_type_matches "${CASE_TYPE:-}" "$@" || rc=$?
+    if [ "$rc" -eq 2 ]; then
+        log_error "CASE_TYPE 表达式非法（仅支持 and / not 合取式）: ${CASE_TYPE:-}"
+        exit 1
+    fi
+    return "$rc"
+}
+
+# ── doctest_selected <tag>... ──
+# 与 case_selected 同语义，命名区分调用场景（Case 内部按标签跳过个别 DocTest）。
+doctest_selected() {
+    case_selected "$@"
+}
+
+# ── case_begin_if <case_id> <case_name> <tag>... ──
+# 选中则 case_begin 并返回 0；未选中则 case_skip（分类 expected）并返回 1。
+case_begin_if() {
+    local cid="$1" cname="$2"
+    shift 2
+    if case_selected "$@"; then
+        case_begin "$cid" "$cname" "$*"
+        return 0
+    fi
+    case_skip "$cid" "$cname" "CASE_TYPE='${CASE_TYPE:-}' 未选中标签 [$*]"
+    return 1
+}
+
 # ── 内部：向 results.jsonl 追加一行 ──
 _report_append() {
     if [ -z "${RUNME_TEST_RUN_DIR:-}" ]; then
@@ -74,11 +115,12 @@ report_record_doctest() {
         '{type:$type,project:$project,file:$file,script:$script,case_id:$case_id,case_name:$case_name,phase:$phase,status:$status,skip_reason:$skip_reason,fail_reason:$fail_reason,start_ts:$start_ts,end_ts:$end_ts,duration_s:$duration_s}')"
 }
 
-# ── case_begin <case_id> <case_name> ──
+# ── case_begin <case_id> <case_name> [tags] ──
 case_begin() {
     RUNME_TEST_CASE_ID="$1"
     RUNME_TEST_CASE_NAME="$2"
-    export RUNME_TEST_CASE_ID RUNME_TEST_CASE_NAME
+    RUNME_TEST_CASE_TAGS="${3:-}"
+    export RUNME_TEST_CASE_ID RUNME_TEST_CASE_NAME RUNME_TEST_CASE_TAGS
     __CASE_START_TS="$(date +%s)"
     log_header "Case $1: $2"
 }
@@ -91,8 +133,9 @@ _case_record() {
     _report_append "$(jq -nc \
         --arg type "case" --arg case_id "${RUNME_TEST_CASE_ID:-}" \
         --arg case_name "${RUNME_TEST_CASE_NAME:-}" --arg status "$status" \
+        --arg tags "${RUNME_TEST_CASE_TAGS:-}" \
         --argjson duration_s "$duration" \
-        '{type:$type,case_id:$case_id,case_name:$case_name,status:$status,duration_s:$duration_s}')"
+        '{type:$type,case_id:$case_id,case_name:$case_name,status:$status,tags:$tags,duration_s:$duration_s}')"
 }
 
 # ── case_end <rc>：普通 Case，失败仅记录、不退出 ──
@@ -104,7 +147,7 @@ case_end() {
         _case_record "failed"
         log_error "Case ${RUNME_TEST_CASE_ID:-?}: ${RUNME_TEST_CASE_NAME:-} 失败（继续后续 Case）"
     fi
-    unset RUNME_TEST_CASE_ID RUNME_TEST_CASE_NAME
+    unset RUNME_TEST_CASE_ID RUNME_TEST_CASE_NAME RUNME_TEST_CASE_TAGS
     return 0
 }
 
@@ -113,12 +156,12 @@ case_end_fatal() {
     if [ "$1" -eq 0 ]; then
         _case_record "passed"
         log_success "Case ${RUNME_TEST_CASE_ID:-?}: ${RUNME_TEST_CASE_NAME:-} 通过"
-        unset RUNME_TEST_CASE_ID RUNME_TEST_CASE_NAME
+        unset RUNME_TEST_CASE_ID RUNME_TEST_CASE_NAME RUNME_TEST_CASE_TAGS
         return 0
     fi
     _case_record "failed"
     log_error "致命前置 Case ${RUNME_TEST_CASE_ID:-?}: ${RUNME_TEST_CASE_NAME:-} 失败，中止整个 Run"
-    unset RUNME_TEST_CASE_ID RUNME_TEST_CASE_NAME
+    unset RUNME_TEST_CASE_ID RUNME_TEST_CASE_NAME RUNME_TEST_CASE_TAGS
     report_finalize
     exit 1
 }

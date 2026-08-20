@@ -86,6 +86,27 @@ EOF
     rm -rf "$stub" "$SANDBOX"
 }
 
+test_runme_run_with_assets_failfast() {
+    printf '\n== runme_run_with_assets 多命令块失败即停 ==\n'
+    setup_sandbox
+    # 伪造 runme：print 出一个三行的多命令块，第二行必定失败
+    local stub; stub="$(mktemp -d)"
+    cat > "$stub/runme" <<EOF
+#!/usr/bin/env bash
+[ "\$1" = "print" ] || exit 1
+printf 'true\nfalse\ntouch %s\n' "$SANDBOX/should-not-run"
+EOF
+    chmod +x "$stub/runme"
+    # 复刻真实调用形态：调用方在 set -e 下写成 \`f X || { ... }\`，
+    # 该上下文会抑制 errexit —— 修复前这里会「全跑完且返回 0」
+    local rc=0
+    ( set -e
+      PATH="$stub:$PATH" runme_run_with_assets fake:block ) >/dev/null 2>&1 || rc=$?
+    check_eq "中间命令失败时返回非 0" "$([ "$rc" -ne 0 ] && echo yes || echo no)" "yes"
+    check_eq "失败后不再执行后续命令" "$([ -e "$SANDBOX/should-not-run" ] && echo ran || echo stopped)" "stopped"
+    rm -rf "$stub" "$SANDBOX"
+}
+
 test_manifest_wellformed() {
     printf '\n== lynx/assets-manifest.tsv 格式 ==\n'
     local f="$FRAMEWORK_ROOT/lynx/assets-manifest.tsv"
@@ -101,6 +122,7 @@ main() {
     test_fetch_content
     test_rewrite
     test_runme_run_with_assets
+    test_runme_run_with_assets_failfast
     test_manifest_wellformed
     printf '\n==================================\n'
     printf '通过: %d  失败: %d\n' "$T_PASS" "$T_FAIL"

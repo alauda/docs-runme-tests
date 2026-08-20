@@ -65,5 +65,9 @@ runme_run_with_assets() {
         return 1
     fi
     content=$(rewrite_urls_to_assets "$content")
-    eval "$content"
+    # 与 runme run 的「块内多条命令失败即停」对齐：必须真正 fork 一个独立进程。
+    # 调用方普遍写成 `runme_run_with_assets X || { ... }`，该上下文会抑制 errexit，
+    # 且抑制会传导进 eval 与子 shell（包一层 ( set -e; ... ) 也无效），
+    # 只有独立进程里的 -e 才不受影响。
+    bash -e -c "$content"
 }

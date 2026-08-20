@@ -118,6 +118,24 @@ test_finalize_exit() {
     rm -rf "$RUNME_TEST_RUN_DIR"
 }
 
+# ── 测试：EXIT_ON_TEST_FAILURE=false 时失败不改退出码 ──
+test_exit_on_test_failure() {
+    printf '\n== EXIT_ON_TEST_FAILURE ==\n'
+    new_sandbox
+    report_record_doctest mesh kiali runme-test_kiali.sh test failed "" "pod 未就绪" 100 160
+    local rc=0
+    EXIT_ON_TEST_FAILURE=false TEST_RESULT_DIR="" report_finalize >/dev/null 2>&1 || rc=$?
+    check_eq "false 时退出码 0" "$rc" "0"
+    rm -rf "$RUNME_TEST_RUN_DIR"
+
+    new_sandbox
+    report_record_doctest mesh kiali runme-test_kiali.sh test failed "" "pod 未就绪" 100 160
+    rc=0
+    EXIT_ON_TEST_FAILURE=true TEST_RESULT_DIR="" report_finalize >/dev/null 2>&1 || rc=$?
+    check_eq "true 时退出码 1" "$rc" "1"
+    rm -rf "$RUNME_TEST_RUN_DIR"
+}
+
 # ── 测试：skip_test 设置跳过标记 ──
 test_skip_test() {
     printf '\n== skip_test ==\n'
@@ -275,6 +293,7 @@ main() {
     test_case_tags
     test_case_begin_if
     test_finalize_exit
+    test_exit_on_test_failure
     test_finalize_idempotent
     test_aggregate
     test_junit

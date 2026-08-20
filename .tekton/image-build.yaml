@@ -3,29 +3,35 @@
 # 依赖：仓库根 Dockerfile（Task 10 产物）、lynx/release-matrix.tsv、lynx/compute-tags.sh。
 # 产物：推送到 build-harbor.alauda.cn/asm/docs-runme-tests 的镜像。
 #
-# 触发：push 到 main 或 release-mesh-<x.y> 分支，或在 PR 评论 /image-build。
+# 触发：目前只保留 PR 评论 /image-build 手动触发。
 # docs-runme-tests 自身主干分支是 main（已用 git ls-remote --symref 核实，本地也只有
 # main 分支）——不要与 Dockerfile 里 MESH_DOCS_REF=master 混淆，那是 servicemesh2-docs
 # 这个外部文档仓库自己的默认分支，跟本仓库的主干分支是两回事，不在本文件改动范围内。
 #
 # 【上线前必须人工确认】pipelineRef.params 里 name / version 目前是占位符，不是真实值。
 # 详见下面 pipelineRef 处的注释、文件末尾的退路方案，以及
-# .superpowers/sdd/2026-08-20-dailybuild-lynx-integration/task-11-report.md
-# 「需要人工确认才能上线」一节。
+# docs/superpowers/plans/2026-08-20-dailybuild-lynx-integration.md 顶部的
+# 「执行期修订记录」与 Task 11 一节。
 apiVersion: tekton.dev/v1
 kind: PipelineRun
 metadata:
   name: docs-runme-tests-image-build
   annotations:
+    # push 触发有意暂时关闭：pipelineRef.params.name/version 还是占位符（见上方
+    # 注释），一旦放开 push 触发，本分支合入 main 后下一次 push 到 main 就会创建
+    # 一条解析失败的 PipelineRun，在 git 侧留下持续复现的红 check。
+    # 等拿到 CI/发版团队确认的真实 pipeline name/version、把占位符换掉后，再把
+    # 下面这条 on-cel-expression 加回来即可恢复 push 触发，判断分支用这条原始
+    # 正则（push 到 main 或 release-mesh-<x.y> 分支，且提交信息不含 "ci skip"）：
+    #   pipelinesascode.tekton.dev/on-cel-expression: |-
+    #     (
+    #       event == "push" &&
+    #       !last_commit_title.contains("ci skip") &&
+    #       source_branch.matches("^(main|release-mesh-[0-9]+([.][0-9]+)+)$")
+    #     )
     pipelinesascode.tekton.dev/on-comment: "^(/image-build)$"
     pipelinesascode.tekton.dev/cancel-in-progress: "true"
     pipelinesascode.tekton.dev/max-keep-runs: "10"
-    pipelinesascode.tekton.dev/on-cel-expression: |-
-      (
-        event == "push" &&
-        !last_commit_title.contains("ci skip") &&
-        source_branch.matches("^(main|release-mesh-[0-9]+([.][0-9]+)+)$")
-      )
 spec:
   timeouts:
     pipeline: 2h

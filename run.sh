@@ -21,6 +21,7 @@ source "$FRAMEWORK_DIR/report.sh"
 source "$FRAMEWORK_DIR/acp-auth.sh"
 source "$FRAMEWORK_DIR/kubeconfig.sh"
 source "$FRAMEWORK_DIR/tools.sh"
+source "$FRAMEWORK_DIR/assets.sh"
 
 # 将 bin 目录加入 PATH（runme / violet / istioctl）
 export PATH="$BIN_DIR:$PATH"

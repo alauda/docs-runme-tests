@@ -23,6 +23,8 @@
 #          改写到该仓库的 asm/ 命名空间下（所有镜像由插件预置）。
 #       2. 否则若设置了 REGISTRY_MIRROR_ADDRESS，使用通用镜像加速地址替换。
 #       3. 都未设置时，直接执行原命令。
+#   - YAML 内容经 framework/assets.sh 的 fetch_url_content 获取：命中 lynx/assets-manifest.tsv
+#     的预置资产时读镜像内本地文件（离线环境必需），否则回退联网 curl。
 kubectl_apply_with_mirror() {
     local block_name="$1"
 
@@ -57,8 +59,8 @@ kubectl_apply_with_mirror() {
         docker_io_target="${REGISTRY_MIRROR_ADDRESS}"
         istio_release_target="${REGISTRY_MIRROR_ADDRESS}/istio"
     else
-        # 没有镜像替换策略，直接执行原命令
-        eval "$cmd_content"
+        # 没有镜像替换策略，直接执行原命令（仍把外部 URL 换成预置资产）
+        eval "$(rewrite_urls_to_assets "$cmd_content")"
         return $?
     fi
 
@@ -71,9 +73,9 @@ kubectl_apply_with_mirror() {
         return 1
     fi
 
-    # 下载 YAML 文件，替换镜像地址，然后应用
+    # 取 YAML 内容（命中预置资产则读本地，否则联网 curl），替换镜像地址后应用
     log_info "下载并替换镜像地址: $url"
-    curl -fsSL "$url" \
+    fetch_url_content "$url" \
         | sed "s|docker\.io|${docker_io_target}|g" \
         | sed "s|registry\.istio\.io/release|${istio_release_target}|g" \
         | eval "${cmd_content//-f $url/-f -}"

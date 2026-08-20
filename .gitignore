@@ -5,4 +5,5 @@ package/
 .acp-auth/
 *.tar.gz
 tmp/
+assets/
 *.tgz

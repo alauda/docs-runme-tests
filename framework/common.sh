@@ -852,6 +852,14 @@ _wait_for_moduleinfo_running() {
         log_warn "等待集群插件就绪: ${module_name}@${target_cluster} phase=${phase:-<none>} (${attempt}/${max_retries})"
         [ "$attempt" -lt "$max_retries" ] && sleep "$interval"
     done
+
+    # 超时：把 .status.message 打出来给根因，对所有 ModuleInfo 失败模式都有用
+    # （依赖缺失、镜像拉取失败等平台通常都会写这个字段），不止 verify-only 缺
+    # 前置包这一种。
+    local status_message
+    status_message=$(kubectl get moduleinfo -l "$selector" \
+        -o jsonpath='{.items[0].status.message}' 2>/dev/null || echo "")
+    [ -n "$status_message" ] && log_warn "ModuleInfo 超时未就绪，status.message: $status_message"
     return 1
 }
 
@@ -889,6 +897,16 @@ install_cluster_plugin() {
         return 1
     fi
     shift 3
+
+    # verify-only（package_url 为空）且没有前置包参数时，本函数完全不会校验
+    # 前置 operator（如 metallb 依赖的 metallb-operator）是否已在目标集群预上架——
+    # release-config 未声明该前置包也不会在这里报错，只会在步骤 4 等 ModuleInfo
+    # 变 Running 时白等到超时，且超时信息不含根因。提前预警，把排查方向指对。
+    if [ -z "$package_url" ] && [ $# -eq 0 ]; then
+        log_warn "install_cluster_plugin: verify-only 模式（package_url 为空）且未传入前置插件包参数"
+        log_warn "本函数不会校验前置 operator 是否已在目标集群 ${target_cluster} 预上架"
+        log_warn "若下一步 ModuleInfo 长期不进入 Running，请先确认前置 operator 已上架，而非仅排查网络/证书"
+    fi
 
     local package_version
     package_version=$(_cluster_plugin_package_version "$package_url")

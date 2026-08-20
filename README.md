@@ -307,6 +307,29 @@ cd docs-runme-tests
 >
 > 可选环境变量：`OPERATOR_REENTRY_WAIT_RETRIES` / `OPERATOR_REENTRY_WAIT_INTERVAL` 调整中间态的等待轮次与间隔。逻辑单测见 `framework/tests/install_operator_test.sh`（伪造 kubectl/runme，不依赖集群）。
 
+## 在 lynx / dailybuild 中运行
+
+镜像 `build-harbor.alauda.cn/asm/docs-runme-tests:<tag>`，入口 `command: docs-test`，
+参数 `args: [init|mesh|otel|tracing]`。
+
+| lynx 内置变量 | 映射到框架变量 | 备注 |
+| --- | --- | --- |
+| `$API_URL` | `PLATFORM_ADDRESS` | |
+| `$USERNAME` / `$PASSWORD` | `PLATFORM_USERNAME` / `PLATFORM_PASSWORD` | |
+| `$REGION_NAME` | `SINGLE_CLUSTER_NAME` | 被测集群 |
+| `$GLOBAL_EXTERNAL_IPPOOL` | `METALLB_EXTERNAL_ADDRESSES_JSON` | 按 region 取值，`init` 用它建地址池 |
+| `TEST_RESULT_DIR` | 报告根目录 | 未注入时缺省 `/app/report` |
+| `CASE_TYPE` | Case / DocTest 过滤表达式 | 仅支持 `and` / `not` 合取式 |
+| `$TOKEN` | **忽略** | lynx 不替换它，框架用账号密码经 dex 换 token |
+
+模板里需要写死的变量：`EAST_CLUSTER_NAME`、`WEST_CLUSTER_NAME`、`GLOBAL_CLUSTER_NAME=global`、
+`ENABLE_METALLB`、`USE_MESH_V2_TEST_SUITE_PLUGIN=true`、`IS_DUAL_STACK`、`TRACING_ACP_ES_CLUSTER`、
+`ACP_KUBECONFIG_MODE=direct`、`AUTO_GEN_BOOKINFO_TRAFFIC=true`、`ENABLE_GW_LINUX_KERNEL_COMPAT=false`、
+`RESOURCE_PREFIX`。所有 `PKG_*_URL` **不设置**（verify-only，见上文）。
+
+报告产物：`$TEST_RESULT_DIR/allure-result/` 与 `$TEST_RESULT_DIR/allure-report/`。
+用例粒度为一篇文档的一次执行（DocTest），Case 作为 allure suite 分组。
+
 ## 各项目测试清单
 
 ### mesh（servicemesh2-docs）

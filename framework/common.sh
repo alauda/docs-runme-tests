@@ -1045,13 +1045,16 @@ _cluster_kubeconfig_path() {
 }
 
 # 内联渲染 IPAddressPool + L2Advertisement
-# 用法: _render_external_ip_pool <pool> <namespace> <addr...>
+# 用法: _render_external_ip_pool <pool> <namespace> <owner> <addr...>
 # 说明:
+#   - owner 取 init 或 doctest，写入 label runme-test/owner：
+#     init    —— lynx initials 每集群建一次，长期存在，测试结束不清理
+#     doctest —— 单篇测试脚本自建自清
 #   - spec.avoidBuggyIPs: true；L2Advertisement spec.nodeSelectors: null（按真实环境验证载荷）
 #   - addresses 由地址参数逐行展开（CIDR，如 192.168.139.13/32）
 _render_external_ip_pool() {
-    local pool="$1" namespace="$2"
-    shift 2
+    local pool="$1" namespace="$2" owner="$3"
+    shift 3
     local addresses=("$@")
 
     cat <<EOF
@@ -1060,6 +1063,8 @@ kind: IPAddressPool
 metadata:
   name: ${pool}
   namespace: ${namespace}
+  labels:
+    runme-test/owner: ${owner}
 spec:
   avoidBuggyIPs: true
   addresses:
@@ -1075,6 +1080,8 @@ kind: L2Advertisement
 metadata:
   name: ${pool}
   namespace: ${namespace}
+  labels:
+    runme-test/owner: ${owner}
 spec:
   ipAddressPools:
     - ${pool}
@@ -1083,14 +1090,14 @@ EOF
 }
 
 # 在指定业务集群创建外部 IP 地址池（IPAddressPool + L2Advertisement）
-# 用法: create_external_ip_pool <cluster> <pool> <addr...>
+# 用法: create_external_ip_pool <cluster> <pool> <owner> <addr...>
 create_external_ip_pool() {
-    local cluster="$1" pool="$2"
-    shift 2
+    local cluster="$1" pool="$2" owner="$3"
+    shift 3
     local addresses=("$@")
 
-    if [ -z "$cluster" ] || [ -z "$pool" ] || [ ${#addresses[@]} -eq 0 ]; then
-        log_error "create_external_ip_pool: 缺少参数 (cluster=$cluster, pool=$pool, addresses=${addresses[*]})"
+    if [ -z "$cluster" ] || [ -z "$pool" ] || [ -z "$owner" ] || [ ${#addresses[@]} -eq 0 ]; then
+        log_error "create_external_ip_pool: 缺少参数 (cluster=$cluster, pool=$pool, owner=$owner, addresses=${addresses[*]})"
         return 1
     fi
 
@@ -1100,12 +1107,24 @@ create_external_ip_pool() {
     local KUBECONFIG="$kc"
     export KUBECONFIG
 
-    log_info "创建外部 IP 地址池 $pool 于集群 $cluster (地址: ${addresses[*]})"
-    _render_external_ip_pool "$pool" "$METALLB_NAMESPACE" "${addresses[@]}" | kubectl apply -f - || {
+    log_info "创建外部 IP 地址池 $pool 于集群 $cluster (owner=$owner, 地址: ${addresses[*]})"
+    _render_external_ip_pool "$pool" "$METALLB_NAMESPACE" "$owner" "${addresses[@]}" | kubectl apply -f - || {
         log_error "创建外部 IP 地址池失败: $pool@$cluster"
         return 1
     }
     return 0
+}
+
+# 查询指定集群上外部 IP 地址池的 owner 标签
+# 用法: owner=$(_external_ip_pool_owner <cluster> <pool>)
+# 输出: 池不存在或无标签时输出空串；返回码恒为 0（「没有池」是正常情况）
+_external_ip_pool_owner() {
+    local cluster="$1" pool="$2" kc
+    kc=$(_cluster_kubeconfig_path "$cluster") || return 0
+    local KUBECONFIG="$kc"
+    export KUBECONFIG
+    kubectl -n "$METALLB_NAMESPACE" get ipaddresspool "$pool" \
+        -o jsonpath='{.metadata.labels.runme-test/owner}' 2>/dev/null || true
 }
 
 # 轮询等待 IPAddressPool 可用地址 >= 1（读 .status.availableIPv4 + .status.availableIPv6）
@@ -1168,12 +1187,14 @@ delete_external_ip_pool() {
     return 0
 }
 
-# 为多集群测试在各业务集群创建外部 IP 地址池并等待可用（受 ENABLE_METALLB 门控）
+# 为网关 / 多集群测试在各业务集群创建外部 IP 地址池并等待可用（受 ENABLE_METALLB 门控）
 # 用法: setup_external_ip_pools <cluster>...
 # 说明:
-#   - ENABLE_METALLB != true 时直接 no-op 返回 0（可在编排脚本中无条件调用）
-#   - 地址来源: METALLB_EXTERNAL_ADDRESSES_JSON（JSON 数组，按 cluster 匹配；含 ipv4Addresses，
-#     前向兼容 ipv6Addresses），资源固定命名 $METALLB_EXTERNAL_POOL_NAME（mesh-v2）
+#   - 池已存在（无论谁建的）时直接复用，不再要求 METALLB_EXTERNAL_ADDRESSES_JSON。
+#     dailybuild 正是这条路径：lynx initials 每集群用该 region 自己的
+#     $GLOBAL_EXTERNAL_IPPOOL 建好池（owner=init），三个测试项复用。
+#   - 池不存在时按 METALLB_EXTERNAL_ADDRESSES_JSON 创建，owner 取
+#     ${EXTERNAL_IP_POOL_OWNER:-doctest}（本地手工跑的既有路径）。
 setup_external_ip_pools() {
     [ "${ENABLE_METALLB:-false}" = "true" ] || return 0
 
@@ -1182,24 +1203,33 @@ setup_external_ip_pools() {
         return 1
     fi
 
-    local json="${METALLB_EXTERNAL_ADDRESSES_JSON:-}"
-    if [ -z "$json" ]; then
-        log_error "ENABLE_METALLB=true 但未设置 METALLB_EXTERNAL_ADDRESSES_JSON (多集群测试需要外部地址池)"
-        log_error '示例: METALLB_EXTERNAL_ADDRESSES_JSON='\''[{"cluster":"business-1","ipv4Addresses":["192.168.139.13/32"]}]'\'''
-        return 1
-    fi
-    if ! printf '%s' "$json" | jq empty 2>/dev/null; then
-        log_error "METALLB_EXTERNAL_ADDRESSES_JSON 不是有效 JSON"
-        return 1
-    fi
-
     local pool="$METALLB_EXTERNAL_POOL_NAME"
-    local cluster
+    local owner="${EXTERNAL_IP_POOL_OWNER:-doctest}"
+    local json="${METALLB_EXTERNAL_ADDRESSES_JSON:-}"
+    local cluster existing
+
     for cluster in "$@"; do
+        existing=$(_external_ip_pool_owner "$cluster" "$pool")
+        if [ -n "$existing" ]; then
+            log_info "外部 IP 地址池 $pool 已存在于集群 $cluster (owner=$existing)，直接复用"
+            _wait_ipaddresspool_available "$cluster" "$pool" || return 1
+            continue
+        fi
+
+        if [ -z "$json" ]; then
+            log_error "集群 $cluster 上不存在外部 IP 地址池 $pool，且未设置 METALLB_EXTERNAL_ADDRESSES_JSON"
+            log_error '示例: METALLB_EXTERNAL_ADDRESSES_JSON='\''[{"cluster":"business-1","ipv4Addresses":["192.168.139.13/32"]}]'\'''
+            log_error "dailybuild 场景应由 initials 的 docs-test init 预先建好该池"
+            return 1
+        fi
+        if ! printf '%s' "$json" | jq empty 2>/dev/null; then
+            log_error "METALLB_EXTERNAL_ADDRESSES_JSON 不是有效 JSON"
+            return 1
+        fi
+
         # 取该集群地址（合并 ipv4Addresses 与 ipv6Addresses，后者缺省为空数组）
         # 用 while-read 逐行收集（兼容 macOS 自带 Bash 3.2，其无 mapfile/readarray）
-        local addresses=()
-        local addr_line
+        local addresses=() addr_line
         while IFS= read -r addr_line; do
             if [ -n "$addr_line" ]; then
                 addresses+=("$addr_line")
@@ -1210,7 +1240,7 @@ setup_external_ip_pools() {
             log_error "METALLB_EXTERNAL_ADDRESSES_JSON 中集群 $cluster 无地址配置 (需含 cluster=$cluster 的条目及 ipv4Addresses)"
             return 1
         fi
-        create_external_ip_pool "$cluster" "$pool" "${addresses[@]}" || return 1
+        create_external_ip_pool "$cluster" "$pool" "$owner" "${addresses[@]}" || return 1
         _wait_ipaddresspool_available "$cluster" "$pool" || return 1
     done
     log_success "外部 IP 地址池已就绪: 集群 $* (pool=$pool)"
@@ -1228,8 +1258,13 @@ teardown_external_ip_pools() {
     fi
 
     local pool="$METALLB_EXTERNAL_POOL_NAME"
-    local cluster rc=0
+    local cluster owner rc=0
     for cluster in "$@"; do
+        owner=$(_external_ip_pool_owner "$cluster" "$pool")
+        if [ "$owner" = "init" ]; then
+            log_info "外部 IP 地址池 $pool@$cluster 由 init 创建（owner=init），跳过清理"
+            continue
+        fi
         delete_external_ip_pool "$cluster" "$pool" || rc=1
     done
     [ "$rc" -eq 0 ] && log_success "外部 IP 地址池已清理: 集群 $* (pool=$pool)"

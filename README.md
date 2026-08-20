@@ -207,6 +207,11 @@ export TRACING_TEST_SPM=true
 | tracing | 无（同上） | ES / OpenSearch 存储后端配置同原表；Jaeger v2 集群插件需 `PKG_JAEGER_CLUSTER_PLUGIN_URL` 或平台已预上架 |
 
 > 注：`METALLB_EXTERNAL_ADDRESSES_JSON`（外部 IP 地址池地址，JSON 数组）在 `ENABLE_METALLB=true` 时由 `setup_external_ip_pools` 创建地址池时校验（不在 `project_check_env`）：多集群 Case 6/7 需含 `cluster=$EAST_CLUSTER_NAME`/`$WEST_CLUSTER_NAME` 条目；单集群入口网关 LoadBalancer 测试（Case 3/5 的 exposing-\* 文档）需含 `cluster=$SINGLE_CLUSTER_NAME` 条目。
+>
+> 地址池所有权：`init` 入口（`lynx/entrypoint.sh` 的 `docs-test init`）创建的池带
+> `runme-test/owner=init` 标签，长期存在、测试结束不清理；单篇测试脚本自建的池带
+> `owner=doctest`，用完即删。池已存在时 `setup_external_ip_pools` 直接复用，
+> 不再要求 `METALLB_EXTERNAL_ADDRESSES_JSON`。
 
 ### 4. ACP API Token 自动获取
 

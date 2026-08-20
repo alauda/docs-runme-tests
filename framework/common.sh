@@ -881,6 +881,13 @@ install_cluster_plugin() {
         log_error "用法: install_cluster_plugin <module_name> <target_cluster> <package_url|\"\"> [prereq_package_url...]"
         return 1
     fi
+    # package_url 允许是空串（verify-only），但必须显式传入：
+    # 否则 shift 3 会失败且不移位，module_name/target_cluster 会被当成前置插件包 URL
+    if [ $# -lt 3 ]; then
+        log_error "install_cluster_plugin: 缺少 package_url 参数（可为空串 \"\"，但必须显式传入）"
+        log_error "用法: install_cluster_plugin <module_name> <target_cluster> <package_url|\"\"> [prereq_package_url...]"
+        return 1
+    fi
     shift 3
 
     local package_version

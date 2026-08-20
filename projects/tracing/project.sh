@@ -138,10 +138,8 @@ project_check_env() {
         log_info "未提供 PKG_JAEGER_CLUSTER_PLUGIN_URL，Jaeger v2 集群插件进入 verify-only 模式（要求平台已预上架）"
     fi
 
-    # 启用 mesh-v2-test-suite 集群插件时需要其插件包地址
     if [ "${USE_MESH_V2_TEST_SUITE_PLUGIN:-false}" = "true" ] && [ -z "$PKG_MESH_V2_TEST_SUITE_URL" ]; then
-        log_error "USE_MESH_V2_TEST_SUITE_PLUGIN=true 但缺少 PKG_MESH_V2_TEST_SUITE_URL"
-        return 1
+        log_info "未提供 PKG_MESH_V2_TEST_SUITE_URL，mesh-v2-test-suite 进入 verify-only 模式（要求平台已预上架）"
     fi
 
     # 存储后端配置为软依赖，分别由各安装测试脚本自检（缺失时对应测试以 SKIPPED 退出）：

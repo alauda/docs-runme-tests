@@ -94,19 +94,23 @@ test_parse_csv_still_works() {
 # kubeconfig）失败即可。
 test_jaeger_outer_gate_not_blocking() {
     printf '\n== tracing_install_jaeger_plugin 外层不再硬卡空 URL ==\n'
-    local out
+    local out kc_dir
+    # 空的 KUBECONFIG_DIR：确保它必然在「找不到 Global kubeconfig」这一步失败，
+    # 从而证明它已经越过了 PKG_JAEGER_CLUSTER_PLUGIN_URL 那道门槛。
+    # 在子 shell 外创建，便于用例结束后清理（子 shell 内的局部变量赋值对外层不可见，
+    # 但子 shell 会继承外层已存在的变量，故此处先建目录、下面直接在子 shell 里引用）。
+    kc_dir="$(mktemp -d)"
     out=$(
         # shellcheck disable=SC1090
         . "$FRAMEWORK_ROOT/projects/tracing/jaeger-plugin.sh"
-        # 空的 KUBECONFIG_DIR：确保它必然在「找不到 Global kubeconfig」这一步失败，
-        # 从而证明它已经越过了 PKG_JAEGER_CLUSTER_PLUGIN_URL 那道门槛
-        KUBECONFIG_DIR="$(mktemp -d)"
+        KUBECONFIG_DIR="$kc_dir"
         PKG_JAEGER_CLUSTER_PLUGIN_URL=""
         tracing_install_jaeger_plugin install-tracing-es some-cluster 2>&1
     )
     check_eq "不再因缺少 PKG_JAEGER_CLUSTER_PLUGIN_URL 而失败" \
         "$(printf '%s' "$out" | grep -c '缺少环境变量 PKG_JAEGER_CLUSTER_PLUGIN_URL')" "0"
     check_contains "越过门槛后停在缺 Global kubeconfig" "$out" "未找到 Global kubeconfig"
+    rm -rf "$kc_dir"
 }
 
 main() {

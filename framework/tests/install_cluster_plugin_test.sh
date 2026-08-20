@@ -200,6 +200,34 @@ test_preserves_prerequisite_packages() {
     check_contains "前置包上架到业务集群" "$(cat "$FAKE_LOG")" "upload_package business-1 $prereq_url"
 }
 
+# verify-only 集成用例（M1-1）：空 URL 时，若目标插件已有 ModuleConfig（平台已预上架），
+# 应跳过 push（不调用 download_package / upload_package），并继续走到创建 ModuleInfo。
+test_verify_only_skips_push_and_creates_moduleinfo() {
+    printf '\n== verify-only：ModuleConfig 已存在时跳过 push，仍走到创建 ModuleInfo ==\n'
+    new_case
+    # new_case 默认 FAKE_MODULECONFIG_VERSIONS="v1.0.4"，模拟平台已预上架
+    run_install_with_url ""
+    check_eq "返回码 0" "$LAST_RC" "0"
+    check_not_contains "未调用 download_package" "$(cat "$FAKE_LOG")" "download_package"
+    check_not_contains "未调用 upload_package" "$(cat "$FAKE_LOG")" "upload_package"
+    check_contains "提示已上架跳过 push" "$LAST_OUTPUT" "已上架（ModuleConfig 存在），跳过 push"
+    check_contains "走到创建 ModuleInfo" "$(cat "$FAKE_APPLY")" "kind: ModuleInfo"
+}
+
+# verify-only 集成用例（M1-2）：空 URL 且目标插件没有 ModuleConfig（平台未预上架）时，
+# 精确报错（含「未上架」与「verify-only」字样），且不调用 download_package / upload_package。
+test_verify_only_errors_when_not_published() {
+    printf '\n== verify-only：目标插件未上架（无 ModuleConfig）时精确报错，不下载不上架 ==\n'
+    new_case
+    FAKE_MODULECONFIG_VERSIONS=""
+    run_install_with_url ""
+    check_eq "返回码 1" "$LAST_RC" "1"
+    check_contains "报错含未上架" "$LAST_OUTPUT" "未上架"
+    check_contains "报错含 verify-only" "$LAST_OUTPUT" "verify-only"
+    check_not_contains "未调用 download_package" "$(cat "$FAKE_LOG")" "download_package"
+    check_not_contains "未调用 upload_package" "$(cat "$FAKE_LOG")" "upload_package"
+}
+
 test_parses_optional_version_suffix
 test_resolve_rejects_missing_target_version
 test_uploads_and_installs_url_version
@@ -207,6 +235,8 @@ test_skips_push_when_target_version_exists
 test_installs_complete_suffixed_version
 test_rejects_running_different_version
 test_preserves_prerequisite_packages
+test_verify_only_skips_push_and_creates_moduleinfo
+test_verify_only_errors_when_not_published
 
 printf '\n==================== 结果 ====================\n'
 printf '通过: %d  失败: %d\n' "$T_PASS" "$T_FAIL"

@@ -167,9 +167,13 @@ case_end_fatal() {
 }
 
 # ── case_skip <case_id> <case_name> <reason> ──
+# ── case_skip <case_id> <case_name> <reason> [category] ──
+# category: expected（默认，预期不测试）| env（环境不支持）
 case_skip() {
+    local category="${4:-expected}"
     _report_append "$(jq -nc \
-        --arg type "case_skip" --arg case_id "$1" --arg case_name "$2" --arg skip_reason "$3" \
+        --arg type "case_skip" --arg case_id "$1" --arg case_name "$2" \
+        --arg skip_reason "[${category}] $3" \
         '{type:$type,case_id:$case_id,case_name:$case_name,skip_reason:$skip_reason}')"
     log_warn "Case $1: $2 —— SKIPPED（$3）"
 }

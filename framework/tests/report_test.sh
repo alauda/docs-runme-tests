@@ -69,7 +69,7 @@ test_case_skip() {
     case_skip 2 "双栈网格安装" "IS_DUAL_STACK != true" >/dev/null
     local line; line="$(cat "$RUNME_TEST_RUN_DIR/results.jsonl")"
     check_contains "type=case_skip" "$line" '"type":"case_skip"'
-    check_contains "reason" "$line" '"skip_reason":"IS_DUAL_STACK != true"'
+    check_contains "reason" "$line" '"skip_reason":"[expected] IS_DUAL_STACK != true"'
     check_contains "case_id=2" "$line" '"case_id":"2"'
     rm -rf "$RUNME_TEST_RUN_DIR"
 }
@@ -124,7 +124,38 @@ test_skip_test() {
     __TEST_SKIPPED=0; __TEST_SKIP_REASON=""
     skip_test "缺少 FOO 环境变量" >/dev/null 2>&1
     check_eq "标记置位" "$__TEST_SKIPPED" "1"
-    check_eq "原因记录" "$__TEST_SKIP_REASON" "缺少 FOO 环境变量"
+    check_eq "原因记录" "$__TEST_SKIP_REASON" "[expected] 缺少 FOO 环境变量"
+}
+
+# ── 测试：skip 二分类前缀 ──
+test_skip_categories() {
+    printf '\n== skip 二分类 ==\n'
+    __TEST_SKIPPED=0; __TEST_SKIP_REASON=""
+    skip_test_env "集群非双栈" >/dev/null
+    check_eq "env 前缀" "$__TEST_SKIP_REASON" "[env] 集群非双栈"
+    check_eq "env 置位" "$__TEST_SKIPPED" "1"
+
+    __TEST_SKIPPED=0; __TEST_SKIP_REASON=""
+    skip_test_expected "CASE_TYPE 未选中" >/dev/null
+    check_eq "expected 前缀" "$__TEST_SKIP_REASON" "[expected] CASE_TYPE 未选中"
+
+    __TEST_SKIPPED=0; __TEST_SKIP_REASON=""
+    skip_test "历史调用" >/dev/null
+    check_eq "skip_test 别名走 expected" "$__TEST_SKIP_REASON" "[expected] 历史调用"
+}
+
+# ── 测试：case_skip 分类参数 ──
+test_case_skip_category() {
+    printf '\n== case_skip 分类 ==\n'
+    new_sandbox
+    case_skip 2 "双栈" "IS_DUAL_STACK != true" env >/dev/null
+    check_contains "指定 env 分类" "$(cat "$RUNME_TEST_RUN_DIR/results.jsonl")" '"skip_reason":"[env] IS_DUAL_STACK != true"'
+    rm -rf "$RUNME_TEST_RUN_DIR"
+
+    new_sandbox
+    case_skip 8 "更新策略" "未选中" >/dev/null
+    check_contains "缺省 expected 分类" "$(cat "$RUNME_TEST_RUN_DIR/results.jsonl")" '"skip_reason":"[expected] 未选中"'
+    rm -rf "$RUNME_TEST_RUN_DIR"
 }
 
 # ── 测试：三层聚合 summary.json ──
@@ -236,6 +267,8 @@ test_finalize_idempotent() {
 
 main() {
     test_skip_test
+    test_skip_categories
+    test_case_skip_category
     test_name_parse
     test_record_doctest
     test_case_skip

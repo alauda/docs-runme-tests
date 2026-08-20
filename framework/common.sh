@@ -100,13 +100,28 @@ parse_csv_name_from_package() {
     parse_artifact_version_from_package "$1"
 }
 
-# 文档测试脚本主动声明「跳过」：设置标记后 return 0；
-# 引擎 run.sh 检测 __TEST_SKIPPED 后将该 DocTest 记为 status=skipped。
-skip_test() {
+# 文档测试脚本主动声明「跳过」。分两类（自动化规范第 8 条）：
+#   skip_test_env      —— 环境 / 版本 / 依赖不具备，报告里按成功处理
+#   skip_test_expected —— 产品版本、架构或测试选择明确不执行
+# 两者都设置 __TEST_SKIPPED 标记后 return 0；引擎 run.sh 据此把 DocTest 记为 skipped。
+# 前缀 [env] / [expected] 供 allure categories 分类使用，勿改。
+skip_test_env() {
     __TEST_SKIPPED=1
-    __TEST_SKIP_REASON="$1"
-    log_warn "SKIPPED: $1"
+    __TEST_SKIP_REASON="[env] $1"
+    log_warn "SKIPPED（环境不支持）: $1"
     return 0
+}
+
+skip_test_expected() {
+    __TEST_SKIPPED=1
+    __TEST_SKIP_REASON="[expected] $1"
+    log_warn "SKIPPED（预期不测试）: $1"
+    return 0
+}
+
+# 历史别名：语义等同 skip_test_expected，逐篇迁移到语义正确的那个后可移除
+skip_test() {
+    skip_test_expected "$1"
 }
 
 # Wait for resource to be created

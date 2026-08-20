@@ -5,6 +5,7 @@ package
 tmp
 assets
 bin
+.superpowers
 docs/superpowers
 *.tgz
 *.tar.gz

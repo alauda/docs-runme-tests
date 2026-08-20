@@ -1,0 +1,10 @@
+.git
+.kubeconfig
+.acp-auth
+package
+tmp
+assets
+bin
+docs/superpowers
+*.tgz
+*.tar.gz

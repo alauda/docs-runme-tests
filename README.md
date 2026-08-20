@@ -307,6 +307,27 @@ cd docs-runme-tests
 >
 > 可选环境变量：`OPERATOR_REENTRY_WAIT_RETRIES` / `OPERATOR_REENTRY_WAIT_INTERVAL` 调整中间态的等待轮次与间隔。逻辑单测见 `framework/tests/install_operator_test.sh`（伪造 kubectl/runme，不依赖集群）。
 
+## 构建测试镜像
+
+```bash
+docker build \
+  --build-arg MESH_DOCS_REF=master \
+  --build-arg OTEL_DOCS_REF=main \
+  --build-arg TRACING_DOCS_REF=main \
+  --build-arg IMAGE_TAG=local-dev \
+  -t docs-runme-tests:local-dev .
+```
+
+镜像自包含：三个文档仓库按 ref 浅克隆进 `/app/`，`runme` / `violet` / `istioctl` 预置到
+`bin/`（`istioctl` 版本从 mesh 文档的 runme 块推导，与 `install_istioctl` 的校验一致），
+文档引用的 17 个外部 sample YAML 按 `lynx/assets-manifest.tsv` 落到 `assets/`。
+构建期会跑 `lynx/check-manifest.sh` 与 `lynx/check-case-ids.sh`，任一不通过即构建失败。
+
+tag 规则：`main` → `latest` + `main-<短 commit>`；`release-mesh-2.x` → 按
+`lynx/release-matrix.tsv` 映射到 `release-<ACP 大版本>` + `<branch>-<短 commit>`。
+
+文档仓库若为私有仓库，构建时加 `--build-arg GIT_TOKEN=<只读 token>`。
+
 ## 在 lynx / dailybuild 中运行
 
 镜像 `build-harbor.alauda.cn/asm/docs-runme-tests:<tag>`，入口 `command: docs-test`，

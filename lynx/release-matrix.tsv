@@ -1,0 +1,4 @@
+# docs-runme-tests 分支 → ACP 大版本，供构建流水线决定 release tag
+# main 不在此表内，固定出 latest
+release-mesh-2.2	4.5
+release-mesh-2.1	4.4

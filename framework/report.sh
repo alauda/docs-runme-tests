@@ -342,12 +342,13 @@ report_finalize() {
     _report_write_junit "$summary" > "$RUNME_TEST_RUN_DIR/junit.xml"
 
     # allure 报告：仅 TEST_RESULT_DIR 非空时生成（即镜像 / lynx 场景）。
-    # 生成失败属于框架级失败，必须非 0 退出，否则 lynx 只会拿到一份空报告。
+    # 生成失败属于框架级失败，必须非 0 退出；但先只记标记、不立即 return —— 要让下面的
+    # 终端摘要照常打印，不能让用户在失败时反而看不到 Case / 文档测试的通过率统计。
+    local allure_failed=0
     if [ -n "${TEST_RESULT_DIR:-}" ] && declare -F allure_finalize >/dev/null 2>&1; then
         if ! allure_finalize "$results" "$TEST_RESULT_DIR"; then
             log_error "allure 报告生成失败"
-            __REPORT_FINALIZE_RC=1
-            return 1
+            allure_failed=1
         fi
     fi
 
@@ -358,10 +359,15 @@ report_finalize() {
     _report_print_terminal "$summary"
     echo "  报告目录: $RUNME_TEST_RUN_DIR"
 
+    # allure 生成失败是框架级失败，不受 EXIT_ON_TEST_FAILURE 影响，始终非 0 退出。
+    if [ "$allure_failed" -eq 1 ]; then
+        __REPORT_FINALIZE_RC=1
+        return 1
+    fi
+
     if [ "$result" = "failed" ]; then
         # EXIT_ON_TEST_FAILURE=false（lynx 场景）：用例失败不改变退出码，
         # 结果完全由 allure 报告承载，避免 lynx 把「测试有失败」误判成「任务 Error」。
-        # 框架级失败（上面的 allure 生成失败等）不受此开关影响，始终非 0。
         if [ "${EXIT_ON_TEST_FAILURE:-true}" = "false" ]; then
             log_warn "存在失败用例，但 EXIT_ON_TEST_FAILURE=false，按成功退出（结果以 allure 报告为准）"
             __REPORT_FINALIZE_RC=0

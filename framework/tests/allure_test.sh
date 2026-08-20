@@ -62,6 +62,32 @@ test_emit_results() {
     rm -rf "$dir"
 }
 
+# 整 Case 被 case_skip（没有任何伴随 doctest）时，allure_emit_results 必须为它
+# 补发一条占位结果，否则这个 Case 在 allure 报告里会直接消失（而不是显示为 skipped）
+test_emit_results_orphan_case() {
+    printf '\n== allure_emit_results 整 Case 无 doctest 时补占位 ==\n'
+    local dir; dir="$(mktemp -d)"
+    cat > "$dir/results.jsonl" <<'EOF'
+{"type":"doctest","project":"mesh","file":"install-mesh","script":"runme-test_install-mesh.sh","case_id":"3","case_name":"单网格","phase":"test","status":"passed","skip_reason":"","fail_reason":"","start_ts":100,"end_ts":160,"duration_s":60}
+{"type":"case","case_id":"3","case_name":"单网格","status":"passed","tags":"smoke","duration_s":60}
+{"type":"case_skip","case_id":"6","case_name":"多集群自动升级","skip_reason":"[env] 非多集群环境"}
+EOF
+    allure_emit_results "$dir/results.jsonl" "$dir/allure-result"
+
+    check_eq "产出 2 个结果文件（1 doctest + 1 占位）" \
+        "$(find "$dir/allure-result" -name '*-result.json' | wc -l | tr -d ' ')" "2"
+
+    local merged; merged="$(cat "$dir"/allure-result/*-result.json)"
+    check_contains "占位用例状态 skipped"    "$merged" '"status": "skipped"'
+    check_contains "占位原因带 env 前缀"      "$merged" '"message": "[env] 非多集群环境"'
+    check_contains "占位 suite 标签"          "$merged" '"value": "Case 6: 多集群自动升级"'
+    check_eq "有 doctest 的 Case 不重复补占位" \
+        "$(printf '%s' "$merged" | grep -c '"fullName": "mesh/install-mesh"')" "1"
+    check_eq "占位仅产出一次"                 \
+        "$(printf '%s' "$merged" | grep -c '"fullName": "case/6"')" "1"
+    rm -rf "$dir"
+}
+
 test_emit_broken() {
     printf '\n== allure_emit_broken ==\n'
     local dir; dir="$(mktemp -d)"
@@ -104,6 +130,7 @@ test_generate_missing_cli() {
 
 main() {
     test_emit_results
+    test_emit_results_orphan_case
     test_emit_broken
     test_environment_and_categories
     test_generate_missing_cli

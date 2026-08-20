@@ -71,6 +71,52 @@ allure_emit_results() {
                 )
               }' > "$outdir/${uuid}-result.json" || return 1
     done < "$results"
+
+    # 补发「整 Case 无任何 doctest」的占位结果：case / case_skip 记录里出现过、
+    # 但没有任何 doctest 行引用其 case_id 的 Case（典型场景：按 CASE_TYPE 门控整体
+    # 未命中而 case_skip 的 Case，也覆盖零 doctest 的纯前置/收尾 Case）。逻辑镜像
+    # framework/report.sh 的 _report_write_junit 在 ($dts|length)==0 时的 fallback 分支——
+    # 否则这类 Case 在 allure 报告里会直接消失，而不是显示为 skipped。
+    local orphans
+    orphans=$(jq -sc '
+        . as $rows
+        | ([$rows[] | select(.type=="doctest") | .case_id]) as $used
+        | $rows[] | select(.type=="case" or .type=="case_skip")
+                  | select(.case_id as $cid | ($used | index($cid)) == null)
+                  | {case_id, case_name,
+                     status: (if .type=="case_skip" then "skipped" else .status end),
+                     skip_reason: (.skip_reason // ""),
+                     tags: (.tags // "")}
+        ' "$results") || return 1
+
+    local orow now
+    while IFS= read -r orow; do
+        [ -n "$orow" ] || continue
+        uuid=$(_allure_uuid)
+        now=$(( $(date +%s) * 1000 ))
+        printf '%s' "$orow" | jq \
+            --arg uuid "$uuid" --arg project "${RUNME_TEST_PROJECT:-unknown}" --argjson now "$now" '
+            . as $c
+            | {
+                uuid: $uuid,
+                name: "Case \($c.case_id): \($c.case_name)",
+                fullName: "case/\($c.case_id)",
+                historyId: "case/\($c.case_id)",
+                status: $c.status,
+                statusDetails: { message: $c.skip_reason },
+                start: $now,
+                stop:  $now,
+                labels: (
+                    [ {name: "suite",    value: "Case \($c.case_id): \($c.case_name)"},
+                      {name: "feature",  value: $project},
+                      {name: "severity", value: "normal"} ]
+                    + ($c.tags | split(" ") | map(select(length > 0)) | map({name: "tag", value: .}))
+                )
+              }' > "$outdir/${uuid}-result.json" || return 1
+    done <<EOF
+$orphans
+EOF
+
     return 0
 }
 

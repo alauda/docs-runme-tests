@@ -349,12 +349,26 @@ _operator_reentry_probe() {
     return 1
 }
 
+# verify-only 模式下从 PackageManifest 反查目标 CSV 名（不依赖插件包 URL）
+# 用法: csv=$(_operator_csv_from_packagemanifest <operator_name>) || return 1
+# NOTE: 依赖调用方已切换到正确的 kubectl context
+_operator_csv_from_packagemanifest() {
+    local operator_name="$1" pm_json csv
+    pm_json=$(kubectl get packagemanifest "$operator_name" -o json 2>/dev/null) || return 1
+    [ -n "$pm_json" ] || return 1
+    csv=$(printf '%s' "$pm_json" | jq -r '
+        .status as $s | $s.channels[]? | select(.name == $s.defaultChannel) | .currentCSV // empty')
+    [ -n "$csv" ] || return 1
+    printf '%s' "$csv"
+}
+
 # 通用 operator 安装函数
-# 用法: install_operator <operator_name> <namespace> <package_url> <runme_prefix>
+# 用法: install_operator <operator_name> <namespace> <package_url|""> <runme_prefix>
 # 参数:
 #   operator_name  - operator 名称 (如 servicemesh-operator2, kiali-operator)
 #   namespace      - 安装的 namespace (如 sail-operator, kiali-operator)
-#   package_url    - 插件包 URL (用于解析 CSV 名称)
+#   package_url    - 插件包 URL (用于解析 CSV 名称)；留空即 verify-only —— 插件由平台
+#                    (dailybuild) 预上架，改为从 PackageManifest 反查目标 CSV 名
 #   runme_prefix   - runme block 前缀 (如 install-mesh, install-kiali)
 # NOTE: 调用该函数前请确保已切换到正确的 kubectl context
 install_operator() {
@@ -363,10 +377,10 @@ install_operator() {
     local package_url="$3"
     local runme_prefix="$4"
 
-    # 参数校验
-    if [ -z "$operator_name" ] || [ -z "$namespace" ] || [ -z "$package_url" ] || [ -z "$runme_prefix" ]; then
+    # 参数校验（package_url 允许为空 —— 空即 verify-only：包由平台预上架）
+    if [ -z "$operator_name" ] || [ -z "$namespace" ] || [ -z "$runme_prefix" ]; then
         log_error "install_operator: 缺少必要参数"
-        log_error "用法: install_operator <operator_name> <namespace> <package_url> <runme_prefix>"
+        log_error "用法: install_operator <operator_name> <namespace> <package_url|\"\"> <runme_prefix>"
         return 1
     fi
 
@@ -375,7 +389,24 @@ install_operator() {
     log_info "=========================================="
 
     local csv_name
-    csv_name=$(parse_csv_name_from_package "$package_url")
+    if [ -n "$package_url" ]; then
+        csv_name=$(parse_csv_name_from_package "$package_url")
+    else
+        # verify-only：包由 dailybuild 预上架，CSV 名从 PackageManifest 反查
+        log_info "未提供插件包地址，进入 verify-only 模式：从 PackageManifest 解析 $operator_name"
+        if ! retry_command "kubectl get packagemanifest $operator_name >/dev/null 2>&1" 20 5; then
+            log_error "未找到 PackageManifest: $operator_name"
+            log_error "verify-only 模式要求该插件已上架到当前集群。"
+            log_error "- dailybuild：确认 release-config 的 Release YAML 已在 l5_plugin_packages 声明该包并指定该集群"
+            log_error "- 本地：export 对应的 PKG_*_URL 让框架自行下载上架"
+            return 1
+        fi
+        csv_name=$(_operator_csv_from_packagemanifest "$operator_name") || {
+            log_error "无法从 PackageManifest $operator_name 解析 defaultChannel 的 currentCSV"
+            return 1
+        }
+        log_success "verify-only 目标 CSV: $csv_name"
+    fi
 
     # 重入探测：已安装则跳过，未安装才走完整安装流程（见 _operator_reentry_probe）
     local probe_rc=0
@@ -825,12 +856,14 @@ _wait_for_moduleinfo_running() {
 }
 
 # 通用集群插件安装函数（在 Global 集群上架 ACP 集群插件，并安装到目标业务集群）
-# 用法: install_cluster_plugin <module_name> <target_cluster> <package_url> [prereq_package_url...]
+# 用法: install_cluster_plugin <module_name> <target_cluster> <package_url|""> [prereq_package_url...]
 # 参数:
 #   module_name         - 集群插件名（ModulePlugin 名，如 multus / metallb / mesh-v2-test-suite）
 #   target_cluster      - 插件落地的目标集群（写入 ModuleInfo 的 cpaas.io/cluster-name）
-#   package_url         - 上架并安装的插件包 URL
-#   prereq_package_url  - 可选，仅上架不安装的前置插件包（如 metallb 需要 metallb-operator）
+#   package_url         - 上架并安装的插件包 URL；留空即 verify-only —— 插件由平台预上架，
+#                         本函数只校验已上架并反查目标版本，不下载不上架
+#   prereq_package_url  - 可选，仅上架不安装的前置插件包（如 metallb 需要 metallb-operator）；
+#                         verify-only 下留空同样跳过
 # 说明:
 #   - 集群插件查询、创建 ModuleInfo、主插件包上架均针对 Global 集群（ModulePlugin/ModuleConfig/ModuleInfo 仅存于 Global）
 #   - 前置 operator 包（prereq_package_url）上架到目标业务集群（与其他 operator 一致）
@@ -843,9 +876,9 @@ install_cluster_plugin() {
     local target_cluster="$2"
     local package_url="$3"
 
-    if [ -z "$module_name" ] || [ -z "$target_cluster" ] || [ -z "$package_url" ]; then
+    if [ -z "$module_name" ] || [ -z "$target_cluster" ]; then
         log_error "install_cluster_plugin: 缺少必要参数"
-        log_error "用法: install_cluster_plugin <module_name> <target_cluster> <package_url> [prereq_package_url...]"
+        log_error "用法: install_cluster_plugin <module_name> <target_cluster> <package_url|\"\"> [prereq_package_url...]"
         return 1
     fi
     shift 3
@@ -890,13 +923,14 @@ install_cluster_plugin() {
         -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
 
     # 1. 上架插件包（每次未就绪时都执行，确保依赖就位；violet 对已存在的包/镜像会自动跳过）。
-    #    主插件包到 Global 集群，前置 operator 包到目标业务集群。
-    #    即使 ModuleInfo 已存在但未就绪（如卡在 Processing），也重新确保前置 operator 已上架，
-    #    使此前因依赖缺失而卡住的安装能够自愈。
+    #    package_url 为空即 verify-only：包由平台预上架，本函数只校验、不下载不上架。
     log_info "步骤 1: 上架插件包"
     local pkg
-    download_package "$package_url" || return 1
+    if [ -n "$package_url" ]; then
+        download_package "$package_url" || return 1
+    fi
     for pkg in "$@"; do
+        [ -n "$pkg" ] || continue
         download_package "$pkg" || return 1
     done
 
@@ -905,13 +939,20 @@ install_cluster_plugin() {
         log_info "插件 $module_name 目标版本 $package_version 已上架（ModuleConfig 存在），跳过 push"
     elif [ -z "$package_version" ] && \
         kubectl get moduleconfigs -l "cpaas.io/module-name=${module_name}" -o name 2>/dev/null | grep -q .; then
-        log_info "插件 $module_name 已上架（包名无法解析版本且 ModuleConfig 存在），跳过 push"
+        log_info "插件 $module_name 已上架（ModuleConfig 存在），跳过 push"
+    elif [ -z "$package_url" ]; then
+        log_error "集群插件 $module_name 未上架到 Global 集群 ${global_cluster}，且未提供插件包地址（verify-only 模式）"
+        log_error "- dailybuild：确认 release-config 的 Release YAML 已声明该插件包并指定该集群"
+        log_error "- 本地：export 对应的 PKG_*_URL 让框架自行下载上架"
+        return 1
     else
         upload_package "$global_cluster" "$package_url" || return 1
     fi
 
     # 前置包：上架到目标业务集群（与其他 operator 一致，仅上架不安装、不创建 ModuleInfo）
+    # verify-only 下前置包为空——若平台也没预上架，后续 ModuleInfo 会以依赖缺失报错。
     for pkg in "$@"; do
+        [ -n "$pkg" ] || continue
         log_info "上架前置插件包到业务集群 $target_cluster (仅上架不安装): $(basename "$pkg")"
         upload_package "$target_cluster" "$pkg" || return 1
     done

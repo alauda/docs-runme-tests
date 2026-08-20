@@ -8,16 +8,13 @@
 # ==============================================================================
 
 # 校验 otel 项目专属环境变量
+# 注：PKG_*_URL 为可选，为空即 verify-only（插件包由平台预上架）。
 project_check_env() {
     if [ -z "$PKG_OPENTELEMETRY_OPERATOR2_URL" ]; then
-        log_error "otel 项目缺少必要的环境变量: PKG_OPENTELEMETRY_OPERATOR2_URL"
-        return 1
+        log_info "未提供 PKG_OPENTELEMETRY_OPERATOR2_URL，OTel Operator 进入 verify-only 模式（要求平台已预上架）"
     fi
-
-    # 启用 mesh-v2-test-suite 集群插件（java-instrumentation 示例依赖）时需要其插件包地址
     if [ "${USE_MESH_V2_TEST_SUITE_PLUGIN:-false}" = "true" ] && [ -z "$PKG_MESH_V2_TEST_SUITE_URL" ]; then
-        log_error "USE_MESH_V2_TEST_SUITE_PLUGIN=true 但缺少 PKG_MESH_V2_TEST_SUITE_URL"
-        return 1
+        log_info "未提供 PKG_MESH_V2_TEST_SUITE_URL，mesh-v2-test-suite 进入 verify-only 模式（要求平台已预上架）"
     fi
     return 0
 }
@@ -40,14 +37,19 @@ project_init() {
     # kubeconfig fingerprint 失配触发重拉。
     ensure_kubeconfig "${clusters[@]}" "$global_cluster" || return 1
 
-    # 下载并上传 OTel Operator 插件包（install_operator 依赖其 PackageManifest 存在）
-    download_package "$PKG_OPENTELEMETRY_OPERATOR2_URL" || return 1
+    # 下载并上传 OTel Operator 插件包（install_operator 依赖其 PackageManifest 存在）。
+    # 地址为空即 verify-only：跳过，由平台预上架。
     local cluster
-    for cluster in "${clusters[@]}"; do
-        if ! check_package_uploaded "$cluster" "$PKG_OPENTELEMETRY_OPERATOR2_URL"; then
-            upload_package "$cluster" "$PKG_OPENTELEMETRY_OPERATOR2_URL" || return 1
-        fi
-    done
+    if [ -n "$PKG_OPENTELEMETRY_OPERATOR2_URL" ]; then
+        download_package "$PKG_OPENTELEMETRY_OPERATOR2_URL" || return 1
+        for cluster in "${clusters[@]}"; do
+            if ! check_package_uploaded "$cluster" "$PKG_OPENTELEMETRY_OPERATOR2_URL"; then
+                upload_package "$cluster" "$PKG_OPENTELEMETRY_OPERATOR2_URL" || return 1
+            fi
+        done
+    else
+        log_info "未提供 PKG_OPENTELEMETRY_OPERATOR2_URL，跳过上架（verify-only）"
+    fi
 
     # mesh-v2-test-suite 集群插件（java-instrumentation 示例依赖），由开关控制，安装到各业务集群
     if [ "${USE_MESH_V2_TEST_SUITE_PLUGIN:-false}" = "true" ]; then

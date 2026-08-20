@@ -157,6 +157,12 @@ install_violet() {
 # 下载插件包
 download_package() {
     local url="$1"
+
+    if [ -z "$url" ]; then
+        log_error "download_package: 插件包地址为空（verify-only 模式下不应调用本函数）"
+        return 1
+    fi
+
     local filename
     filename=$(basename "$url")
 
@@ -213,6 +219,12 @@ check_package_uploaded() {
 upload_package() {
     local cluster="$1"
     local package_url="$2"
+
+    if [ -z "$package_url" ]; then
+        log_error "upload_package: 插件包地址为空（verify-only 模式下不应调用本函数）"
+        return 1
+    fi
+
     local filename
     filename=$(basename "$package_url")
 

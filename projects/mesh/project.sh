@@ -408,11 +408,15 @@ upload_all_packages() {
 
     # 注：metallb-operator 不在此无条件上传；它作为 MetalLB 集群插件的前置，
     # 仅 ENABLE_METALLB=true 时由 install_all_cluster_plugins 按需上架到 Global 集群。
-    local packages=(
-        "$PKG_SERVICEMESH_OPERATOR2_URL"
-        "$PKG_KIALI_OPERATOR_URL"
-        "$PKG_OPENTELEMETRY_OPERATOR2_URL"
-    )
+    # 未提供地址的包跳过（verify-only：由平台预上架）。
+    local packages=() u
+    for u in "$PKG_SERVICEMESH_OPERATOR2_URL" "$PKG_KIALI_OPERATOR_URL" "$PKG_OPENTELEMETRY_OPERATOR2_URL"; do
+        [ -n "$u" ] && packages+=("$u")
+    done
+    if [ ${#packages[@]} -eq 0 ]; then
+        log_info "未提供任何 Operator 插件包地址，跳过上架（verify-only：由平台预上架）"
+        return 0
+    fi
 
     # 下载所有插件包
     for pkg_url in "${packages[@]}"; do
@@ -545,35 +549,31 @@ fetch_platform_ca() {
 # ==============================================================================
 
 # 校验 mesh 项目专属环境变量
+# 注：所有 PKG_*_URL 均为可选。为空即 verify-only —— 插件包由平台（dailybuild）预上架，
+# 框架只校验不下载不上架；缺包时由 install_operator / install_cluster_plugin 给出
+# 指向正确处置动作的报错。
 project_check_env() {
-    local required=(
+    local optional=(
         "PKG_SERVICEMESH_OPERATOR2_URL"
         "PKG_KIALI_OPERATOR_URL"
         "PKG_OPENTELEMETRY_OPERATOR2_URL"
         "PKG_MULTUS_URL"
     )
-
-    # MetalLB 相关变量仅 ENABLE_METALLB=true 时必需（metallb 插件包 + 其前置 metallb-operator 包）
     if [ "${ENABLE_METALLB:-false}" = "true" ]; then
-        required+=("PKG_METALLB_URL" "PKG_METALLB_OPERATOR_URL")
+        optional+=("PKG_METALLB_URL" "PKG_METALLB_OPERATOR_URL")
     fi
-
-    # mesh-v2-test-suite 插件包仅 USE_MESH_V2_TEST_SUITE_PLUGIN=true 时必需
     if [ "${USE_MESH_V2_TEST_SUITE_PLUGIN:-false}" = "true" ]; then
-        required+=("PKG_MESH_V2_TEST_SUITE_URL")
+        optional+=("PKG_MESH_V2_TEST_SUITE_URL")
     fi
 
-    local missing=()
-    local var
-    for var in "${required[@]}"; do
+    local missing=() var
+    for var in "${optional[@]}"; do
         if [ -z "${!var}" ]; then
             missing+=("$var")
         fi
     done
-
     if [ ${#missing[@]} -ne 0 ]; then
-        log_error "mesh 项目缺少必要的环境变量: ${missing[*]}"
-        return 1
+        log_info "mesh 项目未提供以下插件包地址，对应插件进入 verify-only 模式（要求平台已预上架）: ${missing[*]}"
     fi
     return 0
 }

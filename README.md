@@ -133,7 +133,14 @@ export ENABLE_METALLB=false
 # - 多集群 Case 6/7：cluster 需与 EAST_CLUSTER_NAME / WEST_CLUSTER_NAME 对应
 # - 单集群入口网关 LoadBalancer 测试（Case 3/5 的 exposing-* 文档）：需含 cluster=$SINGLE_CLUSTER_NAME 条目
 export METALLB_EXTERNAL_ADDRESSES_JSON='[{"cluster":"business-1","ipv4Addresses":["192.168.139.13/32"]},{"cluster":"business-2","ipv4Addresses":["192.168.137.150/32"]}]'
+```
 
+> **verify-only 模式**：所有 `PKG_*_URL` 均为**可选**。留空时框架不下载、不上架该插件包，
+> 改为直接校验它是否已在集群上架（Operator 查 PackageManifest，集群插件查 ModuleConfig），
+> 并从中反查目标版本。这正是 dailybuild 的用法——插件包由 lynx 依据 Release YAML 预上架，
+> 测试 Pod 不需要访问 package-minio。本地手工跑则照旧提供地址，由框架自行下载上架。
+
+```bash
 # ── 插件包地址 ──────────────────────────────────────────────
 # Operator 包：mesh 项目需要
 export PKG_SERVICEMESH_OPERATOR2_URL=xxx
@@ -193,11 +200,11 @@ export TRACING_TEST_SPM=true
 
 **项目专属变量**（各项目 `project_check_env` 校验）：
 
-| 项目    | 必需                                                                                                        | 条件必需 / 软依赖                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| ------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| mesh    | `PKG_SERVICEMESH_OPERATOR2_URL` `PKG_KIALI_OPERATOR_URL` `PKG_OPENTELEMETRY_OPERATOR2_URL` `PKG_MULTUS_URL` | `ENABLE_METALLB=true` → `PKG_METALLB_URL` `PKG_METALLB_OPERATOR_URL`；`USE_MESH_V2_TEST_SUITE_PLUGIN=true` → `PKG_MESH_V2_TEST_SUITE_URL`                                                                                                                                                                                                                                                                                                                          |
-| otel    | `PKG_OPENTELEMETRY_OPERATOR2_URL`                                                                           | `USE_MESH_V2_TEST_SUITE_PLUGIN=true` → `PKG_MESH_V2_TEST_SUITE_URL`                                                                                                                                                                                                                                                                                                                                                                                                |
-| tracing | `PKG_OPENTELEMETRY_OPERATOR2_URL` `PKG_JAEGER_CLUSTER_PLUGIN_URL`                                           | `USE_MESH_V2_TEST_SUITE_PLUGIN=true` → `PKG_MESH_V2_TEST_SUITE_URL`；ES：`TRACING_ACP_ES_CLUSTER` 或 `TRACING_ES_ENDPOINT/USER/PASS`（`TRACING_INSTALL_ES=true` + `PKG_LOG_CENTER_URL` 时自动安装 logcenter 集群插件到 `TRACING_ACP_ES_CLUSTER`）；OpenSearch：默认自动安装（`TRACING_INSTALL_OPENSEARCH=true` + `PKG_ACP_STORAGE_OPERATOR_URL` `PKG_TOPOLVM_OPERATOR_URL`，opensearch-operator 包需手动上架），或降级手动 `TRACING_OPENSEARCH_ENDPOINT/USER/PASS` |
+| 项目 | 必需 | 条件必需 / 软依赖 |
+| --- | --- | --- |
+| mesh | 无（`PKG_*_URL` 全部可选，留空即 verify-only） | 提供地址时按原逻辑下载上架；`ENABLE_METALLB=true` 时若也未预上架 metallb / metallb-operator，安装会报错 |
+| otel | 无（同上） | `USE_MESH_V2_TEST_SUITE_PLUGIN=true` 时需 `PKG_MESH_V2_TEST_SUITE_URL` 或平台已预上架 |
+| tracing | 无（同上） | ES / OpenSearch 存储后端配置同原表；Jaeger v2 集群插件需 `PKG_JAEGER_CLUSTER_PLUGIN_URL` 或平台已预上架 |
 
 > 注：`METALLB_EXTERNAL_ADDRESSES_JSON`（外部 IP 地址池地址，JSON 数组）在 `ENABLE_METALLB=true` 时由 `setup_external_ip_pools` 创建地址池时校验（不在 `project_check_env`）：多集群 Case 6/7 需含 `cluster=$EAST_CLUSTER_NAME`/`$WEST_CLUSTER_NAME` 条目；单集群入口网关 LoadBalancer 测试（Case 3/5 的 exposing-\* 文档）需含 `cluster=$SINGLE_CLUSTER_NAME` 条目。
 

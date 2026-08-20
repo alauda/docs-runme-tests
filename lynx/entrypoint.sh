@@ -43,6 +43,16 @@ esac
 # 兜底：编排异常中断时也要留下可解析的 allure 报告
 _emergency_report() {
     local rc=$?
+    # init 模式成功退出时不需要兜底：run.sh --init-only 在 report_init 之前就
+    # exit 0（见 run.sh），压根不会产生 results.jsonl / allure 相关目录，这是
+    # 该模式的正常形态，不是「异常中断」。不加这条判断的话，init 每次成功都会
+    # 被这里误判成异常、补一条 broken 占位用例——若 lynx 把 initials 与 tests
+    # 挂到同一个 TEST_RESULT_DIR（共享 PVC），这条 broken 会被后续测试项的
+    # allure generate 收进报告，变成一条指向错误方向的红。
+    # 注意只放行 rc=0：init 真失败时仍要走下面的兜底，不能把故障也一起吞掉。
+    if [ "$MODE" = "init" ] && [ "$rc" -eq 0 ]; then
+        return 0
+    fi
     if [ -d "${TEST_RESULT_DIR:-/nonexistent}/allure-report" ]; then
         return 0
     fi

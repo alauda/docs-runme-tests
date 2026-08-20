@@ -1,4 +1,16 @@
 # docs-runme-tests 分支 → ACP 大版本，供构建流水线决定 release tag
 # main 不在此表内，固定出 latest
+#
+# 流水线怎么用它：.tekton/image-build.yaml 触发构建时，会把当前分支与 commit 传给
+# lynx/compute-tags.sh；该脚本用本表算出 tag——分支在下面按第一列精确匹配到某一行，
+# 就取第二列拼成 "release-<ACP大版本>" 这个 tag（连同 "<branch>-<短 commit>" 一起，
+# 逗号分隔，见 lynx/compute-tags.sh 的输出）。release-mesh-* 分支若不在下表登记，
+# 构建会直接报错退出（rc=1），不会产出一个 tag 语义不明的镜像；新增一个允许构建
+# 镜像的 release-mesh-x.y 分支时，先在这里补一行，再去改
+# .tekton/image-build.yaml 里 PaC 触发正则 on-cel-expression 的分支白名单
+# （两处的分支集合需要保持一致，否则会出现"能触发构建但 tag 算不出来"或反过来
+# "登记了却触发不了"的不一致）。
+#
+# 格式：<branch>\t<acp_version>（真实分隔符是 Tab，不是空格）；# 开头的行会被跳过。
 release-mesh-2.2	4.5
 release-mesh-2.1	4.4

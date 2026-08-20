@@ -47,7 +47,11 @@ rewrite_urls_to_assets() {
         [ -n "$url" ] || continue
         local_path=$(asset_local_path "$url")
         [ -n "$local_path" ] || continue
-        cmd="${cmd//$url/$local_path}"
+        # pattern 侧必须加引号：${cmd//$url/...} 里 $url 若不加引号会被当 glob
+        # 展开，? * [ ] 等字符会误匹配同位置字符不同的其它 URL（诱饵攻击见
+        # framework/tests/assets_test.sh test_rewrite），导致把别的 URL 也悄悄
+        # 换成这条本地文件。加引号后 $url 按字面量替换，不受 glob 影响。
+        cmd="${cmd//"$url"/$local_path}"
     done < <(printf '%s' "$cmd" | grep -oE 'https?://[^[:space:]"'"'"']+' | sort -u)
     printf '%s' "$cmd"
 }

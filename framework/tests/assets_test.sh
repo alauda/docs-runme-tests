@@ -67,6 +67,22 @@ test_rewrite() {
     out="$(rewrite_urls_to_assets 'kubectl apply -f https://example.com/other.yaml')"
     check_contains "未登记的 URL 保持原样" "$out" "https://example.com/other.yaml"
     rm -rf "$SANDBOX"
+
+    # 诱饵用例（review 报告的失败形态 B）：${cmd//$url/...} 的 pattern 侧不加引号时，
+    # 已登记 URL 里的 `?` 会被当成 glob 通配符（匹配任意单字符）。命令里同时出现
+    # 已登记 URL 与仅该位不同的未登记诱饵 URL 时，替换已登记 URL 会把整个 $cmd
+    # 当模式扫描，捎带命中诱饵——本该只替换一条，结果两条都换成同一个本地文件，
+    # 即「静默 apply 错内容到真实集群」。必须两个 URL 同时出现在同一条命令里才能
+    # 触发：诱饵自己单独查 asset_local_path 是查不到的（那是精确字符串比较，
+    # 没有 glob 问题），问题出在已登记 URL 命中后的替换会误伤旁边的诱饵。
+    setup_sandbox
+    printf 'https://example.com/pkg?v=1.yaml\texample.com/pkg-registered.yaml\n' >> "$SANDBOX/manifest.tsv"
+    mkdir -p "$SANDBOX/assets/example.com"
+    printf 'kind: Registered\n' > "$SANDBOX/assets/example.com/pkg-registered.yaml"
+    out="$(rewrite_urls_to_assets 'kubectl apply -f https://example.com/pkg?v=1.yaml && kubectl apply -f https://example.com/pkgXv=1.yaml')"
+    check_contains "已登记 URL 被替换为本地路径" "$out" "$SANDBOX/assets/example.com/pkg-registered.yaml"
+    check_contains "诱饵 URL（? 通配符误匹配）不应被替换" "$out" "https://example.com/pkgXv=1.yaml"
+    rm -rf "$SANDBOX"
 }
 
 test_runme_run_with_assets() {
@@ -115,6 +131,12 @@ test_manifest_wellformed() {
     check_eq "每行恰好两列" "$(awk -F'\t' '/^https?:\/\// && NF != 2 {c++} END {print c+0}' "$f")" "0"
     check_eq "路径无重复"   "$(awk -F'\t' '/^https?:\/\//{print $2}' "$f" | sort | uniq -d | wc -l | tr -d ' ')" "0"
     check_eq "URL 无重复"   "$(awk -F'\t' '/^https?:\/\//{print $1}' "$f" | sort | uniq -d | wc -l | tr -d ' ')" "0"
+    # 永久防线：URL 不含 glob 元字符 ? * [ ]。rewrite_urls_to_assets 用
+    # ${cmd//$url/...} 做替换，pattern 侧一旦不小心又去掉引号，含这些字符的 URL
+    # 会被当通配符误匹配（见 test_rewrite 的诱饵用例），将来有人加了带查询串的
+    # URL 应该在这里立刻变红，而不是留到运行时才发现替换错了目标。
+    check_eq "URL 不含 glob 元字符 ? * [ ]" \
+        "$(awk -F'\t' '/^https?:\/\// && $1 ~ /[]?*[]/ {c++} END {print c+0}' "$f")" "0"
 }
 
 main() {

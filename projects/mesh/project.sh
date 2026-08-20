@@ -75,10 +75,13 @@ kubectl_apply_with_mirror() {
 
     # 取 YAML 内容（命中预置资产则读本地，否则联网 curl），替换镜像地址后应用
     log_info "下载并替换镜像地址: $url"
+    # pattern 侧（"-f $url"）必须加引号：与 framework/assets.sh 的
+    # rewrite_urls_to_assets 同源问题——不加引号时 $url 里的 ? * [ ] 会被当
+    # glob 通配符，可能误匹配命令里其它相似的 -f <url>。加引号后按字面量替换。
     fetch_url_content "$url" \
         | sed "s|docker\.io|${docker_io_target}|g" \
         | sed "s|registry\.istio\.io/release|${istio_release_target}|g" \
-        | eval "${cmd_content//-f $url/-f -}"
+        | eval "${cmd_content//"-f $url"/-f -}"
 }
 
 # (可选) 在 bookinfo 的 ratings pod 中后台生成请求流量

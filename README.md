@@ -39,6 +39,7 @@ docs-runme-tests/
 ├── framework/              # 通用引擎函数库（零项目耦合）
 │   ├── common.sh           # 日志 / 结果统计 / install_operator（含重入探测）/ install_operator_cli / install_cluster_plugin / setup_external_ip_pools / _wait_* / kubectl_apply_runme_block
 │   ├── verify.sh           # __cmp_* 输出比对
+│   ├── acp-auth.sh         # ACP API Token 自动获取（平台账号密码 → dex）/ 校验 / 缓存
 │   ├── kubeconfig.sh       # ACP kubeconfig 拉取 / 合并 / 复用
 │   └── tools.sh            # 必备工具检查 / runme·violet 安装 / 插件包下载上传
 ├── projects/               # 各文档项目专属逻辑
@@ -74,7 +75,7 @@ docs-runme-tests/
 
 **注**：执行测试脚本的机器（不是 k8s 集群）必须能访问 GitHub。
 
-以下工具需预先安装：`kubectl`、`curl`、`jq`。框架会自动安装 `runme` / `violet`（mesh 还会装 `istioctl`）。
+以下工具需预先安装：`kubectl`、`curl`、`jq`、`openssl`（`openssl` 用于自动获取 ACP API Token）。框架会自动安装 `runme` / `violet`（mesh 还会装 `istioctl`）。
 
 ### 2. repos.conf 仓库注册表
 
@@ -103,7 +104,9 @@ export WEST_CLUSTER_NAME=west-cluster
 export PLATFORM_ADDRESS=https://xxx
 export PLATFORM_USERNAME='your-username'
 export PLATFORM_PASSWORD='your-password'
-export ACP_API_TOKEN='your-acp-api-token'   # ACP UI Profile 页面生成
+# ACP API Token（可选）：不配置时，引擎用上面的地址 + 用户名 + 密码自动获取，
+# 详见「ACP API Token 自动获取」。仅在需要固定 token（如 UI 生成的长期 token）时才配置。
+# export ACP_API_TOKEN='your-acp-api-token'
 
 # 集群连接模式（可选，默认 direct；多集群网格必须 direct）
 export ACP_KUBECONFIG_MODE=direct
@@ -186,7 +189,7 @@ export TRACING_TELEMETRYGEN_TEST_DURATION_2=130s
 export TRACING_TEST_SPM=true
 ```
 
-**通用必需变量**（引擎 `check_env` 校验）：`RUNME_VERSION` `PLATFORM_ADDRESS` `ACP_API_TOKEN` `PLATFORM_USERNAME` `PLATFORM_PASSWORD`。
+**通用必需变量**（引擎 `check_env` 校验）：`RUNME_VERSION` `PLATFORM_ADDRESS` `PLATFORM_USERNAME` `PLATFORM_PASSWORD`。`ACP_API_TOKEN` 为可选（见下节）。
 
 **项目专属变量**（各项目 `project_check_env` 校验）：
 
@@ -198,7 +201,33 @@ export TRACING_TEST_SPM=true
 
 > 注：`METALLB_EXTERNAL_ADDRESSES_JSON`（外部 IP 地址池地址，JSON 数组）在 `ENABLE_METALLB=true` 时由 `setup_external_ip_pools` 创建地址池时校验（不在 `project_check_env`）：多集群 Case 6/7 需含 `cluster=$EAST_CLUSTER_NAME`/`$WEST_CLUSTER_NAME` 条目；单集群入口网关 LoadBalancer 测试（Case 3/5 的 exposing-\* 文档）需含 `cluster=$SINGLE_CLUSTER_NAME` 条目。
 
-### 4. kubeconfig 自动管理
+### 4. ACP API Token 自动获取
+
+框架调用 ACP 平台 API（拉取集群 kubeconfig 等）需要 `ACP_API_TOKEN`。**不必手工去 UI 个人信息页生成**：只要配置了 `PLATFORM_ADDRESS` / `PLATFORM_USERNAME` / `PLATFORM_PASSWORD`，引擎启动时（`run.sh` 的 `ensure_acp_api_token`）会自动登录换取 token。
+
+取值优先级：
+
+1. 已配置且校验通过的 `ACP_API_TOKEN`（校验方式：`GET /auth/v1/clusters` 返回 200）——配置了就原样使用；
+2. `.acp-auth/token.json` 中未过期的缓存 token（按「平台地址 + 用户名」指纹匹配，剩余有效期不足 30 分钟视为过期）；
+3. 用平台账号密码登录获取，成功后写入缓存。
+
+已配置的 `ACP_API_TOKEN` 校验失败（过期 / 换环境）且账号密码齐全时，会告警并自动改用登录获取，无需手工换 token。
+
+登录流程与 ACP 登录页前端行为一致（OIDC implicit，不需要 dex client secret）：`GET /dex/api/v1/authorize` 取登录请求 ID → `GET /dex/pubkey` 取 RSA 公钥 → RSA(PKCS#1 v1.5) 加密 `{"ts":..,"password":..}` → `POST /dex/api/v1/authorize/<connector>` → 从回调 URL fragment 取 `id_token`。token 由 dex 签发，有效期通常 24 小时，够单轮测试使用；实现见 `framework/acp-auth.sh`，额外依赖 `openssl`。
+
+可选环境变量：
+
+| 变量                     | 默认                | 说明                                             |
+| ------------------------ | ------------------- | ------------------------------------------------ |
+| `ACP_AUTH_CACHE_DIR`     | `<仓库根>/.acp-auth` | token 缓存目录（600 权限，已 gitignore）         |
+| `ACP_AUTH_NO_CACHE`      | `false`             | `true` 时不读写缓存，每次重新登录                 |
+| `ACP_AUTH_EXPIRY_MARGIN` | `1800`              | 缓存剩余有效期低于该秒数时视为过期                |
+| `ACP_AUTH_DEX_CLIENT_ID` | `alauda-auth`       | dex client id                                    |
+| `ACP_AUTH_DEX_CONNECTOR` | 自动探测（通常 `local`） | dex connector，接对接外部 IdP 的环境时可显式指定 |
+
+账号触发验证码 / 二次验证 / 首次登录改密码时无法自动登录，此时改为手工配置 `ACP_API_TOKEN`。
+
+### 5. kubeconfig 自动管理
 
 执行 `--init-only` / `--force-init` 时，框架通过 ACP 平台 API 自动获取集群 kubeconfig，缓存于 `.kubeconfig/`，无需手动下载。配置指纹（PLATFORM_ADDRESS / ACP_KUBECONFIG_MODE / ACP_API_TOKEN / 集群列表）变更时自动重拉。
 
@@ -402,6 +431,10 @@ source "$FRAMEWORK_ROOT/framework/verify.sh"
 
 ```bash
 bash framework/tests/report_test.sh
+# 其余框架单测（同样不依赖集群与平台）
+bash framework/tests/acp_auth_test.sh
+bash framework/tests/install_operator_test.sh
+bash framework/tests/install_cluster_plugin_test.sh
 ```
 
 ## 编写新测试
@@ -413,7 +446,8 @@ bash framework/tests/report_test.sh
 | 问题                      | 排查                                                                       |
 | ------------------------- | -------------------------------------------------------------------------- |
 | 找不到 runme / violet     | 执行 `./run.sh --project <项目> --init-only` 重新安装工具                  |
-| kubeconfig 获取失败 / 401 | 检查 `ACP_API_TOKEN` 是否过期、`PLATFORM_ADDRESS` 是否可达、集群名是否正确 |
+| kubeconfig 获取失败 / 401 | 检查 `PLATFORM_ADDRESS` 是否可达、集群名是否正确；token 过期会自动重新获取，可 `rm -rf .acp-auth` 强制刷新 |
+| 自动获取 ACP API Token 失败 | 核对 `PLATFORM_USERNAME` / `PLATFORM_PASSWORD`；账号触发验证码、二次验证或需改密码时改为手工配置 `ACP_API_TOKEN` |
 | 未找到测试脚本            | 确认 `repos.conf` 中对应仓库存在；脚本名为 `runme-test_<file>.sh`          |
 | 测试脚本在多个项目重名    | 用 `--project` 显式指定                                                    |
 | 测试执行失败              | `cd` 到对应文档仓库手动执行失败的 `runme run <block>` 调试                 |

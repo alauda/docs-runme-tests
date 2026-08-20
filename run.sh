@@ -324,7 +324,7 @@ run_test_script() {
             log_info "执行 cleanup: $cleanup_func"
             if $cleanup_func; then status="passed"; else status="failed"; fail_reason="cleanup 失败"; fi
         else
-            log_warn "未找到 cleanup 函数"; status="skipped"; skip_reason="无 cleanup 函数"
+            log_warn "未找到 cleanup 函数"; status="skipped"; skip_reason="[expected] 无 cleanup 函数"
         fi
         end_ts=$(date +%s)
         report_record_doctest "$PROJECT" "$file" "$script_name" "$phase" \

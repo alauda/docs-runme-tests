@@ -57,7 +57,11 @@ WORKDIR /app
 COPY . /app/docs-runme-tests
 
 # 三个文档仓库：按 ref 浅克隆，repos.conf 的相对路径 ../xxx-docs 在此布局下天然成立
-RUN set -eux; \
+# 注意：这里特意用 set -eu，不加 -x（其它 RUN 块都是 set -eux）——AUTH 在
+# GIT_TOKEN 非空时会拼出内嵌 token 的完整 clone URL，-x 回显命令会把 token 明文
+# 打进构建日志。README 里写了私有仓库场景要传 --build-arg GIT_TOKEN=<只读 token>，
+# 真有人这么传时这里绝不能开 -x；以后不要为了「统一风格」把 -x 加回来。
+RUN set -eu; \
     if [ -n "${GIT_TOKEN}" ]; then AUTH="oauth2:${GIT_TOKEN}@"; else AUTH=""; fi; \
     git clone --depth 1 --branch "${MESH_DOCS_REF}"    "https://${AUTH}github.com/alauda/servicemesh2-docs.git"        /app/servicemesh2-docs; \
     git clone --depth 1 --branch "${OTEL_DOCS_REF}"    "https://${AUTH}github.com/alauda/opentelemetry-docs.git"       /app/opentelemetry-docs; \

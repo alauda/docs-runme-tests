@@ -445,7 +445,7 @@ OpenSearch 就绪后给 tracing Case 2/4 补 `smoke` 标签即可纳入，表达
 | 分布式调用链安装（OpenSearch）    | `./run.sh --project tracing --file installing-distributed-tracing-opensearch`    |
 | 分布式调用链卸载                  | `./run.sh --project tracing --file uninstalling-distributed-tracing`             |
 
-> Elasticsearch 安装测试默认从 `TRACING_ACP_ES_CLUSTER` 指定的 ACP 集群（默认 `global`）读取 log-center Elasticsearch 配置；将其设为空时改用 `TRACING_ES_*` 手动配置（该加载逻辑位于 Elasticsearch 安装测试脚本，不再由 `project_prepare` 全局执行）。`TRACING_INSTALL_ES=true` 且 `PKG_LOG_CENTER_URL` 非空时，步骤 0 会先把 logcenter 集群插件（Single Node 模式）自动安装到该集群——对应集群已安装过则跳过（安装逻辑见 `projects/tracing/elasticsearch.sh`）。OpenSearch 安装测试默认自动安装存储后端：`TRACING_INSTALL_OPENSEARCH=true`（默认）且 `PKG_ACP_STORAGE_OPERATOR_URL` / `PKG_TOPOLVM_OPERATOR_URL` 齐全时，步骤 0 自动安装 TopoLVM + OpenSearch（幂等，opensearch-operator 插件包目前需手动上架）并用实际结果覆盖 `TRACING_OPENSEARCH_*`；条件不满足时降级用手动 `TRACING_OPENSEARCH_ENDPOINT/USER/PASS`，两者皆缺则该测试 SKIPPED（安装逻辑见 `projects/tracing/opensearch.sh`）。卸载测试存储无关，按 Jaeger 命名空间是否存在判定是否执行；OpenSearch/TopoLVM 作为环境级存储后端不随卸载清理。两个安装测试的步骤 1 会先按文档「Installing the Alauda Build of Jaeger v2 Cluster Plugin」CLI 章节安装 Jaeger v2 集群插件（需 `PKG_JAEGER_CLUSTER_PLUGIN_URL`，未上架时自动下载并 violet push 到 Global，已安装则幂等复用；两篇文档该章节内容一致，安装逻辑抽象为按 runme 前缀参数化的共享函数，见 `projects/tracing/jaeger-plugin.sh`），步骤 2 自动安装前置依赖 OpenTelemetry v2 Operator（其代码块位于 `opentelemetry-docs`）。
+> Elasticsearch 安装测试默认从 `TRACING_ACP_ES_CLUSTER` 指定的 ACP 集群（默认 `global`）读取 log-center Elasticsearch 配置；将其设为空时改用 `TRACING_ES_*` 手动配置（该加载逻辑位于 Elasticsearch 安装测试脚本，不再由 `project_prepare` 全局执行）。`TRACING_INSTALL_ES=true` 且 `PKG_LOG_CENTER_URL` 非空时，步骤 0 会先把 logcenter 集群插件（Single Node 模式）自动安装到该集群——对应集群已安装过则跳过（安装逻辑见 `projects/tracing/elasticsearch.sh`）。OpenSearch 安装测试默认自动安装存储后端：`TRACING_INSTALL_OPENSEARCH=true`（默认）且 `PKG_ACP_STORAGE_OPERATOR_URL` / `PKG_TOPOLVM_OPERATOR_URL` 齐全时，步骤 0 自动安装 TopoLVM + OpenSearch（幂等，opensearch-operator 插件包目前需手动上架）并用实际结果覆盖 `TRACING_OPENSEARCH_*`；条件不满足时降级用手动 `TRACING_OPENSEARCH_ENDPOINT/USER/PASS`，两者皆缺则该测试 SKIPPED（安装逻辑见 `projects/tracing/opensearch.sh`）。卸载测试存储无关，按 Jaeger 命名空间是否存在判定是否执行；OpenSearch/TopoLVM 作为环境级存储后端不随卸载清理。两个安装测试的步骤 1 会先按文档「Installing the Alauda Build of Jaeger v2 Cluster Plugin」CLI 章节安装 Jaeger v2 集群插件：`PKG_JAEGER_CLUSTER_PLUGIN_URL` 非空时若未上架会自动下载并 violet push 到 Global；留空则进入 verify-only 模式，要求该插件已在 Global 集群预上架，否则报错退出并提示确认 release-config 是否已声明该包；已安装则两种模式都幂等复用（两篇文档该章节内容一致，安装逻辑抽象为按 runme 前缀参数化的共享函数，见 `projects/tracing/jaeger-plugin.sh`），步骤 2 自动安装前置依赖 OpenTelemetry v2 Operator（其代码块位于 `opentelemetry-docs`）。
 
 ## 工作原理
 
@@ -499,7 +499,7 @@ source "$FRAMEWORK_ROOT/framework/verify.sh"
 
 **失败策略**：跑完全部再汇总——致命前置（环境初始化）失败立即中止；普通 Case 失败记录后继续。
 
-**状态三态**：passed / failed / **skipped**（文档脚本用 `skip_test "原因"` 主动声明；编排层条件跳过用 `case_skip`）。
+**状态三态**：passed / failed / **skipped**。文档脚本按语义主动声明：环境/版本/依赖不具备用 `skip_test_env "原因"`，产品版本、架构或测试范围明确不测用 `skip_test_expected "原因"`；两者分别打 `[env]` / `[expected]` 前缀，供 allure 报告的「环境不支持」「预期不测试」分类识别。`skip_test` 是 `skip_test_expected` 的历史别名（等同 `[expected]`），新脚本请直接用语义正确的那个，不要再用 `skip_test`。编排层条件跳过用 `case_skip <case_id> <case_name> <reason> [category]`，`category` 同样是 `env` / `expected`（默认 `expected`）。
 
 **产物**（位于 `tmp/runs/<run-id>/`，`latest` 软链指向最近一次）：
 
@@ -515,10 +515,18 @@ source "$FRAMEWORK_ROOT/framework/verify.sh"
 
 ```bash
 bash framework/tests/report_test.sh
-# 其余框架单测（同样不依赖集群与平台）
+# 其余框架单测（同样不依赖集群与平台，伪造 kubectl/runme/allure）
 bash framework/tests/acp_auth_test.sh
-bash framework/tests/install_operator_test.sh
+bash framework/tests/allure_test.sh
+bash framework/tests/assets_test.sh
+bash framework/tests/case_filter_test.sh
+bash framework/tests/entrypoint_test.sh
+bash framework/tests/env_adapter_test.sh
 bash framework/tests/install_cluster_plugin_test.sh
+bash framework/tests/install_operator_test.sh
+bash framework/tests/ip_pool_test.sh
+bash framework/tests/mesh_project_test.sh
+bash framework/tests/verify_only_test.sh
 ```
 
 ## 编写新测试

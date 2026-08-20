@@ -4,7 +4,8 @@
 # 通过 ACP 平台 API 自动获取集群 kubeconfig，并生成合并后的 KUBECONFIG。
 # 依赖环境变量:
 #   - PLATFORM_ADDRESS         必填，ACP 平台地址
-#   - ACP_API_TOKEN            必填，ACP 平台 API token
+#   - ACP_API_TOKEN            可选，ACP 平台 API token；未配置时由 acp-auth.sh 用
+#                              PLATFORM_USERNAME / PLATFORM_PASSWORD 自动获取
 #   - ACP_KUBECONFIG_MODE      可选，direct(默认) | proxy，决定使用 proxy-connect 还是 direct-connect context
 #   - GLOBAL_CLUSTER_NAME      可选，ACP 控制面集群名（默认 'global'），用于获取平台级资源
 #
@@ -37,6 +38,12 @@ if ! declare -f log_info > /dev/null 2>&1; then
     source "$__KUBECONFIG_SH_DIR/common.sh"
 fi
 
+# 加载 ACP 认证函数（如果尚未加载），用于 ACP_API_TOKEN 缺省时自动获取
+if ! declare -f ensure_acp_api_token > /dev/null 2>&1; then
+    # shellcheck disable=SC1091
+    source "$__KUBECONFIG_SH_DIR/acp-auth.sh"
+fi
+
 # 计算 kubeconfig 配置指纹
 # 基于 PLATFORM_ADDRESS、ACP_KUBECONFIG_MODE、ACP_API_TOKEN、去重排序后的集群列表
 # 用法: _compute_kubeconfig_fingerprint <cluster>...
@@ -54,14 +61,15 @@ _compute_kubeconfig_fingerprint() {
 }
 
 # 校验 kubeconfig 拉取所需的环境变量
+# ACP_API_TOKEN 未配置时，用平台账号密码自动获取（引擎入口通常已获取，此处兜底）
 _check_kubeconfig_env() {
-    local missing=()
-    [ -z "${PLATFORM_ADDRESS:-}" ] && missing+=("PLATFORM_ADDRESS")
-    [ -z "${ACP_API_TOKEN:-}" ] && missing+=("ACP_API_TOKEN")
-
-    if [ ${#missing[@]} -ne 0 ]; then
-        log_error "缺少必要环境变量: ${missing[*]}"
+    if [ -z "${PLATFORM_ADDRESS:-}" ]; then
+        log_error "缺少必要环境变量: PLATFORM_ADDRESS"
         return 1
+    fi
+
+    if [ -z "${ACP_API_TOKEN:-}" ]; then
+        ensure_acp_api_token || return 1
     fi
     return 0
 }

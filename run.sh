@@ -14,10 +14,11 @@ PROJECTS_DIR="$FRAMEWORK_ROOT/projects"
 BIN_DIR="$FRAMEWORK_ROOT/bin"
 REPOS_CONF="$FRAMEWORK_ROOT/repos.conf"
 
-# ── 加载框架函数库（顺序固定：common → verify → kubeconfig → tools）──────────────
+# ── 加载框架函数库（顺序固定：common → verify → acp-auth → kubeconfig → tools）────
 source "$FRAMEWORK_DIR/common.sh"
 source "$FRAMEWORK_DIR/verify.sh"
 source "$FRAMEWORK_DIR/report.sh"
+source "$FRAMEWORK_DIR/acp-auth.sh"
 source "$FRAMEWORK_DIR/kubeconfig.sh"
 source "$FRAMEWORK_DIR/tools.sh"
 
@@ -84,7 +85,9 @@ usage() {
   $0 --project tracing --file installing-distributed-tracing-elasticsearch --force-init
 
 通用必需环境变量:
-  RUNME_VERSION PLATFORM_ADDRESS ACP_API_TOKEN PLATFORM_USERNAME PLATFORM_PASSWORD
+  RUNME_VERSION PLATFORM_ADDRESS PLATFORM_USERNAME PLATFORM_PASSWORD
+  ACP_API_TOKEN 可选：未配置（或已失效）时，引擎用平台地址 + 用户名 + 密码自动获取，
+  并缓存于 .acp-auth/token.json。
 项目专属环境变量由各项目 project.sh 的 project_check_env 校验。
 EOF
 }
@@ -155,11 +158,11 @@ parse_args() {
 }
 
 # 通用环境变量校验（项目专属变量由 project_check_env 负责）
+# 注：ACP_API_TOKEN 不在此列——未配置时由 ensure_acp_api_token 用平台账号自动获取。
 check_env() {
     local required_vars=(
         "RUNME_VERSION"
         "PLATFORM_ADDRESS"
-        "ACP_API_TOKEN"
         "PLATFORM_USERNAME"
         "PLATFORM_PASSWORD"
     )
@@ -366,6 +369,9 @@ main() {
 
     # 通用环境变量校验
     check_env
+
+    # 确保 ACP API Token 可用（未配置 / 已失效时用平台账号密码自动获取）
+    ensure_acp_api_token || exit 1
 
     # 解析仓库注册表
     load_repos_conf

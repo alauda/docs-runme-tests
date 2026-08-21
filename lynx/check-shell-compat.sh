@@ -12,7 +12,10 @@
 # 写成 ${VAR} 后名字边界由花括号确定，与 locale 无关。
 #
 # 用法: bash lynx/check-shell-compat.sh [<file.sh>...]
-#       不带参数时扫描仓库内全部 *.sh（跳过 bin/、package/、.superpowers/ 等缓存目录）
+#       不带参数时扫描本仓库全部 *.sh（跳过 bin/、package/、assets/ 等缓存目录），
+#       以及 repos.conf 里登记的各文档仓库 docs/ 下的 runme-test_*.sh。
+#       文档仓库里那 40 多个测试脚本才是 shell 代码的大头，而镜像构建是四个仓库
+#       唯一汇合的地方——只扫本仓库等于放过了绝大部分代码。
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -30,6 +33,22 @@ else
         -not -path "${FRAMEWORK_ROOT}/bin/*" \
         -not -path "${FRAMEWORK_ROOT}/package/*" \
         -not -path "${FRAMEWORK_ROOT}/assets/*" | sort)
+
+    # 各文档仓库的测试脚本（目录不存在的条目静默跳过，与 repos.conf 其它消费者一致）
+    while IFS= read -r line; do
+        line="${line%%#*}"
+        line="${line//[[:space:]]/}"
+        [ -n "${line}" ] || continue
+        path="${line#*:}"
+        case "${path}" in
+            /*) repo="${path}" ;;
+            *)  repo="${FRAMEWORK_ROOT}/${path}" ;;
+        esac
+        [ -d "${repo}/docs" ] || continue
+        while IFS= read -r f; do
+            files+=("$f")
+        done < <(find "${repo}/docs" -type f -name '*.sh' | sort)
+    done < "${FRAMEWORK_ROOT}/repos.conf"
 fi
 
 if [ ${#files[@]} -eq 0 ]; then

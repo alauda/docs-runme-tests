@@ -19,7 +19,10 @@ bash lynx/check-shell-compat.sh   # 有没有 macOS/bash 3.2 会炸的写法
 for t in framework/tests/*_test.sh; do bash "$t" >/dev/null || echo "FAIL: $t"; done
 ```
 
-前四条依赖三个文档仓库存在于兄弟目录（见 `repos.conf`）。
+`check-manifest` / `check-case-ids` / `check-shell-compat` 会顺着 `repos.conf`
+一并扫描三个文档仓库，所以要求它们存在于兄弟目录；`check-docs-refs` 只看本仓库。
+`check-shell-compat` 覆盖四个仓库共 80 多个脚本——文档仓库里那 40 多个
+`runme-test_*.sh` 才是 shell 代码的大头，而镜像构建是四个仓库唯一汇合的地方。
 
 ---
 

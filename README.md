@@ -14,23 +14,21 @@
 
 测试脚本 `runme-test_*.sh` 仍与被测 `.mdx` 同仓同目录（runme 按 CWD 所在 git 仓库扫描代码块；文档与测试同 PR 演进）。本仓库提供引擎、通用函数库、各项目初始化逻辑与全量编排。
 
-## 发版管理
+## 变更操作手册
 
-创建 `release-mesh-2.x` 分支，用于对应测试的项目。
+本文档讲**怎么用**；改了东西之后还要同步改哪儿（新增 Case、文档外部链接变更、
+工具版本升级、插件包地址、四仓联合改动、发新版本、镜像构建与 tag 规则），
+统一见 **[UPDATE-README.md](UPDATE-README.md)**。
 
-注：目前 mesh，OTel 和 Tracing 会同时发版，所以只创建 mesh 发版分支。mesh 2.1 对应 OTel 2.0 和 Tracing 2.0，以此类推。
-
-### docs-runme-tests 与 mesh-v2-test-suite 矩阵关系
-
-| docs-runme-tests 分支 | mesh-v2-test-suite 版本 |
-| --------------------- | ----------------------- |
-| release-mesh-2.1      | v1.0.x                  |
-| release-mesh-2.2      | v2.2.x-rN               |
+发版分支规则与 mesh-v2-test-suite 版本矩阵已迁至该文档的
+[「发新版本」](UPDATE-README.md#6-发新版本)一节。
 
 ## 目录结构
 
 ```bash
 docs-runme-tests/
+├── README.md               # 怎么用（本文）
+├── UPDATE-README.md        # 怎么改：新增 Case / 离线资源 / 版本升级 / 发版 / 镜像构建
 ├── run.sh                  # 单测执行引擎（项目感知）
 ├── run-mesh-all.sh         # mesh 项目全量编排
 ├── run-otel-all.sh         # otel 项目全量编排
@@ -46,9 +44,22 @@ docs-runme-tests/
 │   ├── mesh/project.sh     # mesh 钩子 + istioctl / 插件包 / operator 安装 / PLATFORM_CA
 │   ├── otel/project.sh     # otel 钩子
 │   └── tracing/            # tracing 钩子（project.sh）+ OpenSearch / Elasticsearch 自动安装（opensearch.sh / elasticsearch.sh）+ Jaeger v2 集群插件共享安装（jaeger-plugin.sh）
+├── lynx/                   # lynx / dailybuild 适配层
+│   ├── entrypoint.sh       # 镜像入口 docs-test <init|mesh|otel|tracing>
+│   ├── env-adapter.sh      # lynx 内置变量 → 框架变量
+│   ├── case-filter.sh      # CASE_TYPE 表达式求值（and / not 合取式）
+│   ├── allure.sh           # allure 结果与报告生成
+│   ├── compute-tags.sh     # 分支 + commit → 镜像 tag 列表
+│   ├── assets-manifest.tsv # 离线资产清单（外部 URL → 镜像内路径）
+│   ├── case-ids.tsv        # case_id 清单（文档 → 稳定编号）
+│   ├── docs-refs.tsv       # 三个文档仓库在镜像里使用的 ref
+│   ├── release-matrix.tsv  # 发版分支 → ACP 大版本
+│   └── check-*.sh          # 四条清单/兼容性自检（构建期强制）
+├── .tekton/                # 镜像构建流水线（Pipelines-as-Code）
 ├── charts/
 │   └── mesh-v2-test-suite/ # Mesh v2 测试套件 ACP 集群插件
 ├── bin/                    # 工具缓存：runme / violet / istioctl（gitignore）
+├── assets/                 # 离线资产（构建期落盘，gitignore）
 ├── package/                # 插件包缓存（gitignore）
 └── .kubeconfig/            # kubeconfig 缓存（gitignore）
 
@@ -310,23 +321,20 @@ cd docs-runme-tests
 ## 构建测试镜像
 
 ```bash
-docker build \
-  --build-arg MESH_DOCS_REF=master \
-  --build-arg OTEL_DOCS_REF=main \
-  --build-arg TRACING_DOCS_REF=main \
-  --build-arg IMAGE_TAG=local-dev \
-  -t docs-runme-tests:local-dev .
+docker build --build-arg IMAGE_TAG=local-dev -t docs-runme-tests:local-dev .
 ```
 
 镜像自包含：三个文档仓库按 ref 浅克隆进 `/app/`，`runme` / `violet` / `istioctl` 预置到
 `bin/`（`istioctl` 版本从 mesh 文档的 runme 块推导，与 `install_istioctl` 的校验一致），
 文档引用的 17 个外部 sample YAML 按 `lynx/assets-manifest.tsv` 落到 `assets/`。
-构建期会跑 `lynx/check-manifest.sh` 与 `lynx/check-case-ids.sh`，任一不通过即构建失败。
+构建期会跑 `lynx/check-{manifest,case-ids,docs-refs,shell-compat}.sh`，任一不通过即构建失败。
 
-tag 规则：`main` → `latest` + `main-<短 commit>`；`release-mesh-2.x` → 按
-`lynx/release-matrix.tsv` 映射到 `release-<ACP 大版本>` + `<branch>-<短 commit>`。
+想知道某个镜像里装的是哪一组四仓组合：入口日志第一行会打印 tag 与三个文档仓库的 commit SHA，
+镜像内也可以 `cat /app/docs-runme-tests/.image-info`。
 
-文档仓库若为私有仓库，构建时加 `--build-arg GIT_TOKEN=<只读 token>`。
+**构建参数、tag 规则、流水线触发方式、四仓联合改动的构建流程**详见
+[UPDATE-README.md 第 7 节](UPDATE-README.md#7-镜像构建与-tag-规则)与
+[第 5 节](UPDATE-README.md#5-四仓联合改动文档仓库与本仓库要一起改)。
 
 ## 在 lynx / dailybuild 中运行
 
@@ -376,8 +384,15 @@ tag 规则：`main` → `latest` + `main-<短 commit>`；`release-mesh-2.x` → 
 
 DocTest 级标签只有 `egress`（mesh Case 3 / 5 中的三篇 `routing-egress-traffic-*`）。
 
-首批 dailybuild 用 `CASE_TYPE="smoke and not egress"`。
+dailybuild 目前开了四个测试项：`docs-mesh` / `docs-otel` / `docs-tracing` 用
+`CASE_TYPE="smoke and not egress"`，`docs-mesh-multicluster` 单独用
+`CASE_TYPE="multicluster and not egress"`。多集群必须单开一项，因为表达式不支持 `or`，
+`smoke` 那三项选不到只带 `multicluster` 标签的 Case 6/7。
+
 OpenSearch 就绪后给 tracing Case 2/4 补 `smoke` 标签即可纳入，表达式不用改。
+
+新增或修改标签时要同步 release-config 的 `CASE_TYPE`，
+详见 [UPDATE-README.md 第 1.4 节](UPDATE-README.md#14-需要新标签时同步-release-config)。
 
 ## 各项目测试清单
 

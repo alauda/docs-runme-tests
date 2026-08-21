@@ -1,0 +1,20 @@
+# 三个文档仓库在镜像里使用的 ref（TAB 分隔：build-arg 名 <TAB> git ref）
+#
+# 这个文件回答一个问题：**这份镜像里装的到底是四个仓库的哪一组组合**。
+# 镜像构建流水线（.tekton/image-build.yaml）读本文件，转成 --build-arg 传给
+# Dockerfile；Dockerfile 里的 ARG 默认值只是给本地 `docker build` 兜底用的。
+#
+# 什么时候要改这里：
+#   1) 本仓库的改动依赖文档仓库的同批改动（典型：文档代码块从 `runme run` 换成
+#      `runme_run_with_assets`，或新增/修改了外部 URL）。此时把对应行改成那个
+#      文档仓库的**特性分支名或不可变 commit SHA**，与本仓库的改动放在同一个 PR 里，
+#      这样 /image-build 出来的镜像才是四仓一致的，可以在合入前真跑一遍。
+#   2) 文档仓库的配套 PR 合入主干后，把这里改回主干分支名，再随本仓库 PR 一起合入。
+#
+# 三个仓库的主干分支名不一致（mesh 是 master，otel 与 tracing 是 main），
+# 这是各仓库自身历史造成的，不是笔误，不要"顺手统一"。
+#
+# 校验：bash lynx/check-docs-refs.sh（构建期与本地测试都会跑）
+MESH_DOCS_REF	master
+OTEL_DOCS_REF	main
+TRACING_DOCS_REF	main

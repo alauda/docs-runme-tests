@@ -86,6 +86,38 @@ run_entrypoint() {
     RC=$?
 }
 
+# 用法: run_entrypoint_via_symlink <mode> <stub_exit_code>
+# 模拟镜像里 /usr/local/bin/docs-test 这个软链 + lynx TestTemplate 的 `command: docs-test`
+# （走 PATH 调用，覆盖 Dockerfile 的 ENTRYPOINT）。bash 不解析软链，如果 entrypoint.sh
+# 直接拿 BASH_SOURCE[0] 推导根目录，就会算到软链所在目录的上一级。
+run_entrypoint_via_symlink() {
+    local mode="$1" stub_rc="$2"
+    RESULT_DIR="$(mktemp -d)"
+    mkdir -p "$FIXTURE/usr/local/bin"
+    ln -sf "$FIXTURE/lynx/entrypoint.sh" "$FIXTURE/usr/local/bin/docs-test"
+    PATH="$FIXTURE/usr/local/bin:$PATH" \
+    SINGLE_CLUSTER_NAME=test-cluster \
+    TEST_RESULT_DIR="$RESULT_DIR" \
+    STUB_EXIT_CODE="$stub_rc" \
+    ENABLE_METALLB=false \
+        docs-test "$mode" >"$RESULT_DIR/.entrypoint.log" 2>&1
+    RC=$?
+}
+
+test_symlink_invocation_resolves_framework_root() {
+    printf '\n== 经软链（command: docs-test）调用时必须能定位到框架根目录（核心回归）==\n'
+    setup_fixture
+    run_entrypoint_via_symlink init 0
+    check_eq "经软链调用退出码为 0" "$RC" "0"
+    # 根目录推错时 source framework/common.sh 会失败，日志里必然出现该报错；
+    # 只断言退出码不够——旧实现里 source 失败并不会中止（本文件没有 set -e）。
+    check_eq "日志中没有 common.sh 加载失败" \
+        "$(grep -c 'framework/common.sh' "$RESULT_DIR/.entrypoint.log")" "0"
+    check_eq "确实走到了 init 分支（调用了桩 run.sh）" \
+        "$(grep -c 'STUB run.sh .*--init-only' "$RESULT_DIR/.entrypoint.log")" "1"
+    teardown_fixture
+}
+
 test_init_success_no_broken_case() {
     printf '\n== docs-test init 成功不应产出 broken 占位用例（核心回归）==\n'
     setup_fixture
@@ -114,6 +146,7 @@ test_non_init_mode_still_reports() {
 }
 
 main() {
+    test_symlink_invocation_resolves_framework_root
     test_init_success_no_broken_case
     test_init_failure_still_reports
     test_non_init_mode_still_reports

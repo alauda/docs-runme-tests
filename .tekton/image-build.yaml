@@ -1,44 +1,53 @@
 # docs-runme-tests 镜像构建流水线（Pipelines-as-Code）
 #
-# 依赖：仓库根 Dockerfile（Task 10 产物）、lynx/release-matrix.tsv、lynx/compute-tags.sh。
+# 依赖：仓库根 Dockerfile、lynx/release-matrix.tsv、lynx/compute-tags.sh、lynx/docs-refs.tsv。
 # 产物：推送到 build-harbor.alauda.cn/asm/docs-runme-tests 的镜像。
 #
-# 触发：目前只保留 PR 评论 /image-build 手动触发。
-# docs-runme-tests 自身主干分支是 main（已用 git ls-remote --symref 核实，本地也只有
-# main 分支）——不要与 Dockerfile 里 MESH_DOCS_REF=master 混淆，那是 servicemesh2-docs
-# 这个外部文档仓库自己的默认分支，跟本仓库的主干分支是两回事，不在本文件改动范围内。
+# 触发：
+#   - push 到 main / release-mesh-<x.y>（提交信息含 "ci skip" 的除外）
+#   - 任意分支的 PR 上评论 /image-build（四仓联合改动合入前，用它出一份可真跑的镜像）
 #
-# 【上线前必须人工确认】pipelineRef.params 里 name / version 目前是占位符，不是真实值。
-# 详见下面 pipelineRef 处的注释、文件末尾的退路方案，以及
-# docs/superpowers/plans/2026-08-20-dailybuild-lynx-integration.md 顶部的
-# 「执行期修订记录」与 Task 11 一节。
+# 为什么用内联 pipelineSpec 而不是 pipelineRef + hub catalog：
+#   本组织的 alauda catalog 里能查到的 pipeline 只有两类——product-docs-pipeline
+#   （yarn 生成静态文档站点）和 ko-build-and-push-chart（Go 项目专用的 ko 构建），
+#   都不是"拿 Dockerfile 跑 buildah build+push"。已对工作区内全部 .tekton/*.yaml
+#   做过穷举扫描，没有第三种更贴近的通用镜像构建 pipeline，也没有权限枚举 catalog。
+#   与其填一个猜出来的 pipeline 名（那样每次触发都会卡在 hub resolver 阶段失败），
+#   不如把编排写实：只引用一个已被本组织现存流水线验证过的 hub task
+#   （extras/git-clone:0.10，见 ../acp/base-init-chart/.tekton/acp-base-init-chart.yaml），
+#   其余步骤自带 taskSpec，不依赖任何待确认的名字。
+#
+# 【上线前仍需人工确认的唯一一项】推送镜像的凭据。
+#   本文件按 Tekton 标准做法处理：不声明 registry workspace，依赖 Tekton 的
+#   creds-init——给流水线用的 ServiceAccount 挂一个带 `tekton.dev/docker-0:
+#   https://build-harbor.alauda.cn` 注解的 docker registry Secret，Tekton 会自动
+#   写进容器的 ~/.docker/config.json，buildah 直接就能 push（官方 tektoncd/catalog
+#   的 buildah Task 也是这个机制，本身不带 registry workspace）。
+#   若本仓库对应的 PaC Repository 所在命名空间尚未配好该 Secret，第一次构建会在
+#   buildah push 步骤报 401——那是配置缺失，不是本文件的编排问题。
 apiVersion: tekton.dev/v1
 kind: PipelineRun
 metadata:
   name: docs-runme-tests-image-build
   annotations:
-    # push 触发有意暂时关闭：pipelineRef.params.name/version 还是占位符（见上方
-    # 注释），一旦放开 push 触发，本分支合入 main 后下一次 push 到 main 就会创建
-    # 一条解析失败的 PipelineRun，在 git 侧留下持续复现的红 check。
-    # 等拿到 CI/发版团队确认的真实 pipeline name/version、把占位符换掉后，再把
-    # 下面这条 on-cel-expression 加回来即可恢复 push 触发，判断分支用这条原始
-    # 正则（push 到 main 或 release-mesh-<x.y> 分支，且提交信息不含 "ci skip"）：
-    #   pipelinesascode.tekton.dev/on-cel-expression: |-
-    #     (
-    #       event == "push" &&
-    #       !last_commit_title.contains("ci skip") &&
-    #       source_branch.matches("^(main|release-mesh-[0-9]+([.][0-9]+)+)$")
-    #     )
     pipelinesascode.tekton.dev/on-comment: "^(/image-build)$"
     pipelinesascode.tekton.dev/cancel-in-progress: "true"
     pipelinesascode.tekton.dev/max-keep-runs: "10"
+    # 分支白名单需与 lynx/release-matrix.tsv 的登记集合保持一致，
+    # 否则会出现"能触发构建但 tag 算不出来"或反过来"登记了却触发不了"。
+    pipelinesascode.tekton.dev/on-cel-expression: |-
+      (
+        event == "push" &&
+        !last_commit_title.contains("ci skip") &&
+        source_branch.matches("^(main|release-mesh-[0-9]+([.][0-9]+)+)$")
+      )
 spec:
   timeouts:
     pipeline: 2h
     tasks: 1h
 
   params:
-    # 下面三个是 PaC 触发时自动注入的变量，写法与
+    # 下面四个是 PaC 触发时自动注入的变量，写法与
     # ../servicemesh2-docs/.tekton/doc-build.yaml 保持一致
     - name: git-url
       value: "{{ repo_url }}"
@@ -46,68 +55,191 @@ spec:
       value: "{{ source_branch }}"
     - name: git-commit
       value: "{{ revision }}"
+    - name: pull-request-number
+      value: "{{ pull_request_number }}"
 
-    # 下面是本流水线自己的构建参数
+    # 本流水线自己的构建参数
     - name: image-repo
       value: build-harbor.alauda.cn/asm/docs-runme-tests
     - name: dockerfile
       value: Dockerfile
-    - name: platforms
-      value: linux/amd64
+    # buildah 镜像做成参数：构建集群若拉不到 quay.io，换成内网镜像即可，
+    # 不用动下面的编排逻辑（官方 buildah Task 的 BUILDER_IMAGE 也是这么设计的）
+    - name: builder-image
+      value: quay.io/buildah/stable:v1
 
-    # 有意不在这里放 "image-tags" 参数：Tekton PipelineRun 的 params 只能是触发时的
-    # 静态值（PaC 的 "{{ }}" 变量或写死的字面量），没有办法在这里内嵌"运行
-    # lynx/compute-tags.sh 拿 stdout"这种触发时求值的逻辑。tag 计算只能在 Pipeline
-    # 内部由某个 Task 步骤实际执行 lynx/compute-tags.sh、把结果写成 Tekton Result，
-    # 再让构建 Task 消费——这正是下面 pipelineRef 注释里提到的"构建前置步骤"，具体怎么
-    # 接入取决于 pipelineRef 引用的真实 Pipeline 长什么样（同一个待确认问题的另一面）。
-    # 文件末尾的退路 pipelineSpec 里给出了这段接线的完整可跑示例。
+    # 注：image-tags 与三个文档仓库 ref 都不在这里写死。
+    # PipelineRun 的 params 只能是触发时的静态值，没法在这里内嵌"跑一段脚本取 stdout"。
+    # tag 由 prepare 这个 Task 实际执行 lynx/compute-tags.sh 算出来，
+    # 文档 ref 由同一个 Task 从 lynx/docs-refs.tsv 读出来，都写成 Tekton Result
+    # 供 build-push 消费。
 
-  # ============================================================================
-  # 【待确认，不能直接上线】
-  # 下面 resolver: hub + catalog/kind/name/version 四个 param 的结构，已经用同组织
-  # 现存的真实样例核对过，可信：
-  #   ../servicemesh2-docs/.tekton/doc-build.yaml
-  #   ../opentelemetry-docs/.tekton/doc-build.yaml（与 servicemesh2-docs 一致，仅
-  #     doc-base 参数值不同）
-  #   ../distributed-tracing-docs/.tekton/doc-build.yaml（同上）
-  # 它们的 pipelineRef 没有 "type: tekton" 这个 param，但有 "version"；本文件已按
-  # 这个真实结构写（这点上面三个仓库互相一致，可信度高）。
-  #
-  # 但 name / version 具体填什么——本仓库找不到答案，只能标占位符，理由：
-  #   - 上面三个文档仓库用的 name 是 product-docs-pipeline / product-docs-pr-pipeline
-  #     （version "0.1"），这是"拉 yarn 站点生成静态文档"的流水线，跟"拿 Dockerfile
-  #     跑 buildah build+push"完全是两回事，不能照抄。
-  #   - 同一批仓库里另外能找到的 hub pipeline 样例——
-  #     registry/experimental/.tekton/harbor-robot-gen/harbor-robot-gen.yaml 与
-  #     registry-gateway/registry-gateway.yaml，用的是 ko-build-and-push-chart
-  #     （version "0.1"）——这是 Go 项目专用的 `ko` 构建流水线（连带发 Helm Chart），
-  #     同样不是通用的"Dockerfile + buildah"流水线，也不能照抄。
-  #   - 已对本机能读到的所有 .tekton/*.yaml 做过穷举扫描（用 python3 yaml 解析每个
-  #     pipelineRef.resolver == hub 的文件），没有发现第三种、更贴近"通用镜像构建"的
-  #     alauda catalog pipeline 名字。
-  #   - "组织的 alauda catalog 里到底有没有一条通用镜像构建 pipeline、叫什么名字、
-  #     什么版本" 这件事本身查不到（没有 Tekton Hub / 集群访问权限去枚举 catalog），
-  #     不能凭印象编一个看起来合理的名字（例如 "buildah-build-push"——这是上一轮
-  #     写计划时猜的，已确认不可信，不要用）。
-  #
-  # 需要向 CI/发版团队确认：alauda catalog 里是否存在一条通用的"Dockerfile 镜像
-  # 构建 + 推送到 build-harbor"流水线；如果有，把下面 name/version 换成真实值即可，
-  # 其余结构不用大改。如果没有，退路见本文件末尾大段注释：改用内联 pipelineSpec，
-  # 自带一个 buildah 构建步骤（已用 WebFetch 核对过其中引用的公开镜像/命令是真实的，
-  # 但没有在真实集群跑过，上线前仍需实测）。
-  # ============================================================================
-  pipelineRef:
-    resolver: hub
+  pipelineSpec:
     params:
-      - name: catalog
-        value: alauda
-      - name: kind
-        value: pipeline
-      - name: name
-        value: "TODO-CONFIRM-WITH-CI-TEAM"  # 占位符，不是真实 pipeline 名，见上方注释
-      - name: version
-        value: "TODO-CONFIRM-WITH-CI-TEAM"  # 占位符，不是真实版本号，见上方注释
+      - name: git-url
+      - name: git-revision
+      - name: git-commit
+      - name: pull-request-number
+        default: ""
+      - name: image-repo
+      - name: dockerfile
+      - name: builder-image
+    workspaces:
+      - name: source
+      - name: basic-auth
+    tasks:
+      - name: git-clone
+        taskRef:
+          resolver: hub
+          params:
+            - name: catalog
+              value: extras
+            - name: kind
+              value: task
+            - name: name
+              value: git-clone
+            - name: version
+              value: '0.10'
+        params:
+          - name: url
+            value: "$(params.git-url)"
+          - name: revision
+            value: "$(params.git-revision)"
+          - name: prNumber
+            value: "$(params.pull-request-number)"
+        workspaces:
+          - name: output
+            workspace: source
+          - name: basic-auth
+            workspace: basic-auth
+
+      # 一步算出「打什么 tag」与「用哪三个文档 ref」，都来自仓库内被 CI 校验过的
+      # 清单文件（compute-tags.sh + docs-refs.tsv），不在流水线里另写一份规则。
+      - name: prepare
+        runAfter: ["git-clone"]
+        taskSpec:
+          params:
+            - name: branch
+            - name: commit
+          results:
+            - name: image-tags
+              description: 逗号分隔的镜像 tag 列表，来自 lynx/compute-tags.sh
+            - name: mesh-docs-ref
+              description: servicemesh2-docs 的 ref，来自 lynx/docs-refs.tsv
+            - name: otel-docs-ref
+              description: opentelemetry-docs 的 ref，来自 lynx/docs-refs.tsv
+            - name: tracing-docs-ref
+              description: distributed-tracing-docs 的 ref，来自 lynx/docs-refs.tsv
+          workspaces:
+            - name: source
+          steps:
+            - name: compute
+              image: bash:5
+              script: |
+                #!/usr/bin/env bash
+                # Tekton 对没有 shebang 的 script 默认套 #!/bin/sh；这里显式要 bash
+                set -eu
+                cd "$(workspaces.source.path)"
+
+                # 先把 Tekton 的 $(results.*.path) 落到普通 shell 变量，
+                # 避免下面出现 $( $(...) ) 这种 Tekton 变量与命令替换的嵌套写法
+                OUT_TAGS="$(results.image-tags.path)"
+                OUT_MESH="$(results.mesh-docs-ref.path)"
+                OUT_OTEL="$(results.otel-docs-ref.path)"
+                OUT_TRACING="$(results.tracing-docs-ref.path)"
+
+                bash lynx/check-docs-refs.sh
+
+                bash lynx/compute-tags.sh "$(params.branch)" "$(params.commit)" \
+                    | tr -d '\n' > "${OUT_TAGS}"
+
+                ref_of() {
+                  awk -F'\t' -v k="$1" '!/^#/ && $1 == k {printf "%s", $2; exit}' lynx/docs-refs.tsv
+                }
+                ref_of MESH_DOCS_REF    > "${OUT_MESH}"
+                ref_of OTEL_DOCS_REF    > "${OUT_OTEL}"
+                ref_of TRACING_DOCS_REF > "${OUT_TRACING}"
+
+                # 空 result 说明清单被改坏了（check-docs-refs.sh 应该已经拦住），保险起见再断一次
+                test -s "${OUT_TAGS}" && test -s "${OUT_MESH}" && test -s "${OUT_OTEL}" && test -s "${OUT_TRACING}"
+
+                echo "本次镜像的四仓组合："
+                echo "  tags   : $(cat "${OUT_TAGS}")"
+                echo "  mesh   : $(cat "${OUT_MESH}")"
+                echo "  otel   : $(cat "${OUT_OTEL}")"
+                echo "  tracing: $(cat "${OUT_TRACING}")"
+        params:
+          - name: branch
+            value: "$(params.git-revision)"
+          - name: commit
+            value: "$(params.git-commit)"
+        workspaces:
+          - name: source
+            workspace: source
+
+      - name: build-push
+        runAfter: ["prepare"]
+        taskSpec:
+          params:
+            - name: image-repo
+            - name: dockerfile
+            - name: builder-image
+            - name: image-tags
+            - name: mesh-docs-ref
+            - name: otel-docs-ref
+            - name: tracing-docs-ref
+          workspaces:
+            - name: source
+          steps:
+            # 没有直接 taskRef 官方的 buildah Task：它的 IMAGE 参数只认单个 tag，
+            # 一次调用打不出 compute-tags.sh 产出的逗号分隔多 tag 列表。这里对 tag
+            # 循环加 -t，一次 bud、多次 push。
+            - name: buildah-bud-push
+              image: $(params.builder-image)
+              securityContext:
+                privileged: true
+              script: |
+                #!/usr/bin/env bash
+                # 必须显式声明 bash：下面用到数组与 <<< here-string，
+                # Tekton 默认套的 #!/bin/sh 在多数构建镜像里是 dash/ash，会直接语法错误
+                set -eux
+                cd "$(workspaces.source.path)"
+
+                IFS=',' read -ra TAGS <<< "$(params.image-tags)"
+                TAG_ARGS=()
+                for t in "${TAGS[@]}"; do
+                  TAG_ARGS+=(-t "$(params.image-repo):${t}")
+                done
+
+                buildah bud \
+                    --build-arg "IMAGE_TAG=${TAGS[0]}" \
+                    --build-arg "MESH_DOCS_REF=$(params.mesh-docs-ref)" \
+                    --build-arg "OTEL_DOCS_REF=$(params.otel-docs-ref)" \
+                    --build-arg "TRACING_DOCS_REF=$(params.tracing-docs-ref)" \
+                    -f "$(params.dockerfile)" "${TAG_ARGS[@]}" .
+
+                for t in "${TAGS[@]}"; do
+                  ref="$(params.image-repo):${t}"
+                  buildah push "${ref}" "docker://${ref}"
+                done
+        params:
+          - name: image-repo
+            value: "$(params.image-repo)"
+          - name: dockerfile
+            value: "$(params.dockerfile)"
+          - name: builder-image
+            value: "$(params.builder-image)"
+          - name: image-tags
+            value: "$(tasks.prepare.results.image-tags)"
+          - name: mesh-docs-ref
+            value: "$(tasks.prepare.results.mesh-docs-ref)"
+          - name: otel-docs-ref
+            value: "$(tasks.prepare.results.otel-docs-ref)"
+          - name: tracing-docs-ref
+            value: "$(tasks.prepare.results.tracing-docs-ref)"
+        workspaces:
+          - name: source
+            workspace: source
 
   workspaces:
     - name: source
@@ -118,7 +250,7 @@ spec:
             - ReadWriteOnce
           resources:
             requests:
-              storage: 1Gi
+              storage: 4Gi
 
     # 与 doc-build.yaml 一致：这个 secret 由 pac controller 在触发时自动替换
     - name: basic-auth
@@ -126,9 +258,7 @@ spec:
         secretName: "{{ git_auth_secret }}"
 
   taskRunTemplate:
-    # 沿用 doc-build.yaml 的默认约定：多数构建类 Task（尤其 buildah）需要 root 权限。
-    # 若确认后的真实 Pipeline 内部有自己的 git-clone Task 且需要非 root 覆盖
-    # （doc-build.yaml 就是这么做的），到时候再按其 pipelineTaskName 补 taskRunSpecs。
+    # 沿用 doc-build.yaml 的默认约定：构建类 Task（尤其 buildah）需要 root。
     podTemplate:
       securityContext:
         runAsUser: 0
@@ -136,123 +266,20 @@ spec:
         fsGroup: 0
         fsGroupChangePolicy: "OnRootMismatch"
 
-# ==============================================================================
-# 退路：如果 CI/发版团队确认 alauda catalog 里没有通用镜像构建 pipeline，
-# 把上面整块 "pipelineRef:"（含其注释）删掉，替换成下面这段 "pipelineSpec:"
-# （两者不能在同一个 PipelineRun 里同时出现，spec 下二选一）。
-#
-# 这段自己控制 Task 编排，只依赖公开的 alpine/git 与 quay.io/buildah/stable:v1
-# 镜像，不依赖 alauda 私有 Hub catalog（也就不需要再确认任何 catalog/pipeline 名），
-# 因此可以整段写实：
-#   - quay.io/buildah/stable:v1 已用 WebFetch 核对过 tektoncd/catalog 官方 buildah
-#     Task（0.8 版）的 BUILDER_IMAGE 默认值就是它，buildah bud/push 的命令形状
-#     也是照该 Task 的真实 steps 脚本核对的；
-#   - 没有照抄那个官方 buildah Task 本身（用 taskRef 引用它），是因为它的 IMAGE
-#     参数只认单个 tag，一次调用打不了 lynx/compute-tags.sh 产出的逗号分隔多 tag
-#     列表；下面自己写的 buildah-bud-push 步骤对多个 tag 循环加 "-t"，一次 bud
-#     多次 push，规避这个限制。
-# 这段没有在真实集群跑过（本机没有容器构建工具也连不上 Tekton 集群），接入前请
-# 至少过一遍 `tkn pipeline start --dry-run` 或等价的静态检查。
-#
-#  pipelineSpec:
-#    params:
-#      - name: git-url
-#      - name: git-revision
-#      - name: git-commit
-#      - name: image-repo
-#      - name: dockerfile
-#      - name: platforms
-#    workspaces:
-#      - name: source
-#    tasks:
-#      - name: clone
-#        taskSpec:
-#          params:
-#            - name: url
-#            - name: revision
-#          workspaces:
-#            - name: source
-#          steps:
-#            - name: git-clone
-#              image: alpine/git:latest
-#              script: |
-#                set -eux
-#                git clone --depth 1 \
-#                    --branch "$(params.revision)" "$(params.url)" \
-#                    "$(workspaces.source.path)"
-#        params:
-#          - name: url
-#            value: "$(params.git-url)"
-#          - name: revision
-#            value: "$(params.git-revision)"
-#        workspaces:
-#          - name: source
-#            workspace: source
-#
-#      - name: compute-tags
-#        runAfter: ["clone"]
-#        taskSpec:
-#          params:
-#            - name: branch
-#            - name: commit
-#          results:
-#            - name: image-tags
-#              description: 逗号分隔的镜像 tag 列表，来自 lynx/compute-tags.sh
-#          workspaces:
-#            - name: source
-#          steps:
-#            - name: compute
-#              image: bash:5
-#              script: |
-#                set -eu
-#                bash "$(workspaces.source.path)/lynx/compute-tags.sh" \
-#                    "$(params.branch)" "$(params.commit)" \
-#                    | tr -d '\n' > "$(results.image-tags.path)"
-#        params:
-#          - name: branch
-#            value: "$(params.git-revision)"
-#          - name: commit
-#            value: "$(params.git-commit)"
-#        workspaces:
-#          - name: source
-#            workspace: source
-#
-#      - name: build-push
-#        runAfter: ["compute-tags"]
-#        taskSpec:
-#          params:
-#            - name: image-repo
-#            - name: dockerfile
-#            - name: image-tags
-#          workspaces:
-#            - name: source
-#          steps:
-#            - name: buildah-bud-push
-#              image: quay.io/buildah/stable:v1
-#              securityContext:
-#                privileged: true
-#              script: |
-#                set -eux
-#                cd "$(workspaces.source.path)"
-#                IFS=',' read -ra TAGS <<< "$(params.image-tags)"
-#                TAG_ARGS=()
-#                for t in "${TAGS[@]}"; do
-#                  TAG_ARGS+=(-t "$(params.image-repo):${t}")
-#                done
-#                buildah bud --build-arg "IMAGE_TAG=${TAGS[0]}" \
-#                    -f "$(params.dockerfile)" "${TAG_ARGS[@]}" .
-#                for t in "${TAGS[@]}"; do
-#                  ref="$(params.image-repo):${t}"
-#                  buildah push "${ref}" "docker://${ref}"
-#                done
-#        params:
-#          - name: image-repo
-#            value: "$(params.image-repo)"
-#          - name: dockerfile
-#            value: "$(params.dockerfile)"
-#          - name: image-tags
-#            value: "$(tasks.compute-tags.results.image-tags)"
-#        workspaces:
-#          - name: source
-#            workspace: source
-# ==============================================================================
+  taskRunSpecs:
+    # 与 doc-build.yaml 一致：git-clone 用非 root 跑。
+    - pipelineTaskName: git-clone
+      podTemplate:
+        securityContext:
+          runAsUser: 65532
+          runAsGroup: 65532
+          fsGroup: 65532
+          fsGroupChangePolicy: "OnRootMismatch"
+    - pipelineTaskName: build-push
+      computeResources:
+        requests:
+          cpu: 2
+          memory: 4Gi
+        limits:
+          cpu: 4
+          memory: 8Gi

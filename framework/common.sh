@@ -898,12 +898,23 @@ install_cluster_plugin() {
     fi
     shift 3
 
-    # verify-only（package_url 为空）且没有前置包参数时，本函数完全不会校验
+    # verify-only（package_url 为空）且前置包地址也全为空时，本函数完全不会校验
     # 前置 operator（如 metallb 依赖的 metallb-operator）是否已在目标集群预上架——
-    # release-config 未声明该前置包也不会在这里报错，只会在步骤 4 等 ModuleInfo
+    # 平台未预上架该前置包也不会在这里报错，只会在步骤 4 等 ModuleInfo
     # 变 Running 时白等到超时，且超时信息不含根因。提前预警，把排查方向指对。
-    if [ -z "$package_url" ] && [ $# -eq 0 ]; then
-        log_warn "install_cluster_plugin: verify-only 模式（package_url 为空）且未传入前置插件包参数"
+    #
+    # 判据是"剩下的位置参数是否全为空串"，不是 [ $# -eq 0 ]：真实调用点
+    # （projects/mesh/project.sh 的 install_all_cluster_plugins）在 dailybuild 下写的是
+    #   install_cluster_plugin "metallb" "$cluster" "$PKG_METALLB_URL" "$PKG_METALLB_OPERATOR_URL"
+    # 两个变量都为空，但**仍然传了 4 个参数**，shift 3 之后 $# = 1。
+    # 用 $# -eq 0 判断的话，这条提示在唯一需要它的 metallb 上永不触发，
+    # 反而在只传 3 个参数、本来就没有前置包的 multus 上误报——正好反了。
+    local prereq_all_empty=true prereq
+    for prereq in "$@"; do
+        if [ -n "$prereq" ]; then prereq_all_empty=false; break; fi
+    done
+    if [ -z "$package_url" ] && [ "$prereq_all_empty" = "true" ] && [ $# -gt 0 ]; then
+        log_warn "install_cluster_plugin: verify-only 模式（package_url 为空）且前置插件包地址也为空"
         log_warn "本函数不会校验前置 operator 是否已在目标集群 ${target_cluster} 预上架"
         log_warn "若下一步 ModuleInfo 长期不进入 Running，请先确认前置 operator 已上架，而非仅排查网络/证书"
     fi
@@ -1235,7 +1246,7 @@ setup_external_ip_pools() {
         fi
 
         if [ -z "$json" ]; then
-            log_error "集群 $cluster 上不存在外部 IP 地址池 $pool，且未设置 METALLB_EXTERNAL_ADDRESSES_JSON"
+            log_error "集群 ${cluster} 上不存在外部 IP 地址池 ${pool}，且未设置 METALLB_EXTERNAL_ADDRESSES_JSON"
             log_error '示例: METALLB_EXTERNAL_ADDRESSES_JSON='\''[{"cluster":"business-1","ipv4Addresses":["192.168.139.13/32"]}]'\'''
             log_error "dailybuild 场景应由 initials 的 docs-test init 预先建好该池"
             return 1

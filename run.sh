@@ -267,7 +267,7 @@ _find_test_script() {
     return 0
 }
 
-# 解析用于初始化的集群列表（优先 --cluster，否则 $SINGLE_CLUSTER_NAME）
+# 解析用于初始化的集群列表（优先 --cluster，否则 ${SINGLE_CLUSTER_NAME}）
 resolve_init_clusters() {
     if [ ${#INIT_CLUSTERS[@]} -gt 0 ]; then
         return 0

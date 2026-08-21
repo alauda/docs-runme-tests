@@ -138,7 +138,7 @@ EOF
 # 用法: tracing_install_jaeger_plugin <runme_prefix> [target_cluster]
 # 参数:
 #   runme_prefix   - 文档代码块前缀（install-tracing-elasticsearch / install-tracing-opensearch）
-#   target_cluster - 插件落地的目标集群，默认 $SINGLE_CLUSTER_NAME（即当前被测业务集群）
+#   target_cluster - 插件落地的目标集群，默认 ${SINGLE_CLUSTER_NAME}（即当前被测业务集群）
 # NOTE: 依赖 Global 集群独立 kubeconfig 已生成（tracing project_init 的 ensure_kubeconfig
 #       会追加 Global）；调用方 KUBECONFIG 需指向目标业务集群（文档代码块 4 在其上执行）
 tracing_install_jaeger_plugin() {

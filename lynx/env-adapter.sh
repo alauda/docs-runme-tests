@@ -29,6 +29,7 @@ lynx_adapt_env() {
         . "${FRAMEWORK_ROOT}/.image-info"
     fi
     export RUNME_VERSION DOCS_TEST_IMAGE_TAG MESH_DOCS_REF OTEL_DOCS_REF TRACING_DOCS_REF
+    export MESH_DOCS_SHA OTEL_DOCS_SHA TRACING_DOCS_SHA
 
     # ── 外部地址池：$GLOBAL_EXTERNAL_IPPOOL 是逗号分隔的裸 IP（ares 会带引号，需剥掉），
     #    按当前 region 组装成框架需要的 JSON 格式。IPv6 走 GLOBAL_EXTERNAL_IPPOOL_V6。──

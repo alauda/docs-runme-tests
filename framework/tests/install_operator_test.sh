@@ -7,7 +7,7 @@
 #   FAKE_CSV_PHASE_SEQ - 多次查询 status.phase 时依次返回的值（模拟中间态收敛）
 #   FAKE_SUBSCRIPTION  - 1 表示 Subscription 存在
 #   FAKE_INSTALLPLAN_PENDING - 0 表示 wait-installplan-pending 失败（无挂起的 InstallPlan）
-# 伪造 kubectl 会把每次调用记录到 $FAKE_LOG，用例据此断言实际执行了哪些动作。
+# 伪造 kubectl 会把每次调用记录到 ${FAKE_LOG}，用例据此断言实际执行了哪些动作。
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -228,6 +228,40 @@ test_verify_only_errors_when_not_published() {
     check_not_contains "未调用 upload_package" "$(cat "$FAKE_LOG")" "upload_package"
 }
 
+# verify-only 前置包预警：判据必须是"剩下的位置参数是否全为空串"，不是 $# 的个数。
+# 真实调用点（projects/mesh/project.sh 的 install_all_cluster_plugins）在 dailybuild 下写的是
+#   install_cluster_plugin "metallb" "$c" "$PKG_METALLB_URL" "$PKG_METALLB_OPERATOR_URL"
+# 两个变量都为空但仍传了 4 个参数；multus 则只传 3 个且本来就没有前置包。
+# 曾经用 $# -eq 0 判断，结果正好反了：metallb 永不预警、multus 反倒误报。
+PREREQ_WARN="本函数不会校验前置 operator"
+
+test_prereq_warn_fires_for_empty_prereq_url() {
+    printf '\n== verify-only：前置包地址为空串（metallb 形态）要预警 ==\n'
+    new_case
+    local out rc=0
+    out=$(install_cluster_plugin "mesh-v2-test-suite" "business-1" "" "" 2>&1) || rc=$?
+    check_eq "返回码 0" "$rc" "0"
+    check_contains "命中前置包预警" "$out" "$PREREQ_WARN"
+}
+
+test_prereq_warn_silent_without_prereq_arg() {
+    printf '\n== verify-only：本就没有前置包的插件（multus 形态，只传 3 个参数）不应预警 ==\n'
+    new_case
+    run_install_with_url ""
+    check_eq "返回码 0" "$LAST_RC" "0"
+    check_not_contains "不误报前置包预警" "$LAST_OUTPUT" "$PREREQ_WARN"
+}
+
+test_prereq_warn_silent_when_prereq_url_present() {
+    printf '\n== verify-only：前置包地址非空时不必预警（能自行上架）==\n'
+    new_case
+    local out rc=0
+    out=$(install_cluster_plugin "mesh-v2-test-suite" "business-1" "" \
+        "http://example.com/metallb-operator.stable.amd64.v4.0.0.tgz" 2>&1) || rc=$?
+    check_eq "返回码 0" "$rc" "0"
+    check_not_contains "不预警" "$out" "$PREREQ_WARN"
+}
+
 test_parses_optional_version_suffix
 test_resolve_rejects_missing_target_version
 test_uploads_and_installs_url_version
@@ -237,6 +271,9 @@ test_rejects_running_different_version
 test_preserves_prerequisite_packages
 test_verify_only_skips_push_and_creates_moduleinfo
 test_verify_only_errors_when_not_published
+test_prereq_warn_fires_for_empty_prereq_url
+test_prereq_warn_silent_without_prereq_arg
+test_prereq_warn_silent_when_prereq_url_present
 
 printf '\n==================== 结果 ====================\n'
 printf '通过: %d  失败: %d\n' "$T_PASS" "$T_FAIL"

@@ -169,7 +169,7 @@ dailybuild 环境访问不了公网。mesh 文档里有 46 处 `-f <外部 URL>`
 | `allure` | `Dockerfile` 的 `ARG ALLURE_VERSION` | 建议与 ares 基础镜像保持同版本 |
 | `kubectl` | `Dockerfile` 的 `ARG KUBECTL_VERSION` | |
 | `istioctl` | **不用改** | 版本从 mesh 文档的 `multi-primary-multi-network:set-istio-version` 代码块推导，与 `install_istioctl` 的校验一致。文档改了版本，重建镜像即可自动跟上 |
-| `buildah` | `.tekton/image-build.yaml` 的 `builder-image` 参数 | 构建集群拉不到 quay.io 时换成内网镜像，不用动编排 |
+| `buildah` | `.tekton/image-build.yaml` 的 `builder-image` 参数 | 使用 Edge 内置 Buildah 镜像；平台升级镜像版本时只改这一处 |
 
 改完 `Dockerfile` 的版本 ARG 后要重建镜像验证——构建期每个工具都有 `--version | grep` 断言，
 版本号写错会在构建阶段直接失败，不会带病出镜像。
@@ -290,13 +290,19 @@ git 会原样写进 `.git/config` 的 `remote.origin.url`，任何拿到镜像�
 - push 到 `main` 或 `release-mesh-<x.y>`（提交信息含 `ci skip` 的除外）→ 自动构建
 - 任意分支的 PR 上评论 `/image-build` → 手动构建
 
-流水线是内联 `pipelineSpec`（不引用 hub catalog 的 pipeline），三步：
-`git-clone`（hub `extras/git-clone:0.10`）→ `prepare`（跑 `compute-tags.sh` 与读 `docs-refs.tsv`）
-→ `build-push`（buildah bud 多 tag + 逐个 push）。
+流水线保留内联 `pipelineSpec`，但每个步骤都使用 Edge Hub 的产品化 Task：
 
-推镜像的凭据走 Tekton 标准的 creds-init：流水线 ServiceAccount 上挂一个带
-`tekton.dev/docker-0: https://build-harbor.alauda.cn` 注解的 registry Secret 即可。
-第一次构建若在 push 步骤报 401，是那个 Secret 没配，不是编排问题。
+`catalog/git-clone:0.10` → 两个 `catalog/run-script:0.1`（计算 tag、读取文档 ref）
+→ `catalog/buildah:0.10`（多 tag 构建并推送）。Hub resolver 按 Edge 实际配置使用
+`catalog`、`kind`、`name`、`version` 四个参数。`buildah` 使用 Edge 内置镜像
+`registry.alauda.cn:60070/devops/tektoncd/hub/buildah:v1.33`，所有 Task 按 UID 65532
+运行，不需要自定义 `privileged` step。
+
+推镜像的凭据通过 `registryconfig` 工作区绑定 `build-harbor-credentials` Secret；Secret
+需要包含 `config.json` 或 `.dockerconfigjson`，并对
+`build-harbor.alauda.cn/asm/docs-runme-tests` 具有 push 权限。GitHub 克隆凭据仍由 PaC
+通过 `{{ git_auth_secret }}` 自动注入 `basic-auth` 工作区。第一次构建若出现
+`secret not found` 或 401，先让 Edge 管理员检查 Secret 所在命名空间和 Harbor 权限。
 
 ### 7.3 tag 规则
 
@@ -309,6 +315,112 @@ git 会原样写进 `.git/config` 的 `remote.origin.url`，任何拿到镜像�
 
 分支名净化：非 `[A-Za-z0-9_.-]` 换成 `-`，去掉开头的 `.` 与 `-`，截断到 120 字符。
 `feat/xxx` 里的斜杠必须换掉，否则会被当成镜像仓库路径分隔符。
+
+### 7.4 首次接入 Edge 的操作清单
+
+当前流水线目标是 Edge 的 `business-build` 集群、`asm-dev` 命名空间（控制台工作区：
+`asm~business-build~asm-dev`）。本地 kubeconfig 当前未指向该集群，因此以下三项需要
+Edge/PAC 管理员确认或执行：
+
+1. **准备 Harbor 凭据**：在 `asm-dev` 创建或确认名为 `build-harbor-credentials` 的
+   Secret，数据键为 `config.json` 或 `.dockerconfigjson`，账号至少能推送
+   `build-harbor.alauda.cn/asm/docs-runme-tests`。不要把账号密码写入仓库。
+   管理员可以从安全路径导入现有 Docker 配置（命令不会把凭据写进 Git）：
+
+   ```bash
+   kubectl -n asm-dev create secret generic build-harbor-credentials \
+     --from-file=config.json=/secure/path/config.json \
+     --dry-run=client -o yaml | kubectl apply -f -
+   ```
+
+   如果使用 `.dockerconfigjson`，将 `--from-file` 的键改为
+   `--from-file=.dockerconfigjson=/secure/path/config.json`。
+   如果公司要求使用 Connector 而不是直接绑定 Secret，保留流水线里的
+   `registry-config` Task 工作区不变，只把顶层 `registryconfig` 工作区替换为 CSI 绑定，
+   Connector 名称以 Edge 管理员实际创建的名称为准：
+
+   ```yaml
+   - name: registryconfig
+     csi:
+       driver: connectors-csi
+       readOnly: true
+       volumeAttributes:
+         connectors: "<Connector 名称>"
+         configuration.names: registry-config
+   ```
+
+   Harbor/OCI forward-proxy 会重签 TLS；因此还要在 `build-image` Task 的 `params` 中加入：
+
+   ```yaml
+   - name: tlsVerify
+     value: "false"
+   ```
+
+   直接使用 `config.json`/`.dockerconfigjson` Secret 时保留默认的 `tlsVerify: "true"`。
+
+   这是 OCI Connector 的 forward-proxy 用法，镜像地址仍使用
+   `build-harbor.alauda.cn/asm/docs-runme-tests`。若管理员选择 reverse-proxy，必须同时提供
+   代理镜像地址并修改 `image-repo`，不能自行猜测代理 URL。`connector.name` 和
+   `connector.namespace` 已弃用；多 Connector 或同命名空间 Connector 都统一按
+   Edge/Connector 文档使用 `connectors` 属性；同命名空间时填写 Connector 名称，跨命名空间
+   的格式以管理员在当前 Edge 版本确认的文档为准。
+2. **确认构建期网络**：`Dockerfile` 构建阶段需要访问 Docker Hub、GitHub 和公司 Minio
+   下载基础镜像、文档仓库及工具。若 `business-build` 禁止公网访问，请让平台提供内网
+   镜像/代理；Buildah Task 的 `registry-config` 也支持在 Secret 根目录放 `.env` 注入代理
+   变量。不要把这个问题和 Harbor push 凭据混在一起排查。
+3. **注册 GitHub Repository**：在 PAC 管理的目标命名空间创建本仓库的 Repository CR，
+   URL 为 `https://github.com/alauda/docs-runme-tests`，并让 GitHub App/Webhook 覆盖
+   `push`、`pull_request`、`issue_comment` 事件。若使用 `tkn pac`，从仓库目录执行：
+
+   ```bash
+   cd /Users/alan/go/src/github.com/alauda/docs-runme-tests
+   tkn pac create repo --pac-namespace <PAC 安装命名空间>
+   ```
+
+   `--pac-namespace` 指 PAC controller 所在命名空间，不是 PipelineRun 的 `asm-dev`；两者
+   可以不同。命令交互时另行把 PipelineRun 命名空间选为 `asm-dev`。
+
+   GitHub 的 App/token、Webhook URL 和 Secret 按公司 PAC 管理员提供的值填写。该命令通常还会在当前目录生成
+   `.tekton/pipelinerun.yaml`；本仓库已经有 `image-build.yaml`，不要把这个自动模板一并提交，
+   否则 PAC 会把两个 PipelineRun 都当成流水线定义。更稳妥的做法是让 PAC 管理员直接在
+   Edge/集群中创建 Repository CR，或在临时工作目录运行 CLI，最后只保留本仓库的
+   `.tekton/image-build.yaml`。
+
+   若公司通过 Edge 控制台创建 Repository，填写同样的仓库 URL、命名空间和 GitHub 凭据即可；
+   以 PAC 管理员实际支持的 GitHub App/Webhook 配置为准，不要把 PAT、App 私钥或 webhook
+   secret 写入 Git 仓库。
+
+   注册完成后，先不看构建日志，直接在第一条 PipelineRun 的 YAML/详情里核对 PAC 标记：
+
+   ```text
+   app.kubernetes.io/managed-by: pipelinesascode.tekton.dev
+   pipelinesascode.tekton.dev/git-provider: github
+   pipelinesascode.tekton.dev/repository: alauda-docs-runme-tests
+   pipelinesascode.tekton.dev/url-org: alauda
+   pipelinesascode.tekton.dev/url-repository: docs-runme-tests
+   pipelinesascode.tekton.dev/git-auth-secret: pac-gitauth-...
+   ```
+
+   评论 `/image-build` 产生的运行还应有
+   `pipelinesascode.tekton.dev/event-type: pull_request` 和
+   `pipelinesascode.tekton.dev/pull-request: <编号>`。这些标记与参考运行
+   `doc-pr-build-distributed-tracing-2x745` 的实际页面一致；缺少它们时，先排查
+   Repository/Webhook 注册，不要先改 Task 参数。
+
+代码推送到 GitHub 后，建议先在一个 PR 上评论 `/image-build` 验证，确认 Edge 中出现
+`git-clone`、`prepare-tags`、`prepare-refs`、`build-image` 四个 Task 且最终镜像可拉取，
+再合入 `main`。检查命令（需切换到 `business-build` 的授权 kubeconfig）：
+
+```bash
+kubectl -n asm-dev get repository
+kubectl -n asm-dev get pipelineruns --sort-by=.metadata.creationTimestamp
+tkn pipelinerun logs <PipelineRun 名称> -n asm-dev -f
+```
+
+常见故障定位：没有 PipelineRun 通常是 Repository/Webhook 未注册或分支表达式未匹配；
+`hub resolver` 报错时检查 Edge Hub 上的 `catalog/*` 版本；`secret not found` 或 401
+检查 `build-harbor-credentials` 的命名空间、键名和 Harbor push 权限；Git clone 失败则
+检查 PAC 生成的 `git_auth_secret` 是否存在以及 GitHub App 是否允许读取仓库。
 
 ---
 

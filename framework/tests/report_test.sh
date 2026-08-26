@@ -69,8 +69,38 @@ test_case_skip() {
     case_skip 2 "双栈网格安装" "IS_DUAL_STACK != true" >/dev/null
     local line; line="$(cat "$RUNME_TEST_RUN_DIR/results.jsonl")"
     check_contains "type=case_skip" "$line" '"type":"case_skip"'
-    check_contains "reason" "$line" '"skip_reason":"IS_DUAL_STACK != true"'
+    check_contains "reason" "$line" '"skip_reason":"[expected] IS_DUAL_STACK != true"'
     check_contains "case_id=2" "$line" '"case_id":"2"'
+    rm -rf "$RUNME_TEST_RUN_DIR"
+}
+
+# ── 测试：case_begin 标签进入 case 记录 ──
+test_case_tags() {
+    printf '\n== case_begin tags ==\n'
+    new_sandbox
+    case_begin 3 "单网格" "smoke install sidecar" >/dev/null
+    case_end 0 >/dev/null
+    local line; line="$(cat "$RUNME_TEST_RUN_DIR/results.jsonl")"
+    check_contains "tags 写入 case 记录" "$line" '"tags":"smoke install sidecar"'
+    rm -rf "$RUNME_TEST_RUN_DIR"
+}
+
+# ── 测试：case_begin_if 按 CASE_TYPE 门控 ──
+test_case_begin_if() {
+    printf '\n== case_begin_if ==\n'
+    new_sandbox
+    CASE_TYPE="smoke and not egress"
+    if case_begin_if 3 "命中" smoke install >/dev/null; then
+        case_end 0 >/dev/null
+        check_eq "命中时进入 Case" "1" "1"
+    else
+        check_eq "命中时进入 Case" "0" "1"
+    fi
+    case_begin_if 8 "未命中" update >/dev/null || true
+    local body; body="$(cat "$RUNME_TEST_RUN_DIR/results.jsonl")"
+    check_contains "未命中记为 case_skip" "$body" '"type":"case_skip"'
+    check_contains "未命中原因含 CASE_TYPE" "$body" 'CASE_TYPE'
+    unset CASE_TYPE
     rm -rf "$RUNME_TEST_RUN_DIR"
 }
 
@@ -88,13 +118,62 @@ test_finalize_exit() {
     rm -rf "$RUNME_TEST_RUN_DIR"
 }
 
+# ── 测试：EXIT_ON_TEST_FAILURE=false 时失败不改退出码 ──
+test_exit_on_test_failure() {
+    printf '\n== EXIT_ON_TEST_FAILURE ==\n'
+    new_sandbox
+    report_record_doctest mesh kiali runme-test_kiali.sh test failed "" "pod 未就绪" 100 160
+    local rc=0
+    EXIT_ON_TEST_FAILURE=false TEST_RESULT_DIR="" report_finalize >/dev/null 2>&1 || rc=$?
+    check_eq "false 时退出码 0" "$rc" "0"
+    rm -rf "$RUNME_TEST_RUN_DIR"
+
+    new_sandbox
+    report_record_doctest mesh kiali runme-test_kiali.sh test failed "" "pod 未就绪" 100 160
+    rc=0
+    EXIT_ON_TEST_FAILURE=true TEST_RESULT_DIR="" report_finalize >/dev/null 2>&1 || rc=$?
+    check_eq "true 时退出码 1" "$rc" "1"
+    rm -rf "$RUNME_TEST_RUN_DIR"
+}
+
 # ── 测试：skip_test 设置跳过标记 ──
 test_skip_test() {
     printf '\n== skip_test ==\n'
     __TEST_SKIPPED=0; __TEST_SKIP_REASON=""
     skip_test "缺少 FOO 环境变量" >/dev/null 2>&1
     check_eq "标记置位" "$__TEST_SKIPPED" "1"
-    check_eq "原因记录" "$__TEST_SKIP_REASON" "缺少 FOO 环境变量"
+    check_eq "原因记录" "$__TEST_SKIP_REASON" "[expected] 缺少 FOO 环境变量"
+}
+
+# ── 测试：skip 二分类前缀 ──
+test_skip_categories() {
+    printf '\n== skip 二分类 ==\n'
+    __TEST_SKIPPED=0; __TEST_SKIP_REASON=""
+    skip_test_env "集群非双栈" >/dev/null
+    check_eq "env 前缀" "$__TEST_SKIP_REASON" "[env] 集群非双栈"
+    check_eq "env 置位" "$__TEST_SKIPPED" "1"
+
+    __TEST_SKIPPED=0; __TEST_SKIP_REASON=""
+    skip_test_expected "CASE_TYPE 未选中" >/dev/null
+    check_eq "expected 前缀" "$__TEST_SKIP_REASON" "[expected] CASE_TYPE 未选中"
+
+    __TEST_SKIPPED=0; __TEST_SKIP_REASON=""
+    skip_test "历史调用" >/dev/null
+    check_eq "skip_test 别名走 expected" "$__TEST_SKIP_REASON" "[expected] 历史调用"
+}
+
+# ── 测试：case_skip 分类参数 ──
+test_case_skip_category() {
+    printf '\n== case_skip 分类 ==\n'
+    new_sandbox
+    case_skip 2 "双栈" "IS_DUAL_STACK != true" env >/dev/null
+    check_contains "指定 env 分类" "$(cat "$RUNME_TEST_RUN_DIR/results.jsonl")" '"skip_reason":"[env] IS_DUAL_STACK != true"'
+    rm -rf "$RUNME_TEST_RUN_DIR"
+
+    new_sandbox
+    case_skip 8 "更新策略" "未选中" >/dev/null
+    check_contains "缺省 expected 分类" "$(cat "$RUNME_TEST_RUN_DIR/results.jsonl")" '"skip_reason":"[expected] 未选中"'
+    rm -rf "$RUNME_TEST_RUN_DIR"
 }
 
 # ── 测试：三层聚合 summary.json ──
@@ -206,10 +285,15 @@ test_finalize_idempotent() {
 
 main() {
     test_skip_test
+    test_skip_categories
+    test_case_skip_category
     test_name_parse
     test_record_doctest
     test_case_skip
+    test_case_tags
+    test_case_begin_if
     test_finalize_exit
+    test_exit_on_test_failure
     test_finalize_idempotent
     test_aggregate
     test_junit

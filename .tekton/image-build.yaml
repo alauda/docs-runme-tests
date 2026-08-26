@@ -1,0 +1,528 @@
+# docs-runme-tests 镜像构建流水线（Pipelines-as-Code）
+#
+# 依赖：仓库根 Dockerfile、lynx/release-matrix.tsv、lynx/compute-tags.sh、lynx/docs-refs.tsv。
+# 产物：推送到 build-harbor.alauda.cn/asm/docs-runme-tests 的镜像。
+#
+# 触发：
+#   - push 到 main / release-mesh-<x.y>（提交信息含 "ci skip" 的除外）
+#   - 任意分支的 PR 上评论 /image-build（四仓联合改动合入前，用它出一份可真跑的镜像）
+#
+# 编排使用 Edge Hub 已验证的产品化 Task：
+#   catalog/git-clone:0.10 -> catalog/run-script:0.1 ->
+#   catalog/buildah:0.10（amd64/arm64）-> catalog/merge-image:0.2。
+#   这里保留内联 pipelineSpec，是因为本项目要在构建前动态计算多 tag 和三个文档
+#   仓库 ref；标准镜像构建 Pipeline 没有这三个项目专用 build-arg 的输入接口。
+#   Hub resolver 按 Edge 实际配置使用 catalog/kind/name/version 四个参数。
+#
+# 两个架构使用各自的 RWO 源码 PVC。源码 PVC 使用 Edge 的
+# edge-build-cache-ceph 存储类，保证 arm64 构建节点也能绑定卷。不能让两个原生
+# 架构 Task 并行挂载同一个 RWO PVC；两个 Buildah Task 产出
+# 仅供合并使用的 _buildcache-* tag，merge-image 再把所有正式 tag 写成 manifest list。
+#
+# arm64 节点可能带 build-arm:NoSchedule 或 builder:NoSchedule 污点，两个 toleration
+# 都在对应 clone/build Task 中配置。
+#
+# registryconfig 工作区绑定 asm-dev 中现有的 build-harbor.kauto.docfj Secret。该 Secret
+# 已由 Edge 生成 .dockerconfigjson，并指向 build-harbor.alauda.cn；buildah Task 会通过
+# registry-config 工作区读取它，不再依赖自定义 privileged step 或 ServiceAccount 注解。
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: docs-runme-tests-image-build
+  annotations:
+    pipelinesascode.tekton.dev/on-comment: "^(/image-build)$"
+    pipelinesascode.tekton.dev/cancel-in-progress: "true"
+    pipelinesascode.tekton.dev/max-keep-runs: "10"
+    # 分支白名单需与 lynx/release-matrix.tsv 的登记集合保持一致。
+    pipelinesascode.tekton.dev/on-cel-expression: |-
+      (
+        event == "push" &&
+        !last_commit_title.contains("ci skip") &&
+        source_branch.matches("^(main|release-mesh-[0-9]+([.][0-9]+)+)$")
+      )
+spec:
+  timeouts:
+    pipeline: 2h
+    tasks: 1h
+
+  params:
+    # 下面四个值由 PaC 在触发时替换。
+    - name: git-url
+      value: "{{ repo_url }}"
+    - name: git-revision
+      value: "{{ source_branch }}"
+    - name: git-commit
+      value: "{{ revision }}"
+    - name: pull-request-number
+      value: "{{ pull_request_number }}"
+
+    - name: image-repo
+      value: build-harbor.alauda.cn/asm/docs-runme-tests
+    - name: dockerfile
+      value: Dockerfile
+    # Edge 构建集群内置的 Buildah 镜像，避免依赖 quay.io。
+    - name: builder-image
+      value: registry.alauda.cn:60070/devops/tektoncd/hub/buildah:v1.33
+
+  pipelineSpec:
+    params:
+      - name: git-url
+        type: string
+      - name: git-revision
+        type: string
+      - name: git-commit
+        type: string
+      - name: pull-request-number
+        type: string
+        default: ""
+      - name: image-repo
+        type: string
+      - name: dockerfile
+        type: string
+      - name: builder-image
+        type: string
+    workspaces:
+      - name: source-amd64
+      - name: source-arm64
+      - name: registryconfig
+      - name: basic-auth
+
+    tasks:
+      - name: git-clone-amd64
+        taskRef:
+          resolver: hub
+          params:
+            - name: catalog
+              value: catalog
+            - name: kind
+              value: task
+            - name: name
+              value: git-clone
+            - name: version
+              value: "0.10"
+        params:
+          - name: url
+            value: "$(params.git-url)"
+          - name: revision
+            value: "$(params.git-revision)"
+          - name: prNumber
+            value: "$(params.pull-request-number)"
+        workspaces:
+          - name: output
+            workspace: source-amd64
+          - name: basic-auth
+            workspace: basic-auth
+
+      - name: git-clone-arm64
+        taskRef:
+          resolver: hub
+          params:
+            - name: catalog
+              value: catalog
+            - name: kind
+              value: task
+            - name: name
+              value: git-clone
+            - name: version
+              value: "0.10"
+        params:
+          - name: url
+            value: "$(params.git-url)"
+          - name: revision
+            value: "$(params.git-revision)"
+          - name: prNumber
+            value: "$(params.pull-request-number)"
+        workspaces:
+          - name: output
+            workspace: source-arm64
+          - name: basic-auth
+            workspace: basic-auth
+
+      # 结果 array-result 是完整镜像地址，string-result 是首个 tag。
+      # buildah 的正式 tag 列表直接消费 array-result；架构临时 tag 由下面的
+      # prepare-arch-tags 单独输出，避免依赖 Hub Task 的受限 object-result 字段。
+      - name: prepare-tags
+        runAfter: [git-clone-amd64]
+        taskRef:
+          resolver: hub
+          params:
+            - name: catalog
+              value: catalog
+            - name: kind
+              value: task
+            - name: name
+              value: run-script
+            - name: version
+              value: "0.1"
+        params:
+          # run-script 的 args 会作为 argv 传给脚本。分支名和 commit 来自 GitHub 事件，
+          # 不把它们直接插入 script 文本，避免 Tekton 替换后形成 shell 代码。
+          - name: args
+            value:
+              - "$(params.image-repo)"
+              - "$(params.git-revision)"
+              - "$(params.git-commit)"
+          - name: script
+            value: |
+              #!/usr/bin/env bash
+              set -euo pipefail
+
+              if [ "$#" -lt 3 ]; then
+                echo "run-script 未收到镜像仓库、分支和 commit 参数" >&2
+                exit 1
+              fi
+              source_dir="${WORKSPACE_SOURCE_PATH:?run-script 未绑定 source 工作区}"
+              repo="$1"
+              branch="$2"
+              commit="$3"
+              case "$repo" in
+                ''|*[!A-Za-z0-9._:/-]*)
+                  echo "镜像仓库地址包含不支持的字符" >&2
+                  exit 1
+                  ;;
+              esac
+              case "$commit" in
+                ''|*[!0-9A-Fa-f]*)
+                  echo "Git commit 必须是十六进制 SHA" >&2
+                  exit 1
+                  ;;
+              esac
+              if [ "${#commit}" -lt 7 ]; then
+                echo "Git commit 长度不足 7 位" >&2
+                exit 1
+              fi
+              cd "$source_dir"
+
+              raw=`bash lynx/compute-tags.sh "$branch" "$commit"`
+              IFS=',' read -r -a tags <<< "$raw"
+              test "${#tags[@]}" -gt 0
+              test -n "${tags[0]}"
+
+              out_array="${RESULT_ARRAY_PATH:?run-script 未提供 array-result 路径}"
+              out_string="${RESULT_STRING_PATH:?run-script 未提供 string-result 路径}"
+              first=true
+              printf '[' > "$out_array"
+              for tag in "${tags[@]}"; do
+                case "$tag" in
+                  ''|*[!A-Za-z0-9._-]*)
+                    echo "compute-tags.sh 返回了非法镜像 tag：$tag" >&2
+                    exit 1
+                    ;;
+                esac
+                if [ "$first" = true ]; then
+                  first=false
+                else
+                  printf ',' >> "$out_array"
+                fi
+                printf '"%s:%s"' "$repo" "$tag" >> "$out_array"
+              done
+              printf ']\n' >> "$out_array"
+              printf '%s' "${tags[0]}" > "$out_string"
+
+              printf '镜像 tag：%s\n' "$raw"
+              printf '正式 tag 已准备完成，架构临时 tag 将由 prepare-arch-tags 生成\n'
+        workspaces:
+          - name: source
+            workspace: source-amd64
+
+      # run-script:0.1 的 object-result 只声明了 message 字段，不能承载自定义
+      # 架构字段。单独输出一个数组结果，供两个 Buildah Task 和 merge-image 取值。
+      - name: prepare-arch-tags
+        runAfter: [prepare-tags]
+        taskRef:
+          resolver: hub
+          params:
+            - name: catalog
+              value: catalog
+            - name: kind
+              value: task
+            - name: name
+              value: run-script
+            - name: version
+              value: "0.1"
+        params:
+          - name: args
+            value:
+              - "$(params.image-repo)"
+              - "$(params.git-commit)"
+          - name: script
+            value: |
+              #!/usr/bin/env bash
+              set -euo pipefail
+
+              if [ "$#" -lt 2 ]; then
+                echo "run-script 未收到镜像仓库和 commit 参数" >&2
+                exit 1
+              fi
+              repo="$1"
+              commit="$2"
+              case "$repo" in
+                ''|*[!A-Za-z0-9._:/-]*)
+                  echo "镜像仓库地址包含不支持的字符" >&2
+                  exit 1
+                  ;;
+              esac
+              case "$commit" in
+                ''|*[!0-9A-Fa-f]*)
+                  echo "Git commit 必须是十六进制 SHA" >&2
+                  exit 1
+                  ;;
+              esac
+              if [ "${#commit}" -lt 7 ]; then
+                echo "Git commit 长度不足 7 位" >&2
+                exit 1
+              fi
+              short="${commit:0:7}"
+              out_array="${RESULT_ARRAY_PATH:?run-script 未提供 array-result 路径}"
+              printf '["%s:_buildcache-%s-amd64","%s:_buildcache-%s-arm64"]\n' \
+                "$repo" "$short" "$repo" "$short" > "$out_array"
+              printf '架构临时 tag：%s:_buildcache-%s-amd64、%s:_buildcache-%s-arm64\n' \
+                "$repo" "$short" "$repo" "$short"
+
+      # 单独读取文档 ref，使用 run-script 的 array-result 传给 buildah 的 buildArgs。
+      - name: prepare-refs
+        # ref 清单只需读取一次；两个架构 Buildah Task 共享其 Tekton Result，源码则各自读取
+        # 对应架构的 PVC。
+        runAfter: [prepare-tags]
+        taskRef:
+          resolver: hub
+          params:
+            - name: catalog
+              value: catalog
+            - name: kind
+              value: task
+            - name: name
+              value: run-script
+            - name: version
+              value: "0.1"
+        params:
+          - name: script
+            value: |
+              #!/usr/bin/env bash
+              set -euo pipefail
+
+              source_dir="${WORKSPACE_SOURCE_PATH:?run-script 未绑定 source 工作区}"
+              cd "$source_dir"
+              bash lynx/check-docs-refs.sh
+
+              ref_of() {
+                awk -F '\t' -v key="$1" '!/^#/ && $1 == key {print $2; exit}' lynx/docs-refs.tsv
+              }
+              mesh=`ref_of MESH_DOCS_REF`
+              otel=`ref_of OTEL_DOCS_REF`
+              tracing=`ref_of TRACING_DOCS_REF`
+              test -n "$mesh" && test -n "$otel" && test -n "$tracing"
+
+              printf '["%s","%s","%s"]\n' "$mesh" "$otel" "$tracing" \
+                > "${RESULT_ARRAY_PATH:?run-script 未提供 array-result 路径}"
+              printf '文档 ref：mesh=%s otel=%s tracing=%s\n' "$mesh" "$otel" "$tracing"
+        workspaces:
+          - name: source
+            workspace: source-amd64
+
+      - name: build-image-amd64
+        runAfter: [git-clone-amd64, prepare-tags, prepare-arch-tags, prepare-refs]
+        taskRef:
+          resolver: hub
+          params:
+            - name: catalog
+              value: catalog
+            - name: kind
+              value: task
+            - name: name
+              value: buildah
+            - name: version
+              value: "0.10"
+        params:
+          - name: images
+            # 每个架构只构建一个临时 tag；正式 tag 由 merge-image 统一生成。
+            value:
+              - "$(tasks.prepare-arch-tags.results.array-result[0])"
+          - name: builderImage
+            value: "$(params.builder-image)"
+          - name: containerfile
+            value: "$(params.dockerfile)"
+          - name: context
+            value: "."
+          - name: format
+            value: docker
+          - name: tlsVerify
+            # 直接使用 Harbor registry Secret 时校验 registry TLS；Connector
+            # forward-proxy 方案按 IMAGE-BUILD-README.md 的说明改为 "false"。
+            value: "true"
+          - name: buildArgs
+            value:
+              - "TARGETARCH=amd64"
+              - "IMAGE_TAG=$(tasks.prepare-tags.results.string-result)"
+              - "MESH_DOCS_REF=$(tasks.prepare-refs.results.array-result[0])"
+              - "OTEL_DOCS_REF=$(tasks.prepare-refs.results.array-result[1])"
+              - "TRACING_DOCS_REF=$(tasks.prepare-refs.results.array-result[2])"
+        workspaces:
+          - name: source
+            workspace: source-amd64
+          - name: registry-config
+            workspace: registryconfig
+
+      - name: build-image-arm64
+        runAfter: [git-clone-arm64, prepare-tags, prepare-arch-tags, prepare-refs]
+        taskRef:
+          resolver: hub
+          params:
+            - name: catalog
+              value: catalog
+            - name: kind
+              value: task
+            - name: name
+              value: buildah
+            - name: version
+              value: "0.10"
+        params:
+          - name: images
+            value:
+              - "$(tasks.prepare-arch-tags.results.array-result[1])"
+          - name: builderImage
+            value: "$(params.builder-image)"
+          - name: containerfile
+            value: "$(params.dockerfile)"
+          - name: context
+            value: "."
+          - name: format
+            value: docker
+          - name: tlsVerify
+            value: "true"
+          - name: buildArgs
+            value:
+              - "TARGETARCH=arm64"
+              - "IMAGE_TAG=$(tasks.prepare-tags.results.string-result)"
+              - "MESH_DOCS_REF=$(tasks.prepare-refs.results.array-result[0])"
+              - "OTEL_DOCS_REF=$(tasks.prepare-refs.results.array-result[1])"
+              - "TRACING_DOCS_REF=$(tasks.prepare-refs.results.array-result[2])"
+        workspaces:
+          - name: source
+            workspace: source-arm64
+          - name: registry-config
+            workspace: registryconfig
+
+      - name: merge-image
+        runAfter: [build-image-amd64, build-image-arm64]
+        taskRef:
+          resolver: hub
+          params:
+            - name: catalog
+              value: catalog
+            - name: kind
+              value: task
+            - name: name
+              value: merge-image
+            - name: version
+              value: "0.2"
+        params:
+          - name: sourceImages
+            value:
+              - "$(tasks.prepare-arch-tags.results.array-result[0])"
+              - "$(tasks.prepare-arch-tags.results.array-result[1])"
+          - name: targetImages
+            value: "$(tasks.prepare-tags.results.array-result[*])"
+          - name: tlsVerify
+            value: "true"
+        workspaces:
+          - name: registry-config
+            workspace: registryconfig
+
+  workspaces:
+    - name: source-amd64
+      volumeClaimTemplate:
+        spec:
+          storageClassName: edge-build-cache-ceph
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 4Gi
+
+    - name: source-arm64
+      volumeClaimTemplate:
+        spec:
+          storageClassName: edge-build-cache-ceph
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 4Gi
+
+    # 该 Secret 由 PaC 在触发时自动替换，供 git-clone 访问 GitHub。
+    - name: basic-auth
+      secret:
+        secretName: "{{ git_auth_secret }}"
+
+    # Edge 标准 buildah Task 的 registry-config 工作区。
+    - name: registryconfig
+      secret:
+        secretName: build-harbor.kauto.docfj
+
+  # Edge Hub 的 git-clone、run-script、buildah 均按非 root UID 65532 设计。
+  taskRunTemplate:
+    podTemplate:
+      securityContext:
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        fsGroupChangePolicy: "OnRootMismatch"
+
+  taskRunSpecs:
+    - pipelineTaskName: git-clone-amd64
+      podTemplate:
+        nodeSelector:
+          kubernetes.io/arch: amd64
+    - pipelineTaskName: git-clone-arm64
+      podTemplate:
+        nodeSelector:
+          kubernetes.io/arch: arm64
+        tolerations:
+          - key: build-arm
+            operator: Exists
+            effect: NoSchedule
+          - key: builder
+            operator: Exists
+            effect: NoSchedule
+    - pipelineTaskName: prepare-tags
+      podTemplate:
+        nodeSelector:
+          kubernetes.io/arch: amd64
+    - pipelineTaskName: prepare-arch-tags
+      podTemplate:
+        nodeSelector:
+          kubernetes.io/arch: amd64
+    - pipelineTaskName: prepare-refs
+      podTemplate:
+        nodeSelector:
+          kubernetes.io/arch: amd64
+    - pipelineTaskName: build-image-amd64
+      podTemplate:
+        nodeSelector:
+          kubernetes.io/arch: amd64
+      computeResources:
+        requests:
+          cpu: 2
+          memory: 4Gi
+        limits:
+          cpu: 4
+          memory: 8Gi
+    - pipelineTaskName: build-image-arm64
+      podTemplate:
+        nodeSelector:
+          kubernetes.io/arch: arm64
+        tolerations:
+          - key: build-arm
+            operator: Exists
+            effect: NoSchedule
+          - key: builder
+            operator: Exists
+            effect: NoSchedule
+      computeResources:
+        requests:
+          cpu: 2
+          memory: 4Gi
+        limits:
+          cpu: 4
+          memory: 8Gi

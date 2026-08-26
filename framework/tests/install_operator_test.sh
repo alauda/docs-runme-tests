@@ -7,7 +7,7 @@
 #   FAKE_CSV_PHASE_SEQ - 多次查询 status.phase 时依次返回的值（模拟中间态收敛）
 #   FAKE_SUBSCRIPTION  - 1 表示 Subscription 存在
 #   FAKE_INSTALLPLAN_PENDING - 0 表示 wait-installplan-pending 失败（无挂起的 InstallPlan）
-# 伪造 kubectl 会把每次调用记录到 $FAKE_LOG，用例据此断言实际执行了哪些动作。
+# 伪造 kubectl 会把每次调用记录到 ${FAKE_LOG}，用例据此断言实际执行了哪些动作。
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -101,6 +101,24 @@ case "$verb:$kind" in
         if [ "${FAKE_SUBSCRIPTION:-0}" = "1" ]; then exit 0; fi
         echo "Error from server (NotFound): subscription \"$name\" not found" >&2
         exit 1 ;;
+    get:packagemanifest)
+        # verify-only 场景：install_operator 空 URL 时反查 PackageManifest。
+        # FAKE_PACKAGEMANIFEST_EXISTS!=1 时模拟 NotFound；存在时区分「仅探测存在」
+        # (retry_command 的 >/dev/null 调用，无 -o json) 与「取 -o json」两种调用。
+        if [ "${FAKE_PACKAGEMANIFEST_EXISTS:-0}" != "1" ]; then
+            echo "Error from server (NotFound): packagemanifests.packages.operators.coreos.com \"$name\" not found" >&2
+            exit 1
+        fi
+        for a in "$@"; do
+            case "$a" in
+                json)
+                    cat <<JSON
+{"status":{"defaultChannel":"${FAKE_PM_DEFAULT_CHANNEL:-stable}","channels":[{"name":"stable","currentCSV":"${FAKE_PM_STABLE_CSV:-opentelemetry-operator2.v0.156.0}"},{"name":"stable-legacy","currentCSV":"${FAKE_PM_LEGACY_CSV:-opentelemetry-operator2.v0.1.0}"}]}}
+JSON
+                    exit 0 ;;
+            esac
+        done
+        exit 0 ;;
     wait:*)
         exit 0 ;;
 esac
@@ -148,6 +166,7 @@ new_case() {
     FAKE_LOG="$(mktemp)"; export FAKE_LOG
     FAKE_STATE_FILE="$(mktemp)"; export FAKE_STATE_FILE
     export FAKE_CSV_PHASE="" FAKE_CSV_PHASE_SEQ="" FAKE_SUBSCRIPTION=0 FAKE_INSTALLPLAN_PENDING=1
+    export FAKE_PACKAGEMANIFEST_EXISTS=0 FAKE_PM_DEFAULT_CHANNEL="" FAKE_PM_STABLE_CSV="" FAKE_PM_LEGACY_CSV=""
     # 重入探测的等待循环在单测里不要真的 sleep
     export OPERATOR_REENTRY_WAIT_RETRIES=3 OPERATOR_REENTRY_WAIT_INTERVAL=0
 }
@@ -251,6 +270,27 @@ test_errexit_safe_when_called_bare() {
     check_contains "跳过安装后脚本继续执行" "$out" "AFTER_INSTALL_OPERATOR"
 }
 
+# verify-only 集成用例（M1-3）：空 URL + PackageManifest 存在时，csv_name 必须来自
+# defaultChannel 对应 channel 的 currentCSV，而不是空串，也不是随便一个 channel 的值
+# （伪造两个 channel，只有 defaultChannel="stable" 那个的 currentCSV 是期望值）。
+# 用 FAKE_CSV_PHASE=Succeeded 短路到「已安装」分支，避免继续跑完整安装流程。
+test_verify_only_csv_from_packagemanifest() {
+    printf '\n== verify-only：空 URL + PackageManifest 存在 → csv_name 来自 defaultChannel 的 currentCSV ==\n'
+    new_case
+    export FAKE_PACKAGEMANIFEST_EXISTS=1
+    export FAKE_PM_DEFAULT_CHANNEL="stable"
+    export FAKE_PM_STABLE_CSV="opentelemetry-operator2.v9.9.9"
+    export FAKE_PM_LEGACY_CSV="opentelemetry-operator2.v0.1.0"
+    export FAKE_CSV_PHASE="Succeeded" FAKE_SUBSCRIPTION=1
+    local out rc=0
+    out=$(install_operator "opentelemetry-operator2" "opentelemetry-operator2" "" "install-otel" 2>&1) || rc=$?
+    check_eq "返回码 0" "$rc" "0"
+    check_contains "提示进入 verify-only 模式" "$out" "verify-only"
+    check_contains "csv_name 来自 defaultChannel 的 currentCSV" "$out" "verify-only 目标 CSV: opentelemetry-operator2.v9.9.9"
+    check_not_contains "不是另一 channel 的 CSV" "$out" "opentelemetry-operator2.v0.1.0"
+    check_contains "重入探测确实使用了解析出的 csv_name" "$(cat "$FAKE_LOG")" "get csv opentelemetry-operator2.v9.9.9"
+}
+
 test_fresh_install
 test_already_installed
 test_installed_without_subscription
@@ -259,6 +299,7 @@ test_failed_csv
 test_intermediate_phase_never_converges
 test_installplan_timeout
 test_errexit_safe_when_called_bare
+test_verify_only_csv_from_packagemanifest
 
 printf '\n==================== 结果 ====================\n'
 printf '通过: %d  失败: %d\n' "$T_PASS" "$T_FAIL"

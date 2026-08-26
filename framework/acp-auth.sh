@@ -264,7 +264,7 @@ acp_login_api_token() {
 
     if [ "$http_code" != "200" ]; then
         reason=$(_acp_auth_error_reason "$login_resp")
-        log_error "平台登录失败: HTTP $http_code${reason:+（$reason）}"
+        log_error "平台登录失败: HTTP ${http_code}${reason:+（${reason}）}"
         case "$reason" in
             *FirstLoginPasswordUpdate*|*PasswordExpired*)
                 log_error "该账号需先在 ACP 页面修改密码后才能登录" ;;

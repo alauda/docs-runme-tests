@@ -132,21 +132,14 @@ _tracing_load_acp_es_config() {
 # 校验 tracing 项目专属环境变量
 project_check_env() {
     if [ -z "$PKG_OPENTELEMETRY_OPERATOR2_URL" ]; then
-        log_error "tracing 项目缺少必要的环境变量: PKG_OPENTELEMETRY_OPERATOR2_URL"
-        return 1
+        log_info "未提供 PKG_OPENTELEMETRY_OPERATOR2_URL，OTel Operator 进入 verify-only 模式（要求平台已预上架）"
     fi
-
-    # Jaeger v2 集群插件包：两篇安装文档的前置依赖（安装测试步骤 1 经文档代码块安装，
-    # 未上架时自动下载并 violet push 到 Global，见 projects/tracing/jaeger-plugin.sh）
     if [ -z "$PKG_JAEGER_CLUSTER_PLUGIN_URL" ]; then
-        log_error "tracing 项目缺少必要的环境变量: PKG_JAEGER_CLUSTER_PLUGIN_URL"
-        return 1
+        log_info "未提供 PKG_JAEGER_CLUSTER_PLUGIN_URL，Jaeger v2 集群插件进入 verify-only 模式（要求平台已预上架）"
     fi
 
-    # 启用 mesh-v2-test-suite 集群插件时需要其插件包地址
     if [ "${USE_MESH_V2_TEST_SUITE_PLUGIN:-false}" = "true" ] && [ -z "$PKG_MESH_V2_TEST_SUITE_URL" ]; then
-        log_error "USE_MESH_V2_TEST_SUITE_PLUGIN=true 但缺少 PKG_MESH_V2_TEST_SUITE_URL"
-        return 1
+        log_info "未提供 PKG_MESH_V2_TEST_SUITE_URL，mesh-v2-test-suite 进入 verify-only 模式（要求平台已预上架）"
     fi
 
     # 存储后端配置为软依赖，分别由各安装测试脚本自检（缺失时对应测试以 SKIPPED 退出）：
@@ -179,14 +172,19 @@ project_init() {
     # 配置也需要访问 Global 集群。
     ensure_kubeconfig "${clusters[@]}" "$global_cluster" || return 1
 
-    # 下载并上传 OTel Operator 插件包（install_operator 依赖其 PackageManifest 存在）
-    download_package "$PKG_OPENTELEMETRY_OPERATOR2_URL" || return 1
+    # 下载并上传 OTel Operator 插件包（install_operator 依赖其 PackageManifest 存在）。
+    # 地址为空即 verify-only：跳过，由平台预上架。
     local cluster
-    for cluster in "${clusters[@]}"; do
-        if ! check_package_uploaded "$cluster" "$PKG_OPENTELEMETRY_OPERATOR2_URL"; then
-            upload_package "$cluster" "$PKG_OPENTELEMETRY_OPERATOR2_URL" || return 1
-        fi
-    done
+    if [ -n "$PKG_OPENTELEMETRY_OPERATOR2_URL" ]; then
+        download_package "$PKG_OPENTELEMETRY_OPERATOR2_URL" || return 1
+        for cluster in "${clusters[@]}"; do
+            if ! check_package_uploaded "$cluster" "$PKG_OPENTELEMETRY_OPERATOR2_URL"; then
+                upload_package "$cluster" "$PKG_OPENTELEMETRY_OPERATOR2_URL" || return 1
+            fi
+        done
+    else
+        log_info "未提供 PKG_OPENTELEMETRY_OPERATOR2_URL，跳过上架（verify-only）"
+    fi
 
     # OpenSearch 自动安装的插件包（TopoLVM 两个包 + opensearch-operator 检查）不在此准备：
     # 仅 OpenSearch 安装测试需要，由其步骤 0（tracing_ensure_opensearch）按需下载上架，

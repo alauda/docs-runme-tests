@@ -14,23 +14,25 @@
 
 测试脚本 `runme-test_*.sh` 仍与被测 `.mdx` 同仓同目录（runme 按 CWD 所在 git 仓库扫描代码块；文档与测试同 PR 演进）。本仓库提供引擎、通用函数库、各项目初始化逻辑与全量编排。
 
-## 发版管理
+## 变更操作手册
 
-创建 `release-mesh-2.x` 分支，用于对应测试的项目。
+本文档讲**怎么用**；改了东西之后还要同步改哪儿（新增 Case、文档外部链接变更、
+工具版本升级、插件包地址、四仓联合改动、发新版本），统一见
+**[UPDATE-README.md](UPDATE-README.md)**。
 
-注：目前 mesh，OTel 和 Tracing 会同时发版，所以只创建 mesh 发版分支。mesh 2.1 对应 OTel 2.0 和 Tracing 2.0，以此类推。
+镜像构建、Edge 流水线和 tag 规则已单独整理到
+**[IMAGE-BUILD-README.md](IMAGE-BUILD-README.md)**。
 
-### docs-runme-tests 与 mesh-v2-test-suite 矩阵关系
-
-| docs-runme-tests 分支 | mesh-v2-test-suite 版本 |
-| --------------------- | ----------------------- |
-| release-mesh-2.1      | v1.0.x                  |
-| release-mesh-2.2      | v2.2.x-rN               |
+发版分支规则与 mesh-v2-test-suite 版本矩阵已迁至该文档的
+[「发新版本」](UPDATE-README.md#6-发新版本)一节。
 
 ## 目录结构
 
 ```bash
 docs-runme-tests/
+├── README.md               # 怎么用（本文）
+├── UPDATE-README.md        # 怎么改：新增 Case / 离线资源 / 版本升级 / 发版
+├── IMAGE-BUILD-README.md   # 镜像构建与 Edge 流水线操作手册
 ├── run.sh                  # 单测执行引擎（项目感知）
 ├── run-mesh-all.sh         # mesh 项目全量编排
 ├── run-otel-all.sh         # otel 项目全量编排
@@ -46,9 +48,22 @@ docs-runme-tests/
 │   ├── mesh/project.sh     # mesh 钩子 + istioctl / 插件包 / operator 安装 / PLATFORM_CA
 │   ├── otel/project.sh     # otel 钩子
 │   └── tracing/            # tracing 钩子（project.sh）+ OpenSearch / Elasticsearch 自动安装（opensearch.sh / elasticsearch.sh）+ Jaeger v2 集群插件共享安装（jaeger-plugin.sh）
+├── lynx/                   # lynx / dailybuild 适配层
+│   ├── entrypoint.sh       # 镜像入口 docs-test <init|mesh|otel|tracing>
+│   ├── env-adapter.sh      # lynx 内置变量 → 框架变量
+│   ├── case-filter.sh      # CASE_TYPE 表达式求值（and / not 合取式）
+│   ├── allure.sh           # allure 结果与报告生成
+│   ├── compute-tags.sh     # 分支 + commit → 镜像 tag 列表
+│   ├── assets-manifest.tsv # 离线资产清单（外部 URL → 镜像内路径）
+│   ├── case-ids.tsv        # case_id 清单（文档 → 稳定编号）
+│   ├── docs-refs.tsv       # 三个文档仓库在镜像里使用的 ref
+│   ├── release-matrix.tsv  # 发版分支 → ACP 大版本
+│   └── check-*.sh          # 四条清单/兼容性自检（构建期强制）
+├── .tekton/                # 镜像构建流水线（Pipelines-as-Code）
 ├── charts/
 │   └── mesh-v2-test-suite/ # Mesh v2 测试套件 ACP 集群插件
 ├── bin/                    # 工具缓存：runme / violet / istioctl（gitignore）
+├── assets/                 # 离线资产（构建期落盘，gitignore）
 ├── package/                # 插件包缓存（gitignore）
 └── .kubeconfig/            # kubeconfig 缓存（gitignore）
 
@@ -133,7 +148,14 @@ export ENABLE_METALLB=false
 # - 多集群 Case 6/7：cluster 需与 EAST_CLUSTER_NAME / WEST_CLUSTER_NAME 对应
 # - 单集群入口网关 LoadBalancer 测试（Case 3/5 的 exposing-* 文档）：需含 cluster=$SINGLE_CLUSTER_NAME 条目
 export METALLB_EXTERNAL_ADDRESSES_JSON='[{"cluster":"business-1","ipv4Addresses":["192.168.139.13/32"]},{"cluster":"business-2","ipv4Addresses":["192.168.137.150/32"]}]'
+```
 
+> **verify-only 模式**：所有 `PKG_*_URL` 均为**可选**。留空时框架不下载、不上架该插件包，
+> 改为直接校验它是否已在集群上架（Operator 查 PackageManifest，集群插件查 ModuleConfig），
+> 并从中反查目标版本。这正是 dailybuild 的用法——插件包由 lynx 依据 Release YAML 预上架，
+> 测试 Pod 不需要访问 package-minio。本地手工跑则照旧提供地址，由框架自行下载上架。
+
+```bash
 # ── 插件包地址 ──────────────────────────────────────────────
 # Operator 包：mesh 项目需要
 export PKG_SERVICEMESH_OPERATOR2_URL=xxx
@@ -193,13 +215,18 @@ export TRACING_TEST_SPM=true
 
 **项目专属变量**（各项目 `project_check_env` 校验）：
 
-| 项目    | 必需                                                                                                        | 条件必需 / 软依赖                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| ------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| mesh    | `PKG_SERVICEMESH_OPERATOR2_URL` `PKG_KIALI_OPERATOR_URL` `PKG_OPENTELEMETRY_OPERATOR2_URL` `PKG_MULTUS_URL` | `ENABLE_METALLB=true` → `PKG_METALLB_URL` `PKG_METALLB_OPERATOR_URL`；`USE_MESH_V2_TEST_SUITE_PLUGIN=true` → `PKG_MESH_V2_TEST_SUITE_URL`                                                                                                                                                                                                                                                                                                                          |
-| otel    | `PKG_OPENTELEMETRY_OPERATOR2_URL`                                                                           | `USE_MESH_V2_TEST_SUITE_PLUGIN=true` → `PKG_MESH_V2_TEST_SUITE_URL`                                                                                                                                                                                                                                                                                                                                                                                                |
-| tracing | `PKG_OPENTELEMETRY_OPERATOR2_URL` `PKG_JAEGER_CLUSTER_PLUGIN_URL`                                           | `USE_MESH_V2_TEST_SUITE_PLUGIN=true` → `PKG_MESH_V2_TEST_SUITE_URL`；ES：`TRACING_ACP_ES_CLUSTER` 或 `TRACING_ES_ENDPOINT/USER/PASS`（`TRACING_INSTALL_ES=true` + `PKG_LOG_CENTER_URL` 时自动安装 logcenter 集群插件到 `TRACING_ACP_ES_CLUSTER`）；OpenSearch：默认自动安装（`TRACING_INSTALL_OPENSEARCH=true` + `PKG_ACP_STORAGE_OPERATOR_URL` `PKG_TOPOLVM_OPERATOR_URL`，opensearch-operator 包需手动上架），或降级手动 `TRACING_OPENSEARCH_ENDPOINT/USER/PASS` |
+| 项目 | 必需 | 条件必需 / 软依赖 |
+| --- | --- | --- |
+| mesh | 无（`PKG_*_URL` 全部可选，留空即 verify-only） | 提供地址时按原逻辑下载上架；`ENABLE_METALLB=true` 时若也未预上架 metallb / metallb-operator，安装会报错 |
+| otel | 无（同上） | `USE_MESH_V2_TEST_SUITE_PLUGIN=true` 时需 `PKG_MESH_V2_TEST_SUITE_URL` 或平台已预上架 |
+| tracing | 无（同上） | ES / OpenSearch 存储后端配置同原表；Jaeger v2 集群插件需 `PKG_JAEGER_CLUSTER_PLUGIN_URL` 或平台已预上架 |
 
 > 注：`METALLB_EXTERNAL_ADDRESSES_JSON`（外部 IP 地址池地址，JSON 数组）在 `ENABLE_METALLB=true` 时由 `setup_external_ip_pools` 创建地址池时校验（不在 `project_check_env`）：多集群 Case 6/7 需含 `cluster=$EAST_CLUSTER_NAME`/`$WEST_CLUSTER_NAME` 条目；单集群入口网关 LoadBalancer 测试（Case 3/5 的 exposing-\* 文档）需含 `cluster=$SINGLE_CLUSTER_NAME` 条目。
+>
+> 地址池所有权：`init` 入口（`lynx/entrypoint.sh` 的 `docs-test init`）创建的池带
+> `runme-test/owner=init` 标签，长期存在、测试结束不清理；单篇测试脚本自建的池带
+> `owner=doctest`，用完即删。池已存在时 `setup_external_ip_pools` 直接复用，
+> 不再要求 `METALLB_EXTERNAL_ADDRESSES_JSON`。
 
 ### 4. ACP API Token 自动获取
 
@@ -295,6 +322,82 @@ cd docs-runme-tests
 >
 > 可选环境变量：`OPERATOR_REENTRY_WAIT_RETRIES` / `OPERATOR_REENTRY_WAIT_INTERVAL` 调整中间态的等待轮次与间隔。逻辑单测见 `framework/tests/install_operator_test.sh`（伪造 kubectl/runme，不依赖集群）。
 
+## 构建测试镜像
+
+```bash
+docker build --build-arg IMAGE_TAG=local-dev -t docs-runme-tests:local-dev .
+```
+
+镜像自包含：三个文档仓库按 ref 浅克隆进 `/app/`，`runme` / `violet` / `istioctl` 预置到
+`bin/`（`istioctl` 版本从 mesh 文档的 runme 块推导，与 `install_istioctl` 的校验一致），
+文档引用的 17 个外部 sample YAML 按 `lynx/assets-manifest.tsv` 落到 `assets/`。
+构建期会跑 `lynx/check-{manifest,case-ids,docs-refs,shell-compat}.sh`，任一不通过即构建失败。
+
+想知道某个镜像里装的是哪一组四仓组合：入口日志第一行会打印 tag 与三个文档仓库的 commit SHA，
+镜像内也可以 `cat /app/docs-runme-tests/.image-info`。
+
+**构建参数、tag 规则、流水线触发方式、四仓联合改动的构建流程**详见
+[IMAGE-BUILD-README.md](IMAGE-BUILD-README.md)与
+[UPDATE-README.md 第 5 节](UPDATE-README.md#5-四仓联合改动文档仓库与本仓库要一起改)。
+
+## 在 lynx / dailybuild 中运行
+
+镜像 `build-harbor.alauda.cn/asm/docs-runme-tests:<tag>`，入口 `command: docs-test`，
+参数 `args: [init|mesh|otel|tracing]`。
+
+| lynx 内置变量 | 映射到框架变量 | 备注 |
+| --- | --- | --- |
+| `$API_URL` | `PLATFORM_ADDRESS` | |
+| `$USERNAME` / `$PASSWORD` | `PLATFORM_USERNAME` / `PLATFORM_PASSWORD` | |
+| `$REGION_NAME` | `SINGLE_CLUSTER_NAME` | 被测集群 |
+| `$GLOBAL_EXTERNAL_IPPOOL` | `METALLB_EXTERNAL_ADDRESSES_JSON` | 按 region 取值，`init` 用它建地址池 |
+| `TEST_RESULT_DIR` | 报告根目录 | 未注入时缺省 `/app/report` |
+| `CASE_TYPE` | Case / DocTest 过滤表达式 | 仅支持 `and` / `not` 合取式 |
+| `$TOKEN` | **忽略** | lynx 不替换它，框架用账号密码经 dex 换 token |
+
+模板里需要写死的变量：`EAST_CLUSTER_NAME`、`WEST_CLUSTER_NAME`、`GLOBAL_CLUSTER_NAME=global`、
+`ENABLE_METALLB`、`USE_MESH_V2_TEST_SUITE_PLUGIN=true`、`IS_DUAL_STACK`、`TRACING_ACP_ES_CLUSTER`、
+`ACP_KUBECONFIG_MODE=direct`、`AUTO_GEN_BOOKINFO_TRAFFIC=true`、`ENABLE_GW_LINUX_KERNEL_COMPAT=false`、
+`RESOURCE_PREFIX`。所有 `PKG_*_URL` **不设置**（verify-only，见上文）。
+
+报告产物：`$TEST_RESULT_DIR/allure-result/` 与 `$TEST_RESULT_DIR/allure-report/`。
+用例粒度为一篇文档的一次执行（DocTest），Case 作为 allure suite 分组。
+
+### Case 标签与 CASE_TYPE
+
+`CASE_TYPE` 只支持 `and` 连接的合取式与 `not` 取反（`or` 与括号会报错退出）。
+保留标签 `always` 恒被选中，用于环境初始化这类必须先跑的前置 Case。
+`CASE_TYPE` 未设置时全部选中——本地手工跑行为不变。
+
+| 项目 | Case | 标签 |
+| --- | --- | --- |
+| mesh | 1 环境初始化 | `always install` |
+| mesh | 2 双栈网格安装 | `dualstack install` |
+| mesh | 3 单网格安装与应用（含调用链） | `smoke install sidecar` |
+| mesh | 4 Istio HA 配置 | `ha install` |
+| mesh | 5 Ambient Mode 安装 | `smoke install ambient` |
+| mesh | 6 / 7 多集群 | `multicluster` |
+| mesh | 8 / 9 / 10 更新策略 | `update` |
+| mesh | 11 Ambient 更新 | `update ambient` |
+| otel | 1 安装与卸载 | `smoke install` |
+| otel | 2 Java 自动注入示例 | `smoke install java` |
+| tracing | 1 安装与卸载（ES） | `smoke install elasticsearch` |
+| tracing | 2 安装与卸载（OpenSearch） | `install opensearch` |
+| tracing | 3 SPM 多副本（ES） | `smoke ha elasticsearch` |
+| tracing | 4 SPM 多副本（OpenSearch） | `ha opensearch` |
+
+DocTest 级标签只有 `egress`（mesh Case 3 / 5 中的三篇 `routing-egress-traffic-*`）。
+
+dailybuild 目前开了四个测试项：`docs-mesh` / `docs-otel` / `docs-tracing` 用
+`CASE_TYPE="smoke and not egress"`，`docs-mesh-multicluster` 单独用
+`CASE_TYPE="multicluster and not egress"`。多集群必须单开一项，因为表达式不支持 `or`，
+`smoke` 那三项选不到只带 `multicluster` 标签的 Case 6/7。
+
+OpenSearch 就绪后给 tracing Case 2/4 补 `smoke` 标签即可纳入，表达式不用改。
+
+新增或修改标签时要同步 release-config 的 `CASE_TYPE`，
+详见 [UPDATE-README.md 第 1.4 节](UPDATE-README.md#14-需要新标签时同步-release-config)。
+
 ## 各项目测试清单
 
 ### mesh（servicemesh2-docs）
@@ -361,7 +464,7 @@ cd docs-runme-tests
 | 分布式调用链安装（OpenSearch）    | `./run.sh --project tracing --file installing-distributed-tracing-opensearch`    |
 | 分布式调用链卸载                  | `./run.sh --project tracing --file uninstalling-distributed-tracing`             |
 
-> Elasticsearch 安装测试默认从 `TRACING_ACP_ES_CLUSTER` 指定的 ACP 集群（默认 `global`）读取 log-center Elasticsearch 配置；将其设为空时改用 `TRACING_ES_*` 手动配置（该加载逻辑位于 Elasticsearch 安装测试脚本，不再由 `project_prepare` 全局执行）。`TRACING_INSTALL_ES=true` 且 `PKG_LOG_CENTER_URL` 非空时，步骤 0 会先把 logcenter 集群插件（Single Node 模式）自动安装到该集群——对应集群已安装过则跳过（安装逻辑见 `projects/tracing/elasticsearch.sh`）。OpenSearch 安装测试默认自动安装存储后端：`TRACING_INSTALL_OPENSEARCH=true`（默认）且 `PKG_ACP_STORAGE_OPERATOR_URL` / `PKG_TOPOLVM_OPERATOR_URL` 齐全时，步骤 0 自动安装 TopoLVM + OpenSearch（幂等，opensearch-operator 插件包目前需手动上架）并用实际结果覆盖 `TRACING_OPENSEARCH_*`；条件不满足时降级用手动 `TRACING_OPENSEARCH_ENDPOINT/USER/PASS`，两者皆缺则该测试 SKIPPED（安装逻辑见 `projects/tracing/opensearch.sh`）。卸载测试存储无关，按 Jaeger 命名空间是否存在判定是否执行；OpenSearch/TopoLVM 作为环境级存储后端不随卸载清理。两个安装测试的步骤 1 会先按文档「Installing the Alauda Build of Jaeger v2 Cluster Plugin」CLI 章节安装 Jaeger v2 集群插件（需 `PKG_JAEGER_CLUSTER_PLUGIN_URL`，未上架时自动下载并 violet push 到 Global，已安装则幂等复用；两篇文档该章节内容一致，安装逻辑抽象为按 runme 前缀参数化的共享函数，见 `projects/tracing/jaeger-plugin.sh`），步骤 2 自动安装前置依赖 OpenTelemetry v2 Operator（其代码块位于 `opentelemetry-docs`）。
+> Elasticsearch 安装测试默认从 `TRACING_ACP_ES_CLUSTER` 指定的 ACP 集群（默认 `global`）读取 log-center Elasticsearch 配置；将其设为空时改用 `TRACING_ES_*` 手动配置（该加载逻辑位于 Elasticsearch 安装测试脚本，不再由 `project_prepare` 全局执行）。`TRACING_INSTALL_ES=true` 且 `PKG_LOG_CENTER_URL` 非空时，步骤 0 会先把 logcenter 集群插件（Single Node 模式）自动安装到该集群——对应集群已安装过则跳过（安装逻辑见 `projects/tracing/elasticsearch.sh`）。OpenSearch 安装测试默认自动安装存储后端：`TRACING_INSTALL_OPENSEARCH=true`（默认）且 `PKG_ACP_STORAGE_OPERATOR_URL` / `PKG_TOPOLVM_OPERATOR_URL` 齐全时，步骤 0 自动安装 TopoLVM + OpenSearch（幂等，opensearch-operator 插件包目前需手动上架）并用实际结果覆盖 `TRACING_OPENSEARCH_*`；条件不满足时降级用手动 `TRACING_OPENSEARCH_ENDPOINT/USER/PASS`，两者皆缺则该测试 SKIPPED（安装逻辑见 `projects/tracing/opensearch.sh`）。卸载测试存储无关，按 Jaeger 命名空间是否存在判定是否执行；OpenSearch/TopoLVM 作为环境级存储后端不随卸载清理。两个安装测试的步骤 1 会先按文档「Installing the Alauda Build of Jaeger v2 Cluster Plugin」CLI 章节安装 Jaeger v2 集群插件：`PKG_JAEGER_CLUSTER_PLUGIN_URL` 非空时若未上架会自动下载并 violet push 到 Global；留空则进入 verify-only 模式，要求该插件已在 Global 集群预上架，否则报错退出并提示确认 release-config 是否已声明该包；已安装则两种模式都幂等复用（两篇文档该章节内容一致，安装逻辑抽象为按 runme 前缀参数化的共享函数，见 `projects/tracing/jaeger-plugin.sh`），步骤 2 自动安装前置依赖 OpenTelemetry v2 Operator（其代码块位于 `opentelemetry-docs`）。
 
 ## 工作原理
 
@@ -415,7 +518,7 @@ source "$FRAMEWORK_ROOT/framework/verify.sh"
 
 **失败策略**：跑完全部再汇总——致命前置（环境初始化）失败立即中止；普通 Case 失败记录后继续。
 
-**状态三态**：passed / failed / **skipped**（文档脚本用 `skip_test "原因"` 主动声明；编排层条件跳过用 `case_skip`）。
+**状态三态**：passed / failed / **skipped**。文档脚本按语义主动声明：环境/版本/依赖不具备用 `skip_test_env "原因"`，产品版本、架构或测试范围明确不测用 `skip_test_expected "原因"`；两者分别打 `[env]` / `[expected]` 前缀，供 allure 报告的「环境不支持」「预期不测试」分类识别。`skip_test` 是 `skip_test_expected` 的历史别名（等同 `[expected]`），新脚本请直接用语义正确的那个，不要再用 `skip_test`。编排层条件跳过用 `case_skip <case_id> <case_name> <reason> [category]`，`category` 同样是 `env` / `expected`（默认 `expected`）。
 
 **产物**（位于 `tmp/runs/<run-id>/`，`latest` 软链指向最近一次）：
 
@@ -431,10 +534,18 @@ source "$FRAMEWORK_ROOT/framework/verify.sh"
 
 ```bash
 bash framework/tests/report_test.sh
-# 其余框架单测（同样不依赖集群与平台）
+# 其余框架单测（同样不依赖集群与平台，伪造 kubectl/runme/allure）
 bash framework/tests/acp_auth_test.sh
-bash framework/tests/install_operator_test.sh
+bash framework/tests/allure_test.sh
+bash framework/tests/assets_test.sh
+bash framework/tests/case_filter_test.sh
+bash framework/tests/entrypoint_test.sh
+bash framework/tests/env_adapter_test.sh
 bash framework/tests/install_cluster_plugin_test.sh
+bash framework/tests/install_operator_test.sh
+bash framework/tests/ip_pool_test.sh
+bash framework/tests/mesh_project_test.sh
+bash framework/tests/verify_only_test.sh
 ```
 
 ## 编写新测试

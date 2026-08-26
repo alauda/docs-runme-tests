@@ -17,8 +17,9 @@
 #     代码块的测试覆盖。仅覆盖 CLI 安装方案，Web console 章节不涉及。
 #
 # 依赖环境变量:
-#   PKG_JAEGER_CLUSTER_PLUGIN_URL - 插件包下载地址（project_check_env 强制校验；
-#                                   未上架时自动下载并 violet push 到 Global）
+#   PKG_JAEGER_CLUSTER_PLUGIN_URL - 插件包下载地址，可选：提供时未上架会自动下载并 violet
+#                                   push 到 Global；留空即 verify-only，要求插件已由平台
+#                                   （dailybuild）预上架，否则报错（见 _tracing_jaeger_plugin_install_via_global）
 #   SINGLE_CLUSTER_NAME           - 默认目标集群（可用第二参数覆盖）
 
 # 全局侧步骤：上架 + 文档代码块 1-3（查已发布版本、创建 ModuleInfo、验证 Running）。
@@ -37,6 +38,11 @@ _tracing_jaeger_plugin_install_via_global() {
     #    ModuleConfig 已存在说明已上架，跳过；violet 对已存在的包/镜像会自动跳过）
     if kubectl get moduleconfigs -l "cpaas.io/module-name=${module_name}" -o name 2>/dev/null | grep -q .; then
         log_info "插件 $module_name 已上架（ModuleConfig 存在），跳过 push"
+    elif [ -z "${PKG_JAEGER_CLUSTER_PLUGIN_URL:-}" ]; then
+        log_error "集群插件 $module_name 未上架到 Global 集群 ${global_cluster}，且未提供 PKG_JAEGER_CLUSTER_PLUGIN_URL（verify-only 模式）"
+        log_error "- dailybuild：确认 release-config 的 Release YAML 已声明 Jaeger v2 集群插件包"
+        log_error "- 本地：export PKG_JAEGER_CLUSTER_PLUGIN_URL=<包地址>"
+        return 1
     else
         log_info "上架插件包到 Global 集群: $(basename "$PKG_JAEGER_CLUSTER_PLUGIN_URL")"
         download_package "$PKG_JAEGER_CLUSTER_PLUGIN_URL" || return 1
@@ -132,7 +138,7 @@ EOF
 # 用法: tracing_install_jaeger_plugin <runme_prefix> [target_cluster]
 # 参数:
 #   runme_prefix   - 文档代码块前缀（install-tracing-elasticsearch / install-tracing-opensearch）
-#   target_cluster - 插件落地的目标集群，默认 $SINGLE_CLUSTER_NAME（即当前被测业务集群）
+#   target_cluster - 插件落地的目标集群，默认 ${SINGLE_CLUSTER_NAME}（即当前被测业务集群）
 # NOTE: 依赖 Global 集群独立 kubeconfig 已生成（tracing project_init 的 ensure_kubeconfig
 #       会追加 Global）；调用方 KUBECONFIG 需指向目标业务集群（文档代码块 4 在其上执行）
 tracing_install_jaeger_plugin() {
@@ -144,9 +150,11 @@ tracing_install_jaeger_plugin() {
         log_error "用法: tracing_install_jaeger_plugin <runme_prefix> [target_cluster]（默认 \$SINGLE_CLUSTER_NAME）"
         return 1
     fi
+    # 插件包地址为可选：留空即 verify-only —— 包由平台（dailybuild）预上架，
+    # 本函数只校验不下载不上架。「未上架且未提供地址」的报错由
+    # _tracing_jaeger_plugin_install_via_global 给出，那里才知道到底上架没有。
     if [ -z "${PKG_JAEGER_CLUSTER_PLUGIN_URL:-}" ]; then
-        log_error "缺少环境变量 PKG_JAEGER_CLUSTER_PLUGIN_URL（Jaeger v2 集群插件包下载地址）"
-        return 1
+        log_info "未提供 PKG_JAEGER_CLUSTER_PLUGIN_URL，Jaeger v2 集群插件进入 verify-only 模式（要求平台已预上架）"
     fi
 
     local global_cluster="${GLOBAL_CLUSTER_NAME:-global}"

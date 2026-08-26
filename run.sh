@@ -21,6 +21,7 @@ source "$FRAMEWORK_DIR/report.sh"
 source "$FRAMEWORK_DIR/acp-auth.sh"
 source "$FRAMEWORK_DIR/kubeconfig.sh"
 source "$FRAMEWORK_DIR/tools.sh"
+source "$FRAMEWORK_DIR/assets.sh"
 
 # 将 bin 目录加入 PATH（runme / violet / istioctl）
 export PATH="$BIN_DIR:$PATH"
@@ -266,7 +267,7 @@ _find_test_script() {
     return 0
 }
 
-# 解析用于初始化的集群列表（优先 --cluster，否则 $SINGLE_CLUSTER_NAME）
+# 解析用于初始化的集群列表（优先 --cluster，否则 ${SINGLE_CLUSTER_NAME}）
 resolve_init_clusters() {
     if [ ${#INIT_CLUSTERS[@]} -gt 0 ]; then
         return 0
@@ -323,7 +324,7 @@ run_test_script() {
             log_info "执行 cleanup: $cleanup_func"
             if $cleanup_func; then status="passed"; else status="failed"; fail_reason="cleanup 失败"; fi
         else
-            log_warn "未找到 cleanup 函数"; status="skipped"; skip_reason="无 cleanup 函数"
+            log_warn "未找到 cleanup 函数"; status="skipped"; skip_reason="[expected] 无 cleanup 函数"
         fi
         end_ts=$(date +%s)
         report_record_doctest "$PROJECT" "$file" "$script_name" "$phase" \

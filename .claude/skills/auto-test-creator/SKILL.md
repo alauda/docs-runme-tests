@@ -4,16 +4,31 @@ description: >
   Use this skill whenever the user wants to create, update, debug, or manage automated test scripts
   for MDX documentation files. This includes: generating runme-test_*.sh scripts for docs/en/ MDX files,
   adding or checking {name=prefix:action} attributes on MDX code blocks, updating the docs-runme-tests
-  README.md test table, modifying run-<project>-all.sh orchestration scripts (including --no-cleanup/--cleanup-only
+  README.md test table, registering case_ids in lynx/case-ids.tsv, registering external URLs in
+  lynx/assets-manifest.tsv for offline runs, choosing Case tags for CASE_TYPE filtering, modifying
+  run-<project>-all.sh orchestration scripts (including --no-cleanup/--cleanup-only
   split execution), or troubleshooting failing runme test scripts. Trigger this skill when the user
   mentions any of: MDX testing, runme tests, document testing, code block name attributes, test script
-  generation, run-<project>-all.sh updates, test coverage for documentation, or automated doc validation.
+  generation, run-<project>-all.sh updates, case_id registration, offline assets, CASE_TYPE tags,
+  test coverage for documentation, or automated doc validation.
   Also use when the user references specific MDX files and wants to verify their code blocks work correctly.
 ---
 
 # auto-test-creator: MDX 文档自动化测试脚本生成器
 
 为项目中的 MDX 文档生成自动化测试脚本，确保文档中的命令和步骤可执行且输出正确。
+
+> **这些测试同时要在 dailybuild / lynx 的离线环境里跑。**
+> 意味着新写的测试脚本除了"本地能跑通"，还必须满足三条硬约束，漏一条就会在
+> **镜像构建阶段直接失败**，或者更糟——镜像照常构建、dailybuild 照常绿灯，
+> 但那条用例根本没跑：
+>
+> 1. **登记 case_id**（第五步）—— 未登记的 `runme-test_*.sh` 会让镜像构建失败
+> 2. **外部 URL 走离线资产**（第四步「离线资产」小节）—— 否则离线环境跑到一半才炸
+> 3. **Case 必须用 `case_begin_if` 带标签**（第六步）—— 否则要么在 lynx 上无条件执行，
+>    要么永远选不中
+>
+> 完整的"改了 X 还要同步改哪儿"见 `docs-runme-tests/UPDATE-README.md`。
 
 ## 工作流程
 
@@ -47,13 +62,16 @@ description: >
 2. **代码块清单**：列出所有需要添加/修改 name 属性的代码块，及其拟定的 name
 3. **测试步骤规划**：列出测试脚本中每个步骤的详细说明，包括：
    - 步骤编号和描述
-   - 使用的测试模式（A-H）
+   - 使用的测试模式（A-J）
    - 对应的 runme 代码块名称
 4. **缺失步骤分析**（如有发现）：
    - 具体描述发现的问题
    - 建议的处理方式（在文档中补充步骤 / 在测试脚本中增加辅助逻辑）
 5. **cleanup 判断**：是否需要 cleanup 函数，依据是什么
-6. **编排脚本更新方案**：在对应项目的 `run-<project>-all.sh` 中的放置位置和执行方式
+6. **编排脚本更新方案**：在对应项目的 `run-<project>-all.sh` 中的放置位置、执行方式、
+   以及该 Case 的**标签**（决定它在 dailybuild 上跑不跑）
+7. **离线与登记事项**：拟分配的 case_id；代码块里是否有外部 URL、要新增哪几条
+   `assets-manifest.tsv` 记录；是否需要同步 release-config 的 `CASE_TYPE`
 
 **计划格式示例：**
 
@@ -94,6 +112,13 @@ description: >
 
 - 添加到 Case N：<描述>
 - 执行方式：[直接执行 / 分步执行（--no-cleanup + --cleanup-only）]
+- Case 标签：`smoke install xxx`（是否进首批 dailybuild：[是/否]，依据：带不带 `smoke`）
+
+### 7. 离线与登记事项
+
+- 拟分配 case_id：`ASM-DOC-0NN`（当前最大编号 +1）
+- 外部 URL：[无 / 有 N 条，需登记进 `lynx/assets-manifest.tsv`，脚本用模式 J]
+- release-config 同步：[不需要 / 需要，因为新标签 `xxx` 不在现有 CASE_TYPE 表达式内]
 ```
 
 **使用 `EnterPlanMode` 工具进入计划模式**，将计划写入 plan 文件，等待用户审批。
@@ -151,6 +176,8 @@ set -e
 # 加载框架函数库
 source "$FRAMEWORK_ROOT/framework/common.sh"
 source "$FRAMEWORK_ROOT/framework/verify.sh"
+# 代码块里有外部 URL（模式 J）时需要 runme_run_with_assets：
+# source "$FRAMEWORK_ROOT/framework/assets.sh"
 # mesh 项目脚本如需 kubectl_apply_with_mirror 等，额外引入对应 project.sh：
 # source "$FRAMEWORK_ROOT/projects/mesh/project.sh"
 
@@ -283,6 +310,39 @@ install_operator \
     "$PKG_<OPERATOR>_URL" \
     "<runme-prefix>"
 ```
+
+**注（verify-only 模式）**：`PKG_*_URL` 为空是**合法输入**，不是配置错误。
+dailybuild 上所有插件包由平台预上架，框架不设置任何 `PKG_*_URL`，
+`install_operator` / `install_cluster_plugin` 会进 verify-only 模式：只校验是否已上架，
+不下载不上架；真没上架时精确报错。所以：
+
+- 不要在测试脚本里写 `: "${PKG_XXX_URL:?}"` 这类硬校验，那会让 dailybuild 直接失败
+- 项目钩子 `project_check_env` 里对空 URL 只 `log_info` 提示，不要 `return 1`
+
+**模式 J - 引用外部 URL 的代码块（离线资产）：**
+
+如果文档代码块里有 `kubectl apply -f https://...` 这种外部 URL，**不能用 `runme run`**——
+dailybuild 环境连不上公网。改用：
+
+```bash
+log_info "步骤 X: 部署 sample 应用"
+runme_run_with_assets <prefix>:<action> || {
+    log_error "部署失败"
+    return 1
+}
+```
+
+`runme_run_with_assets` 来自 `framework/assets.sh`，会把命中 `lynx/assets-manifest.tsv`
+的 URL 换成镜像内预置文件；未命中的 URL 原样保留、回退联网 curl，本地开发行为不变。
+
+配套动作（**两步都要做**）：
+
+1. 把新 URL 登记进 `docs-runme-tests/lynx/assets-manifest.tsv`，两列 TAB 分隔：
+   `<url><TAB><去掉协议头的 URL 全路径>`
+2. 跑 `bash lynx/check-manifest.sh` 确认输出"资产清单校验通过"
+
+走 `kubectl_apply_with_mirror`（模式 D）的块**不用改调用方**——该函数内部已经用
+`fetch_url_content` 处理了离线资产。
 
 #### 可用的公共工具函数
 
@@ -453,7 +513,24 @@ output=$(runme run <prefix>:<action> 2>&1) || {
 }
 ```
 
-### 第五步：更新测试文档表格
+### 第五步：登记 case_id 并更新测试文档表格
+
+#### 5.1 登记 case_id（必做，漏了会让镜像构建失败）
+
+编辑 `docs-runme-tests/lynx/case-ids.tsv`，三列 TAB 分隔 `<project><TAB><doc><TAB><case_id>`：
+
+```
+mesh	install-mesh	ASM-DOC-002
+```
+
+- 编号规则：`mesh=ASM-DOC-NNN`、`otel=OTEL-DOC-NNN`、`tracing=TRACE-DOC-NNN`
+- `doc` 列 = 文件名去掉 `runme-test_` 前缀和 `.sh` 后缀
+- 新增文档取当前最大编号 **+1**
+- **一经分配永不复用**：文档改名时保留原编号、只改 `doc` 列。allure 报告靠它做历史对齐，
+  换编号等于历史断链
+- 自检：`bash lynx/check-case-ids.sh`
+
+#### 5.2 更新 README 测试清单表
 
 编辑 `docs-runme-tests/README.md`，在对应项目的测试文档表格中添加新条目：
 
@@ -492,32 +569,76 @@ output=$(runme run <prefix>:<action> 2>&1) || {
 ./run.sh --file <new-test-name> --cleanup-only
 ```
 
-#### 创建新的 case
+#### 创建新的 case（必须用 `case_begin_if` + 标签）
 
 ```bash
 # ------------------------------------------------------------------
 # Case N: <测试描述>
 # ------------------------------------------------------------------
-case_begin "N" "<测试描述>"
+if case_begin_if "N" "<测试描述>" smoke install <功能标签>; then
+    if (
+        set -e
+        ./run.sh --project <项目> --file <test-name> --no-cleanup
+        ./run.sh --project <项目> --file <test-name> --cleanup-only
+    ); then
+        case_end 0
+    else
+        case_end 1
+    fi
+fi
+```
 
-if (
-    set -e
-    ./run.sh --file <test-name> --no-cleanup
-    ./run.sh --file <test-name> --cleanup-only
-); then
-    case_end 0
-else
-    case_end 1
+**不要写裸 `case_begin`**。`case_begin_if` 会按 `CASE_TYPE` 过滤：选中则开 Case 并返回 0，
+未选中则记一条 `[expected]` 跳过并返回 1。写成裸 `case_begin` 的 Case 在 lynx 上会无条件执行，
+绕过 dailybuild 的分批策略。
+
+#### 标签怎么选
+
+`CASE_TYPE` 只支持 `and` 连接的合取式与 `not` 取反，**不支持 `or` 和括号**
+（见 `lynx/case-filter.sh`；写了 `or` 会直接报错退出，不会静默误判）。
+
+| 想要的效果 | 标签 |
+| --- | --- |
+| 每次都跑（环境初始化这类前置） | `always`——保留标签，恒被选中，不参与表达式求值 |
+| 进首批 dailybuild | 必须带 `smoke`（首批表达式是 `smoke and not egress`） |
+| 只在多集群测试项里跑 | `multicluster` |
+| 暂不纳入、先攒着 | 只给功能标签（如 `opensearch`），不给 `smoke` |
+
+**加了新标签，多半要同步改 `apt-test/release-config` 的 `CASE_TYPE`。**
+因为不支持 `or`，"让两组互不相干的 Case 都跑"没法写成一个表达式——必须另开一个 lynx 测试项
+（现有 `docs-mesh-multicluster` 就是为此单开的）。漏改的后果是这条用例在 dailybuild 上
+永远不跑，且不报错，只在 allure 里显示成一条跳过。核对方法：
+
+```bash
+source lynx/case-filter.sh
+_case_type_matches "smoke and not egress" smoke install sidecar && echo 选中 || echo 未选中
+```
+
+#### DocTest 级开关
+
+单篇文档要按标签开关（不整个 Case）时，用 `doctest_selected`：
+
+```bash
+if doctest_selected egress; then
+    ./run.sh --project mesh --file routing-egress-traffic-tls-origination
 fi
 ```
 
 > **测试结果统计（三层：Run → Case → DocTest）**：统计由 `framework/report.sh` 承载，编排脚本顶部需 `source framework/report.sh` + `report_init <项目>` + `export RUNME_TEST_ORCHESTRATED=1` + `trap report_finalize EXIT`（现有 `run-<project>-all.sh` 已具备）。Case 边界用：
-> - `case_begin "N" "描述"` 开始一个 Case；`case_end 0/1` 结束（**普通 Case 失败只记录、不 `exit 1`，跑完全部再汇总**）。
+> - `case_begin_if "N" "描述" <标签>...` 开始一个 Case（推荐）；`case_end 0/1` 结束（**普通 Case 失败只记录、不 `exit 1`，跑完全部再汇总**）。
 > - 致命前置（如环境初始化）失败要中止整个 Run 时，用 `case_end_fatal 1` 取代 `case_end 1`。
-> - 条件跳过（缺环境变量等）用 `case_skip "N" "描述" "跳过原因"` 取代整个 if 块。
-> - 文档脚本内部主动跳过用 `skip_test "原因"`（引擎据此记 DocTest 为 skipped 第三态）。
+> - 环境条件不满足（缺环境变量等）用 `case_skip "N" "描述" "跳过原因" env` 取代整个 if 块——
+>   第 4 个参数是分类，缺省 `expected`；缺环境变量属于 `env`。
+> - 文档脚本内部主动跳过要**分清两种语义**：
+>   - `skip_test_env "原因"`——环境不支持（缺集群 / 缺存储 / 单栈环境跑双栈），记 `[env]`
+>   - `skip_test_expected "原因"`——预期就不测（本轮有意不覆盖），记 `[expected]`
+>   - `skip_test "原因"` 是 `skip_test_expected` 的别名，**新代码不要用**
 >
-> 退出时 `report_finalize` 自动产出美化终端摘要 + `tmp/runs/<run-id>/{summary.json,junit.xml}`。详见仓库 README「测试结果统计」章节。
+>   分类会进 allure 的 `categories.json`，看板上是两栏；写错会让"环境没配好"混进
+>   "本来就不测"，排查时被直接忽略过去。
+>
+> 退出时 `report_finalize` 自动产出美化终端摘要 + `tmp/runs/<run-id>/{summary.json,junit.xml}`，
+> 在 lynx 上额外产出 `$TEST_RESULT_DIR/{allure-result,allure-report}`。详见仓库 README「测试结果统计」章节。
 
 ### 第七步：设置可执行权限
 
@@ -525,15 +646,66 @@ fi
 chmod +x <测试脚本路径>
 ```
 
+注意提交时权限位要跟着进 git（`git update-index --chmod=+x <path>` 或直接确认
+`git diff --summary` 里有 `mode change`）。跨仓库改动时这一步很容易漏，漏了 runme 跑不起来。
+
+### 第八步：自检
+
+在 `docs-runme-tests` 仓库根执行：
+
+```bash
+bash lynx/check-case-ids.sh       # case_id 登记了吗（第五步）
+bash lynx/check-manifest.sh       # 新增的外部 URL 登记了吗（模式 J）
+bash lynx/check-shell-compat.sh   # 有没有 macOS/bash 3.2 会炸的写法（见下）
+```
+
+三条都在镜像构建期强制执行，任一不过即构建失败。
+
+## 硬性写法约束
+
+### `$VAR` 后面紧跟中文标点必须写成 `${VAR}`
+
+```bash
+log_info "集群 ${cluster} 上不存在地址池 ${pool}，跳过"   # ✅
+log_info "集群 $cluster 上不存在地址池 $pool，跳过"        # ❌ macOS 上会炸
+```
+
+bash 用 locale 相关的 `isalnum()` 判断变量名边界。macOS 的 BSD libc 在 UTF-8 locale 下
+会把中文标点的首字节当成 Latin-1 字母，于是 `$pool，` 里的变量名被解析成 `pool` 加标点字节——
+未定义；叠加 `set -u` 直接退出。Linux（glibc）上看不出任何问题，所以只能靠
+`bash lynx/check-shell-compat.sh` 拦。
+
+### runme 不执行 ` ```yaml ` 代码块
+
+`runme run <yaml 块>` 只把内容**回显**出来、并不执行，而且返回码是 0——
+看起来"跑过了"，实际什么都没做。
+
+不要为此去改文档的语言标记（那是文档的呈现语义）。测试脚本里改用：
+
+```bash
+eval "$(runme print <prefix>:<yaml-block>)"
+```
+
+或者用模式 C 把内容写进文件再 `kubectl apply -f`。
+
+### 兼容 bash 3.2（macOS 自带版本）
+
+不要用 `declare -A`（关联数组）、`mapfile`、`readarray`，不要用 GNU 专属的 `sed -i`
+（BSD sed 的 `-i` 需要参数）。
+
 ## 参考文件
 
 如需更详细的信息，请参阅：
 
-- `docs-runme-tests/README.md` - 测试框架完整说明
+- `docs-runme-tests/README.md` - 测试框架完整说明（**怎么用**）
+- `docs-runme-tests/UPDATE-README.md` - 变更操作手册（**改了 X 还要同步改哪儿**）
 - `docs-runme-tests/framework/common.sh` - 公共工具函数源码
 - `docs-runme-tests/framework/verify.sh` - 验证函数源码
+- `docs-runme-tests/framework/assets.sh` - 离线资产（`runme_run_with_assets` 等）
 - `docs-runme-tests/run.sh` - 测试执行引擎
 - `docs-runme-tests/run-<project>-all.sh` - 各项目测试编排脚本
+- `docs-runme-tests/lynx/` - lynx / dailybuild 适配层（入口、CASE_TYPE 求值、allure、各清单）
+- `apt-test/release-config/tests/<版本>/dailybuild/dailybuild_mircos_g1.yaml` - dailybuild 测试项定义（`CASE_TYPE` 在这里）
 
 ## 已有测试脚本参考
 

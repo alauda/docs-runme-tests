@@ -100,13 +100,28 @@ parse_csv_name_from_package() {
     parse_artifact_version_from_package "$1"
 }
 
-# 文档测试脚本主动声明「跳过」：设置标记后 return 0；
-# 引擎 run.sh 检测 __TEST_SKIPPED 后将该 DocTest 记为 status=skipped。
-skip_test() {
+# 文档测试脚本主动声明「跳过」。分两类（自动化规范第 8 条）：
+#   skip_test_env      —— 环境 / 版本 / 依赖不具备，报告里按成功处理
+#   skip_test_expected —— 产品版本、架构或测试选择明确不执行
+# 两者都设置 __TEST_SKIPPED 标记后 return 0；引擎 run.sh 据此把 DocTest 记为 skipped。
+# 前缀 [env] / [expected] 供 allure categories 分类使用，勿改。
+skip_test_env() {
     __TEST_SKIPPED=1
-    __TEST_SKIP_REASON="$1"
-    log_warn "SKIPPED: $1"
+    __TEST_SKIP_REASON="[env] $1"
+    log_warn "SKIPPED（环境不支持）: $1"
     return 0
+}
+
+skip_test_expected() {
+    __TEST_SKIPPED=1
+    __TEST_SKIP_REASON="[expected] $1"
+    log_warn "SKIPPED（预期不测试）: $1"
+    return 0
+}
+
+# 历史别名：语义等同 skip_test_expected，逐篇迁移到语义正确的那个后可移除
+skip_test() {
+    skip_test_expected "$1"
 }
 
 # Wait for resource to be created
@@ -334,12 +349,26 @@ _operator_reentry_probe() {
     return 1
 }
 
+# verify-only 模式下从 PackageManifest 反查目标 CSV 名（不依赖插件包 URL）
+# 用法: csv=$(_operator_csv_from_packagemanifest <operator_name>) || return 1
+# NOTE: 依赖调用方已切换到正确的 kubectl context
+_operator_csv_from_packagemanifest() {
+    local operator_name="$1" pm_json csv
+    pm_json=$(kubectl get packagemanifest "$operator_name" -o json 2>/dev/null) || return 1
+    [ -n "$pm_json" ] || return 1
+    csv=$(printf '%s' "$pm_json" | jq -r '
+        .status as $s | $s.channels[]? | select(.name == $s.defaultChannel) | .currentCSV // empty')
+    [ -n "$csv" ] || return 1
+    printf '%s' "$csv"
+}
+
 # 通用 operator 安装函数
-# 用法: install_operator <operator_name> <namespace> <package_url> <runme_prefix>
+# 用法: install_operator <operator_name> <namespace> <package_url|""> <runme_prefix>
 # 参数:
 #   operator_name  - operator 名称 (如 servicemesh-operator2, kiali-operator)
 #   namespace      - 安装的 namespace (如 sail-operator, kiali-operator)
-#   package_url    - 插件包 URL (用于解析 CSV 名称)
+#   package_url    - 插件包 URL (用于解析 CSV 名称)；留空即 verify-only —— 插件由平台
+#                    (dailybuild) 预上架，改为从 PackageManifest 反查目标 CSV 名
 #   runme_prefix   - runme block 前缀 (如 install-mesh, install-kiali)
 # NOTE: 调用该函数前请确保已切换到正确的 kubectl context
 install_operator() {
@@ -348,10 +377,10 @@ install_operator() {
     local package_url="$3"
     local runme_prefix="$4"
 
-    # 参数校验
-    if [ -z "$operator_name" ] || [ -z "$namespace" ] || [ -z "$package_url" ] || [ -z "$runme_prefix" ]; then
+    # 参数校验（package_url 允许为空 —— 空即 verify-only：包由平台预上架）
+    if [ -z "$operator_name" ] || [ -z "$namespace" ] || [ -z "$runme_prefix" ]; then
         log_error "install_operator: 缺少必要参数"
-        log_error "用法: install_operator <operator_name> <namespace> <package_url> <runme_prefix>"
+        log_error "用法: install_operator <operator_name> <namespace> <package_url|\"\"> <runme_prefix>"
         return 1
     fi
 
@@ -360,7 +389,24 @@ install_operator() {
     log_info "=========================================="
 
     local csv_name
-    csv_name=$(parse_csv_name_from_package "$package_url")
+    if [ -n "$package_url" ]; then
+        csv_name=$(parse_csv_name_from_package "$package_url")
+    else
+        # verify-only：包由 dailybuild 预上架，CSV 名从 PackageManifest 反查
+        log_info "未提供插件包地址，进入 verify-only 模式：从 PackageManifest 解析 $operator_name"
+        if ! retry_command "kubectl get packagemanifest $operator_name >/dev/null 2>&1" 20 5; then
+            log_error "未找到 PackageManifest: $operator_name"
+            log_error "verify-only 模式要求该插件已上架到当前集群。"
+            log_error "- dailybuild：确认 release-config 的 Release YAML 已在 l5_plugin_packages 声明该包并指定该集群"
+            log_error "- 本地：export 对应的 PKG_*_URL 让框架自行下载上架"
+            return 1
+        fi
+        csv_name=$(_operator_csv_from_packagemanifest "$operator_name") || {
+            log_error "无法从 PackageManifest $operator_name 解析 defaultChannel 的 currentCSV"
+            return 1
+        }
+        log_success "verify-only 目标 CSV: $csv_name"
+    fi
 
     # 重入探测：已安装则跳过，未安装才走完整安装流程（见 _operator_reentry_probe）
     local probe_rc=0
@@ -806,16 +852,26 @@ _wait_for_moduleinfo_running() {
         log_warn "等待集群插件就绪: ${module_name}@${target_cluster} phase=${phase:-<none>} (${attempt}/${max_retries})"
         [ "$attempt" -lt "$max_retries" ] && sleep "$interval"
     done
+
+    # 超时：把 .status.message 打出来给根因，对所有 ModuleInfo 失败模式都有用
+    # （依赖缺失、镜像拉取失败等平台通常都会写这个字段），不止 verify-only 缺
+    # 前置包这一种。
+    local status_message
+    status_message=$(kubectl get moduleinfo -l "$selector" \
+        -o jsonpath='{.items[0].status.message}' 2>/dev/null || echo "")
+    [ -n "$status_message" ] && log_warn "ModuleInfo 超时未就绪，status.message: $status_message"
     return 1
 }
 
 # 通用集群插件安装函数（在 Global 集群上架 ACP 集群插件，并安装到目标业务集群）
-# 用法: install_cluster_plugin <module_name> <target_cluster> <package_url> [prereq_package_url...]
+# 用法: install_cluster_plugin <module_name> <target_cluster> <package_url|""> [prereq_package_url...]
 # 参数:
 #   module_name         - 集群插件名（ModulePlugin 名，如 multus / metallb / mesh-v2-test-suite）
 #   target_cluster      - 插件落地的目标集群（写入 ModuleInfo 的 cpaas.io/cluster-name）
-#   package_url         - 上架并安装的插件包 URL
-#   prereq_package_url  - 可选，仅上架不安装的前置插件包（如 metallb 需要 metallb-operator）
+#   package_url         - 上架并安装的插件包 URL；留空即 verify-only —— 插件由平台预上架，
+#                         本函数只校验已上架并反查目标版本，不下载不上架
+#   prereq_package_url  - 可选，仅上架不安装的前置插件包（如 metallb 需要 metallb-operator）；
+#                         verify-only 下留空同样跳过
 # 说明:
 #   - 集群插件查询、创建 ModuleInfo、主插件包上架均针对 Global 集群（ModulePlugin/ModuleConfig/ModuleInfo 仅存于 Global）
 #   - 前置 operator 包（prereq_package_url）上架到目标业务集群（与其他 operator 一致）
@@ -828,12 +884,40 @@ install_cluster_plugin() {
     local target_cluster="$2"
     local package_url="$3"
 
-    if [ -z "$module_name" ] || [ -z "$target_cluster" ] || [ -z "$package_url" ]; then
+    if [ -z "$module_name" ] || [ -z "$target_cluster" ]; then
         log_error "install_cluster_plugin: 缺少必要参数"
-        log_error "用法: install_cluster_plugin <module_name> <target_cluster> <package_url> [prereq_package_url...]"
+        log_error "用法: install_cluster_plugin <module_name> <target_cluster> <package_url|\"\"> [prereq_package_url...]"
+        return 1
+    fi
+    # package_url 允许是空串（verify-only），但必须显式传入：
+    # 否则 shift 3 会失败且不移位，module_name/target_cluster 会被当成前置插件包 URL
+    if [ $# -lt 3 ]; then
+        log_error "install_cluster_plugin: 缺少 package_url 参数（可为空串 \"\"，但必须显式传入）"
+        log_error "用法: install_cluster_plugin <module_name> <target_cluster> <package_url|\"\"> [prereq_package_url...]"
         return 1
     fi
     shift 3
+
+    # verify-only（package_url 为空）且前置包地址也全为空时，本函数完全不会校验
+    # 前置 operator（如 metallb 依赖的 metallb-operator）是否已在目标集群预上架——
+    # 平台未预上架该前置包也不会在这里报错，只会在步骤 4 等 ModuleInfo
+    # 变 Running 时白等到超时，且超时信息不含根因。提前预警，把排查方向指对。
+    #
+    # 判据是"剩下的位置参数是否全为空串"，不是 [ $# -eq 0 ]：真实调用点
+    # （projects/mesh/project.sh 的 install_all_cluster_plugins）在 dailybuild 下写的是
+    #   install_cluster_plugin "metallb" "$cluster" "$PKG_METALLB_URL" "$PKG_METALLB_OPERATOR_URL"
+    # 两个变量都为空，但**仍然传了 4 个参数**，shift 3 之后 $# = 1。
+    # 用 $# -eq 0 判断的话，这条提示在唯一需要它的 metallb 上永不触发，
+    # 反而在只传 3 个参数、本来就没有前置包的 multus 上误报——正好反了。
+    local prereq_all_empty=true prereq
+    for prereq in "$@"; do
+        if [ -n "$prereq" ]; then prereq_all_empty=false; break; fi
+    done
+    if [ -z "$package_url" ] && [ "$prereq_all_empty" = "true" ] && [ $# -gt 0 ]; then
+        log_warn "install_cluster_plugin: verify-only 模式（package_url 为空）且前置插件包地址也为空"
+        log_warn "本函数不会校验前置 operator 是否已在目标集群 ${target_cluster} 预上架"
+        log_warn "若下一步 ModuleInfo 长期不进入 Running，请先确认前置 operator 已上架，而非仅排查网络/证书"
+    fi
 
     local package_version
     package_version=$(_cluster_plugin_package_version "$package_url")
@@ -875,13 +959,14 @@ install_cluster_plugin() {
         -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
 
     # 1. 上架插件包（每次未就绪时都执行，确保依赖就位；violet 对已存在的包/镜像会自动跳过）。
-    #    主插件包到 Global 集群，前置 operator 包到目标业务集群。
-    #    即使 ModuleInfo 已存在但未就绪（如卡在 Processing），也重新确保前置 operator 已上架，
-    #    使此前因依赖缺失而卡住的安装能够自愈。
+    #    package_url 为空即 verify-only：包由平台预上架，本函数只校验、不下载不上架。
     log_info "步骤 1: 上架插件包"
     local pkg
-    download_package "$package_url" || return 1
+    if [ -n "$package_url" ]; then
+        download_package "$package_url" || return 1
+    fi
     for pkg in "$@"; do
+        [ -n "$pkg" ] || continue
         download_package "$pkg" || return 1
     done
 
@@ -890,13 +975,20 @@ install_cluster_plugin() {
         log_info "插件 $module_name 目标版本 $package_version 已上架（ModuleConfig 存在），跳过 push"
     elif [ -z "$package_version" ] && \
         kubectl get moduleconfigs -l "cpaas.io/module-name=${module_name}" -o name 2>/dev/null | grep -q .; then
-        log_info "插件 $module_name 已上架（包名无法解析版本且 ModuleConfig 存在），跳过 push"
+        log_info "插件 $module_name 已上架（ModuleConfig 存在），跳过 push"
+    elif [ -z "$package_url" ]; then
+        log_error "集群插件 $module_name 未上架到 Global 集群 ${global_cluster}，且未提供插件包地址（verify-only 模式）"
+        log_error "- dailybuild：确认 release-config 的 Release YAML 已声明该插件包并指定该集群"
+        log_error "- 本地：export 对应的 PKG_*_URL 让框架自行下载上架"
+        return 1
     else
         upload_package "$global_cluster" "$package_url" || return 1
     fi
 
     # 前置包：上架到目标业务集群（与其他 operator 一致，仅上架不安装、不创建 ModuleInfo）
+    # verify-only 下前置包为空——若平台也没预上架，后续 ModuleInfo 会以依赖缺失报错。
     for pkg in "$@"; do
+        [ -n "$pkg" ] || continue
         log_info "上架前置插件包到业务集群 $target_cluster (仅上架不安装): $(basename "$pkg")"
         upload_package "$target_cluster" "$pkg" || return 1
     done
@@ -982,13 +1074,16 @@ _cluster_kubeconfig_path() {
 }
 
 # 内联渲染 IPAddressPool + L2Advertisement
-# 用法: _render_external_ip_pool <pool> <namespace> <addr...>
+# 用法: _render_external_ip_pool <pool> <namespace> <owner> <addr...>
 # 说明:
+#   - owner 取 init 或 doctest，写入 label runme-test/owner：
+#     init    —— lynx initials 每集群建一次，长期存在，测试结束不清理
+#     doctest —— 单篇测试脚本自建自清
 #   - spec.avoidBuggyIPs: true；L2Advertisement spec.nodeSelectors: null（按真实环境验证载荷）
 #   - addresses 由地址参数逐行展开（CIDR，如 192.168.139.13/32）
 _render_external_ip_pool() {
-    local pool="$1" namespace="$2"
-    shift 2
+    local pool="$1" namespace="$2" owner="$3"
+    shift 3
     local addresses=("$@")
 
     cat <<EOF
@@ -997,6 +1092,8 @@ kind: IPAddressPool
 metadata:
   name: ${pool}
   namespace: ${namespace}
+  labels:
+    runme-test/owner: ${owner}
 spec:
   avoidBuggyIPs: true
   addresses:
@@ -1012,6 +1109,8 @@ kind: L2Advertisement
 metadata:
   name: ${pool}
   namespace: ${namespace}
+  labels:
+    runme-test/owner: ${owner}
 spec:
   ipAddressPools:
     - ${pool}
@@ -1020,14 +1119,14 @@ EOF
 }
 
 # 在指定业务集群创建外部 IP 地址池（IPAddressPool + L2Advertisement）
-# 用法: create_external_ip_pool <cluster> <pool> <addr...>
+# 用法: create_external_ip_pool <cluster> <pool> <owner> <addr...>
 create_external_ip_pool() {
-    local cluster="$1" pool="$2"
-    shift 2
+    local cluster="$1" pool="$2" owner="$3"
+    shift 3
     local addresses=("$@")
 
-    if [ -z "$cluster" ] || [ -z "$pool" ] || [ ${#addresses[@]} -eq 0 ]; then
-        log_error "create_external_ip_pool: 缺少参数 (cluster=$cluster, pool=$pool, addresses=${addresses[*]})"
+    if [ -z "$cluster" ] || [ -z "$pool" ] || [ -z "$owner" ] || [ ${#addresses[@]} -eq 0 ]; then
+        log_error "create_external_ip_pool: 缺少参数 (cluster=$cluster, pool=$pool, owner=$owner, addresses=${addresses[*]})"
         return 1
     fi
 
@@ -1037,12 +1136,24 @@ create_external_ip_pool() {
     local KUBECONFIG="$kc"
     export KUBECONFIG
 
-    log_info "创建外部 IP 地址池 $pool 于集群 $cluster (地址: ${addresses[*]})"
-    _render_external_ip_pool "$pool" "$METALLB_NAMESPACE" "${addresses[@]}" | kubectl apply -f - || {
+    log_info "创建外部 IP 地址池 $pool 于集群 $cluster (owner=$owner, 地址: ${addresses[*]})"
+    _render_external_ip_pool "$pool" "$METALLB_NAMESPACE" "$owner" "${addresses[@]}" | kubectl apply -f - || {
         log_error "创建外部 IP 地址池失败: $pool@$cluster"
         return 1
     }
     return 0
+}
+
+# 查询指定集群上外部 IP 地址池的 owner 标签
+# 用法: owner=$(_external_ip_pool_owner <cluster> <pool>)
+# 输出: 池不存在或无标签时输出空串；返回码恒为 0（「没有池」是正常情况）
+_external_ip_pool_owner() {
+    local cluster="$1" pool="$2" kc
+    kc=$(_cluster_kubeconfig_path "$cluster") || return 0
+    local KUBECONFIG="$kc"
+    export KUBECONFIG
+    kubectl -n "$METALLB_NAMESPACE" get ipaddresspool "$pool" \
+        -o jsonpath='{.metadata.labels.runme-test/owner}' 2>/dev/null || true
 }
 
 # 轮询等待 IPAddressPool 可用地址 >= 1（读 .status.availableIPv4 + .status.availableIPv6）
@@ -1105,12 +1216,14 @@ delete_external_ip_pool() {
     return 0
 }
 
-# 为多集群测试在各业务集群创建外部 IP 地址池并等待可用（受 ENABLE_METALLB 门控）
+# 为网关 / 多集群测试在各业务集群创建外部 IP 地址池并等待可用（受 ENABLE_METALLB 门控）
 # 用法: setup_external_ip_pools <cluster>...
 # 说明:
-#   - ENABLE_METALLB != true 时直接 no-op 返回 0（可在编排脚本中无条件调用）
-#   - 地址来源: METALLB_EXTERNAL_ADDRESSES_JSON（JSON 数组，按 cluster 匹配；含 ipv4Addresses，
-#     前向兼容 ipv6Addresses），资源固定命名 $METALLB_EXTERNAL_POOL_NAME（mesh-v2）
+#   - 池已存在（无论谁建的）时直接复用，不再要求 METALLB_EXTERNAL_ADDRESSES_JSON。
+#     dailybuild 正是这条路径：lynx initials 每集群用该 region 自己的
+#     $GLOBAL_EXTERNAL_IPPOOL 建好池（owner=init），三个测试项复用。
+#   - 池不存在时按 METALLB_EXTERNAL_ADDRESSES_JSON 创建，owner 取
+#     ${EXTERNAL_IP_POOL_OWNER:-doctest}（本地手工跑的既有路径）。
 setup_external_ip_pools() {
     [ "${ENABLE_METALLB:-false}" = "true" ] || return 0
 
@@ -1119,24 +1232,33 @@ setup_external_ip_pools() {
         return 1
     fi
 
-    local json="${METALLB_EXTERNAL_ADDRESSES_JSON:-}"
-    if [ -z "$json" ]; then
-        log_error "ENABLE_METALLB=true 但未设置 METALLB_EXTERNAL_ADDRESSES_JSON (多集群测试需要外部地址池)"
-        log_error '示例: METALLB_EXTERNAL_ADDRESSES_JSON='\''[{"cluster":"business-1","ipv4Addresses":["192.168.139.13/32"]}]'\'''
-        return 1
-    fi
-    if ! printf '%s' "$json" | jq empty 2>/dev/null; then
-        log_error "METALLB_EXTERNAL_ADDRESSES_JSON 不是有效 JSON"
-        return 1
-    fi
-
     local pool="$METALLB_EXTERNAL_POOL_NAME"
-    local cluster
+    local owner="${EXTERNAL_IP_POOL_OWNER:-doctest}"
+    local json="${METALLB_EXTERNAL_ADDRESSES_JSON:-}"
+    local cluster existing
+
     for cluster in "$@"; do
+        existing=$(_external_ip_pool_owner "$cluster" "$pool")
+        if [ -n "$existing" ]; then
+            log_info "外部 IP 地址池 $pool 已存在于集群 $cluster (owner=$existing)，直接复用"
+            _wait_ipaddresspool_available "$cluster" "$pool" || return 1
+            continue
+        fi
+
+        if [ -z "$json" ]; then
+            log_error "集群 ${cluster} 上不存在外部 IP 地址池 ${pool}，且未设置 METALLB_EXTERNAL_ADDRESSES_JSON"
+            log_error '示例: METALLB_EXTERNAL_ADDRESSES_JSON='\''[{"cluster":"business-1","ipv4Addresses":["192.168.139.13/32"]}]'\'''
+            log_error "dailybuild 场景应由 initials 的 docs-test init 预先建好该池"
+            return 1
+        fi
+        if ! printf '%s' "$json" | jq empty 2>/dev/null; then
+            log_error "METALLB_EXTERNAL_ADDRESSES_JSON 不是有效 JSON"
+            return 1
+        fi
+
         # 取该集群地址（合并 ipv4Addresses 与 ipv6Addresses，后者缺省为空数组）
         # 用 while-read 逐行收集（兼容 macOS 自带 Bash 3.2，其无 mapfile/readarray）
-        local addresses=()
-        local addr_line
+        local addresses=() addr_line
         while IFS= read -r addr_line; do
             if [ -n "$addr_line" ]; then
                 addresses+=("$addr_line")
@@ -1147,7 +1269,7 @@ setup_external_ip_pools() {
             log_error "METALLB_EXTERNAL_ADDRESSES_JSON 中集群 $cluster 无地址配置 (需含 cluster=$cluster 的条目及 ipv4Addresses)"
             return 1
         fi
-        create_external_ip_pool "$cluster" "$pool" "${addresses[@]}" || return 1
+        create_external_ip_pool "$cluster" "$pool" "$owner" "${addresses[@]}" || return 1
         _wait_ipaddresspool_available "$cluster" "$pool" || return 1
     done
     log_success "外部 IP 地址池已就绪: 集群 $* (pool=$pool)"
@@ -1165,8 +1287,13 @@ teardown_external_ip_pools() {
     fi
 
     local pool="$METALLB_EXTERNAL_POOL_NAME"
-    local cluster rc=0
+    local cluster owner rc=0
     for cluster in "$@"; do
+        owner=$(_external_ip_pool_owner "$cluster" "$pool")
+        if [ "$owner" = "init" ]; then
+            log_info "外部 IP 地址池 $pool@$cluster 由 init 创建（owner=init），跳过清理"
+            continue
+        fi
         delete_external_ip_pool "$cluster" "$pool" || rc=1
     done
     [ "$rc" -eq 0 ] && log_success "外部 IP 地址池已清理: 集群 $* (pool=$pool)"

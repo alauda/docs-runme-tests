@@ -14,8 +14,9 @@
 #   仓库 ref；标准镜像构建 Pipeline 没有这三个项目专用 build-arg 的输入接口。
 #   Hub resolver 按 Edge 实际配置使用 catalog/kind/name/version 四个参数。
 #
-# 两个架构使用各自的 RWO 源码 PVC。不能让两个原生架构 Task 并行挂载同一个
-# topolvm RWO PVC；否则 arm64 Task 会因跨节点挂载失败。两个 Buildah Task 产出
+# 两个架构使用各自的 RWO 源码 PVC。源码 PVC 使用 Edge 的
+# edge-build-cache-ceph 存储类，保证 arm64 构建节点也能绑定卷。不能让两个原生
+# 架构 Task 并行挂载同一个 RWO PVC；两个 Buildah Task 产出
 # 仅供合并使用的 _buildcache-* tag，merge-image 再把所有正式 tag 写成 manifest list。
 #
 # arm64 节点可能带 build-arm:NoSchedule 或 builder:NoSchedule 污点，两个 toleration
@@ -432,7 +433,7 @@ spec:
     - name: source-amd64
       volumeClaimTemplate:
         spec:
-          storageClassName: topolvm
+          storageClassName: edge-build-cache-ceph
           accessModes:
             - ReadWriteOnce
           resources:
@@ -442,7 +443,7 @@ spec:
     - name: source-arm64
       volumeClaimTemplate:
         spec:
-          storageClassName: topolvm
+          storageClassName: edge-build-cache-ceph
           accessModes:
             - ReadWriteOnce
           resources:

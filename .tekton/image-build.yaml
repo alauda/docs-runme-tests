@@ -8,10 +8,15 @@
 #   - 任意分支的 PR 上评论 /image-build（四仓联合改动合入前，用它出一份可真跑的镜像）
 #
 # 编排使用 Edge Hub 已验证的产品化 Task：
-#   catalog/git-clone:0.10 -> catalog/run-script:0.1 -> catalog/buildah:0.10。
+#   catalog/git-clone:0.10 -> catalog/run-script:0.1 ->
+#   catalog/buildah:0.10（amd64/arm64）-> catalog/merge-image:0.2。
 #   这里保留内联 pipelineSpec，是因为本项目要在构建前动态计算多 tag 和三个文档
 #   仓库 ref；标准镜像构建 Pipeline 没有这三个项目专用 build-arg 的输入接口。
 #   Hub resolver 按 Edge 实际配置使用 catalog/kind/name/version 四个参数。
+#
+# 两个架构使用各自的 RWO 源码 PVC。不能让两个原生架构 Task 并行挂载同一个
+# topolvm RWO PVC；否则 arm64 Task 会因跨节点挂载失败。两个 Buildah Task 产出
+# 仅供合并使用的 _buildcache-* tag，merge-image 再把所有正式 tag 写成 manifest list。
 #
 # registryconfig 工作区绑定 asm-dev 中现有的 build-harbor.kauto.docfj Secret。该 Secret
 # 已由 Edge 生成 .dockerconfigjson，并指向 build-harbor.alauda.cn；buildah Task 会通过
@@ -73,12 +78,13 @@ spec:
       - name: builder-image
         type: string
     workspaces:
-      - name: source
+      - name: source-amd64
+      - name: source-arm64
       - name: registryconfig
       - name: basic-auth
 
     tasks:
-      - name: git-clone
+      - name: git-clone-amd64
         taskRef:
           resolver: hub
           params:
@@ -99,14 +105,40 @@ spec:
             value: "$(params.pull-request-number)"
         workspaces:
           - name: output
-            workspace: source
+            workspace: source-amd64
+          - name: basic-auth
+            workspace: basic-auth
+
+      - name: git-clone-arm64
+        taskRef:
+          resolver: hub
+          params:
+            - name: catalog
+              value: catalog
+            - name: kind
+              value: task
+            - name: name
+              value: git-clone
+            - name: version
+              value: "0.10"
+        params:
+          - name: url
+            value: "$(params.git-url)"
+          - name: revision
+            value: "$(params.git-revision)"
+          - name: prNumber
+            value: "$(params.pull-request-number)"
+        workspaces:
+          - name: output
+            workspace: source-arm64
           - name: basic-auth
             workspace: basic-auth
 
       # 结果 array-result 是完整镜像地址，string-result 是首个 tag。
-      # buildah 的 images 参数直接消费完整地址数组，避免在 Tekton 表达式里拼数组。
+      # buildah 的正式 tag 列表直接消费 array-result；object-result 中另外保存
+      # 两个架构各自的临时 tag，供 merge-image 读取。
       - name: prepare-tags
-        runAfter: [git-clone]
+        runAfter: [git-clone-amd64]
         taskRef:
           resolver: hub
           params:
@@ -139,6 +171,7 @@ spec:
               repo="$1"
               branch="$2"
               commit="$3"
+              short="${commit:0:7}"
               case "$repo" in
                 ''|*[!A-Za-z0-9._:/-]*)
                   echo "镜像仓库地址包含不支持的字符" >&2
@@ -183,14 +216,23 @@ spec:
               printf ']\n' >> "$out_array"
               printf '%s' "${tags[0]}" > "$out_string"
 
+              # 两个架构先推送短 SHA 隔离的临时 tag，避免直接覆盖正式 tag；
+              # merge-image 会把所有正式 tag 重新写成同一个多架构 manifest。
+              printf '{"source-image-amd64":"%s:_buildcache-%s-amd64","source-image-arm64":"%s:_buildcache-%s-arm64"}\n' \
+                "$repo" "$short" "$repo" "$short" \
+                > "${RESULT_OBJECT_PATH:?run-script 未提供 object-result 路径}"
+
               printf '镜像 tag：%s\n' "$raw"
+              printf '架构临时 tag：%s:_buildcache-%s-amd64、%s:_buildcache-%s-arm64\n' \
+                "$repo" "$short" "$repo" "$short"
         workspaces:
           - name: source
-            workspace: source
+            workspace: source-amd64
 
       # 单独读取文档 ref，使用 run-script 的 array-result 传给 buildah 的 buildArgs。
       - name: prepare-refs
-        # source 使用 ReadWriteOnce PVC，串行执行可避免两个 Task 被调度到不同节点。
+        # ref 清单只需读取一次；两个架构 Buildah Task 共享其 Tekton Result，源码则各自读取
+        # 对应架构的 PVC。
         runAfter: [prepare-tags]
         taskRef:
           resolver: hub
@@ -226,10 +268,10 @@ spec:
               printf '文档 ref：mesh=%s otel=%s tracing=%s\n' "$mesh" "$otel" "$tracing"
         workspaces:
           - name: source
-            workspace: source
+            workspace: source-amd64
 
-      - name: build-image
-        runAfter: [prepare-tags, prepare-refs]
+      - name: build-image-amd64
+        runAfter: [git-clone-amd64, prepare-tags, prepare-refs]
         taskRef:
           resolver: hub
           params:
@@ -243,33 +285,112 @@ spec:
               value: "0.10"
         params:
           - name: images
-            # buildah 的 images 是 array；数组结果必须作为列表项展开，不能放在标量中。
+            # 每个架构只构建一个临时 tag；正式 tag 由 merge-image 统一生成。
             value:
-              - "$(tasks.prepare-tags.results.array-result[*])"
+              - "$(tasks.prepare-tags.results.object-result.source-image-amd64)"
           - name: builderImage
             value: "$(params.builder-image)"
           - name: containerfile
             value: "$(params.dockerfile)"
           - name: context
             value: "."
+          - name: format
+            value: docker
           - name: tlsVerify
             # 直接使用 Harbor registry Secret 时校验 registry TLS；Connector
             # forward-proxy 方案按 UPDATE-README.md 的说明改为 "false"。
             value: "true"
           - name: buildArgs
             value:
+              - "TARGETARCH=amd64"
               - "IMAGE_TAG=$(tasks.prepare-tags.results.string-result)"
               - "MESH_DOCS_REF=$(tasks.prepare-refs.results.array-result[0])"
               - "OTEL_DOCS_REF=$(tasks.prepare-refs.results.array-result[1])"
               - "TRACING_DOCS_REF=$(tasks.prepare-refs.results.array-result[2])"
         workspaces:
           - name: source
-            workspace: source
+            workspace: source-amd64
+          - name: registry-config
+            workspace: registryconfig
+
+      - name: build-image-arm64
+        runAfter: [git-clone-arm64, prepare-tags, prepare-refs]
+        taskRef:
+          resolver: hub
+          params:
+            - name: catalog
+              value: catalog
+            - name: kind
+              value: task
+            - name: name
+              value: buildah
+            - name: version
+              value: "0.10"
+        params:
+          - name: images
+            value:
+              - "$(tasks.prepare-tags.results.object-result.source-image-arm64)"
+          - name: builderImage
+            value: "$(params.builder-image)"
+          - name: containerfile
+            value: "$(params.dockerfile)"
+          - name: context
+            value: "."
+          - name: format
+            value: docker
+          - name: tlsVerify
+            value: "true"
+          - name: buildArgs
+            value:
+              - "TARGETARCH=arm64"
+              - "IMAGE_TAG=$(tasks.prepare-tags.results.string-result)"
+              - "MESH_DOCS_REF=$(tasks.prepare-refs.results.array-result[0])"
+              - "OTEL_DOCS_REF=$(tasks.prepare-refs.results.array-result[1])"
+              - "TRACING_DOCS_REF=$(tasks.prepare-refs.results.array-result[2])"
+        workspaces:
+          - name: source
+            workspace: source-arm64
+          - name: registry-config
+            workspace: registryconfig
+
+      - name: merge-image
+        runAfter: [build-image-amd64, build-image-arm64]
+        taskRef:
+          resolver: hub
+          params:
+            - name: catalog
+              value: catalog
+            - name: kind
+              value: task
+            - name: name
+              value: merge-image
+            - name: version
+              value: "0.2"
+        params:
+          - name: sourceImages
+            value:
+              - "$(tasks.prepare-tags.results.object-result.source-image-amd64)"
+              - "$(tasks.prepare-tags.results.object-result.source-image-arm64)"
+          - name: targetImages
+            value: "$(tasks.prepare-tags.results.array-result[*])"
+          - name: tlsVerify
+            value: "true"
+        workspaces:
           - name: registry-config
             workspace: registryconfig
 
   workspaces:
-    - name: source
+    - name: source-amd64
+      volumeClaimTemplate:
+        spec:
+          storageClassName: topolvm
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 4Gi
+
+    - name: source-arm64
       volumeClaimTemplate:
         spec:
           storageClassName: topolvm
@@ -299,7 +420,45 @@ spec:
         fsGroupChangePolicy: "OnRootMismatch"
 
   taskRunSpecs:
-    - pipelineTaskName: build-image
+    - pipelineTaskName: git-clone-amd64
+      podTemplate:
+        nodeSelector:
+          kubernetes.io/arch: amd64
+    - pipelineTaskName: git-clone-arm64
+      podTemplate:
+        nodeSelector:
+          kubernetes.io/arch: arm64
+        tolerations:
+          - key: build-arm
+            operator: Exists
+            effect: NoSchedule
+    - pipelineTaskName: prepare-tags
+      podTemplate:
+        nodeSelector:
+          kubernetes.io/arch: amd64
+    - pipelineTaskName: prepare-refs
+      podTemplate:
+        nodeSelector:
+          kubernetes.io/arch: amd64
+    - pipelineTaskName: build-image-amd64
+      podTemplate:
+        nodeSelector:
+          kubernetes.io/arch: amd64
+      computeResources:
+        requests:
+          cpu: 2
+          memory: 4Gi
+        limits:
+          cpu: 4
+          memory: 8Gi
+    - pipelineTaskName: build-image-arm64
+      podTemplate:
+        nodeSelector:
+          kubernetes.io/arch: arm64
+        tolerations:
+          - key: build-arm
+            operator: Exists
+            effect: NoSchedule
       computeResources:
         requests:
           cpu: 2

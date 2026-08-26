@@ -290,11 +290,27 @@ git 会原样写进 `.git/config` 的 `remote.origin.url`，任何拿到镜像�
 - push 到 `main` 或 `release-mesh-<x.y>`（提交信息含 `ci skip` 的除外）→ 自动构建
 - 任意分支的 PR 上评论 `/image-build` → 手动构建
 
+手动触发不需要打开 Edge 页面点 Hub 流水线的“执行”：在目标 GitHub PR 的评论框中单独发送
+`/image-build`（前后不要附加参数）即可。PaC 会用该 PR 的 head revision 创建本仓库的
+PipelineRun；`cancel-in-progress: true` 表示同一 Repository 的旧运行会被取消。评论触发不受
+push 分支白名单限制，因此特性分支也能构建。若没有 PipelineRun，先检查 `Repository`、GitHub
+App 的 `issue_comment` 事件和评论是否严格匹配，再看 Task 日志。
+
 流水线保留内联 `pipelineSpec`，但每个步骤都使用 Edge Hub 的产品化 Task：
 
-`catalog/git-clone:0.10` → 两个 `catalog/run-script:0.1`（计算 tag、读取文档 ref）
-→ `catalog/buildah:0.10`（多 tag 构建并推送）。Hub resolver 按 Edge 实际配置使用
-`catalog`、`kind`、`name`、`version` 四个参数。`buildah` 使用 Edge 内置镜像
+`git-clone-amd64` / `git-clone-arm64`（`catalog/git-clone:0.10`）
+→ `prepare-tags` / `prepare-refs`（`catalog/run-script:0.1`）
+→ `build-image-amd64` / `build-image-arm64`（`catalog/buildah:0.10`）
+→ `merge-image`（`catalog/merge-image:0.2`）。Hub resolver 按 Edge 实际配置使用
+`catalog`、`kind`、`name`、`version` 四个参数。两个 Buildah Task 分别调度到原生
+amd64/arm64 节点，先推送 `_buildcache-<短 SHA>-amd64/arm64` 临时 tag，再由
+`merge-image` 把 `compute-tags.sh` 生成的每个正式 tag 写成包含两个架构的 manifest list。
+临时 tag 仅供合并使用，建议在 Harbor retention 规则中定期清理。
+
+两个架构使用独立的 `topolvm` RWO 源码 PVC；不要把它们改回一个共享 RWO PVC，否则
+arm64 Task 跨节点挂载会卡住。Edge 集群必须存在带
+`kubernetes.io/arch: arm64` 的构建节点；若该节点有 `build-arm:NoSchedule` 污点，流水线
+已为 clone/build Task 配置对应 toleration。`buildah` 使用 Edge 内置镜像
 `registry.alauda.cn:60070/devops/tektoncd/hub/buildah:v1.33`，所有 Task 按 UID 65532
 运行，不需要自定义 `privileged` step。
 
@@ -317,6 +333,13 @@ Harbor 账号对目标项目/仓库的 push 权限，不要另建同名但内容
 
 分支名净化：非 `[A-Za-z0-9_.-]` 换成 `-`，去掉开头的 `.` 与 `-`，截断到 120 字符。
 `feat/xxx` 里的斜杠必须换掉，否则会被当成镜像仓库路径分隔符。
+
+三个文档仓库的 ref 不是由触发事件自动猜测，而是构建 checkout 本仓库后读取
+`lynx/docs-refs.tsv`，再作为 Dockerfile 的 `MESH_DOCS_REF`、`OTEL_DOCS_REF`、
+`TRACING_DOCS_REF` build-arg。可填写分支名、tag 或 commit SHA；构建会先执行
+`lynx/check-docs-refs.sh`。当前 `/image-build` 评论命令不接受 `mesh=...` 这类参数，
+所以要控制 ref，先在本仓库 PR 修改该 TSV，再评论 `/image-build`。若要让结果可复现，
+优先填不可变 commit SHA；文档 PR 合入主干后再把对应行改回 `master`/`main`。
 
 ### 7.4 首次接入 Edge 的操作清单
 
@@ -416,7 +439,8 @@ Repository 和 PipelineRun 的权限。
    Repository/Webhook 注册，不要先改 Task 参数。
 
 代码推送到 GitHub 后，建议先在一个 PR 上评论 `/image-build` 验证，确认 Edge 中出现
-`git-clone`、`prepare-tags`、`prepare-refs`、`build-image` 四个 Task 且最终镜像可拉取，
+`git-clone-amd64`、`git-clone-arm64`、`prepare-tags`、`prepare-refs`、
+`build-image-amd64`、`build-image-arm64`、`merge-image` 七个 Task 且最终镜像可拉取，
 再合入 `main`。检查命令（需切换到 `business-build` 的授权 kubeconfig）：
 
 ```bash

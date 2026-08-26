@@ -298,11 +298,13 @@ git 会原样写进 `.git/config` 的 `remote.origin.url`，任何拿到镜像�
 `registry.alauda.cn:60070/devops/tektoncd/hub/buildah:v1.33`，所有 Task 按 UID 65532
 运行，不需要自定义 `privileged` step。
 
-推镜像的凭据通过 `registryconfig` 工作区绑定 `build-harbor-credentials` Secret；Secret
-需要包含 `config.json` 或 `.dockerconfigjson`，并对
-`build-harbor.alauda.cn/asm/docs-runme-tests` 具有 push 权限。GitHub 克隆凭据仍由 PaC
-通过 `{{ git_auth_secret }}` 自动注入 `basic-auth` 工作区。第一次构建若出现
-`secret not found` 或 401，先让 Edge 管理员检查 Secret 所在命名空间和 Harbor 权限。
+推镜像的凭据通过 `registryconfig` 工作区绑定 `asm-dev` 中现有的
+`build-harbor.kauto.docfj` Secret。已通过 `business-build` 的 Edge Web CLI 确认该 Secret
+类型为 `kubernetes.io/dockerconfigjson`、数据键为 `.dockerconfigjson`，registry 是
+`https://build-harbor.alauda.cn`。账号仍需对
+`build-harbor.alauda.cn/asm/docs-runme-tests` 具有 push 权限。GitHub 克隆凭据由 PaC 通过
+`{{ git_auth_secret }}` 自动注入 `basic-auth` 工作区。第一次构建若出现 401/403，检查该
+Harbor 账号对目标项目/仓库的 push 权限，不要另建同名但内容不明的 Secret。
 
 ### 7.3 tag 规则
 
@@ -319,23 +321,23 @@ git 会原样写进 `.git/config` 的 `remote.origin.url`，任何拿到镜像�
 ### 7.4 首次接入 Edge 的操作清单
 
 当前流水线目标是 Edge 的 `business-build` 集群、`asm-dev` 命名空间（控制台工作区：
-`asm~business-build~asm-dev`）。本地 kubeconfig 当前未指向该集群，因此以下三项需要
-Edge/PAC 管理员确认或执行：
+`asm~business-build~asm-dev`）。本地 kubeconfig 当前未指向该集群，可在 Edge 的 Web CLI
+连接 `business-build` 后执行下面的 `kubectl` 命令。当前账号已确认具备在 `asm-dev` 创建
+Repository 和 PipelineRun 的权限。
 
-1. **准备 Harbor 凭据**：在 `asm-dev` 创建或确认名为 `build-harbor-credentials` 的
-   Secret，数据键为 `config.json` 或 `.dockerconfigjson`，账号至少能推送
-   `build-harbor.alauda.cn/asm/docs-runme-tests`。不要把账号密码写入仓库。
-   管理员可以从安全路径导入现有 Docker 配置（命令不会把凭据写进 Git）：
+1. **确认 Harbor 凭据**：流水线直接使用 `asm-dev/build-harbor.kauto.docfj`。只检查类型、
+   数据键和 registry，不要打印凭据内容：
 
    ```bash
-   kubectl -n asm-dev create secret generic build-harbor-credentials \
-     --from-file=config.json=/secure/path/config.json \
-     --dry-run=client -o yaml | kubectl apply -f -
+   kubectl -n asm-dev get secret build-harbor.kauto.docfj \
+     -o custom-columns=NAME:.metadata.name,TYPE:.type
+   kubectl -n asm-dev get secret build-harbor.kauto.docfj \
+     -o go-template='{{range $k,$v := .data}}{{printf "%s\\n" $k}}{{end}}'
    ```
 
-   如果使用 `.dockerconfigjson`，将 `--from-file` 的键改为
-   `--from-file=.dockerconfigjson=/secure/path/config.json`。
-   如果公司要求使用 Connector 而不是直接绑定 Secret，保留流水线里的
+   期望输出类型为 `kubernetes.io/dockerconfigjson`，键名为 `.dockerconfigjson`。若 Secret
+   被平台轮换为新名称，同步修改 `.tekton/image-build.yaml`，不要复制或提交解码后的凭据。
+   如果后续改用 Connector，保留流水线里的
    `registry-config` Task 工作区不变，只把顶层 `registryconfig` 工作区替换为 CSI 绑定，
    Connector 名称以 Edge 管理员实际创建的名称为准：
 
@@ -368,27 +370,32 @@ Edge/PAC 管理员确认或执行：
    下载基础镜像、文档仓库及工具。若 `business-build` 禁止公网访问，请让平台提供内网
    镜像/代理；Buildah Task 的 `registry-config` 也支持在 Secret 根目录放 `.env` 注入代理
    变量。不要把这个问题和 Harbor push 凭据混在一起排查。
-3. **注册 GitHub Repository**：在 PAC 管理的目标命名空间创建本仓库的 Repository CR，
-   URL 为 `https://github.com/alauda/docs-runme-tests`，并让 GitHub App/Webhook 覆盖
-   `push`、`pull_request`、`issue_comment` 事件。若使用 `tkn pac`，从仓库目录执行：
+3. **注册 GitHub Repository**：`business-build/alauda-dev` 中的参考 Repository
+   `alauda-distributed-tracing-docs` 仅设置 `spec.url`，说明公司 PAC 已通过全局配置提供
+   GitHub App/Webhook 凭据。目标命名空间按相同模式创建：
 
-   ```bash
-   cd /Users/alan/go/src/github.com/alauda/docs-runme-tests
-   tkn pac create repo --pac-namespace <PAC 安装命名空间>
+   ```yaml
+   apiVersion: pipelinesascode.tekton.dev/v1alpha1
+   kind: Repository
+   metadata:
+     name: alauda-docs-runme-tests
+     namespace: asm-dev
+   spec:
+     url: https://github.com/alauda/docs-runme-tests
    ```
 
-   `--pac-namespace` 指 PAC controller 所在命名空间，不是 PipelineRun 的 `asm-dev`；两者
-   可以不同。命令交互时另行把 PipelineRun 命名空间选为 `asm-dev`。
+   应用前先确认尚未注册，避免同一 URL 对应多个 Repository：
 
-   GitHub 的 App/token、Webhook URL 和 Secret 按公司 PAC 管理员提供的值填写。该命令通常还会在当前目录生成
-   `.tekton/pipelinerun.yaml`；本仓库已经有 `image-build.yaml`，不要把这个自动模板一并提交，
-   否则 PAC 会把两个 PipelineRun 都当成流水线定义。更稳妥的做法是让 PAC 管理员直接在
-   Edge/集群中创建 Repository CR，或在临时工作目录运行 CLI，最后只保留本仓库的
-   `.tekton/image-build.yaml`。
+   ```bash
+   kubectl -n asm-dev get repository
+   kubectl apply -f repository.yaml
+   ```
 
-   若公司通过 Edge 控制台创建 Repository，填写同样的仓库 URL、命名空间和 GitHub 凭据即可；
-   以 PAC 管理员实际支持的 GitHub App/Webhook 配置为准，不要把 PAT、App 私钥或 webhook
-   secret 写入 Git 仓库。
+   不要在本仓库运行 `tkn pac create repo`：该命令可能生成额外的
+   `.tekton/pipelinerun.yaml`，PAC 会把它和现有的 `image-build.yaml` 一起处理。也不要把
+   GitHub PAT、App 私钥或 webhook secret 写入 Repository CR 或 Git 仓库；若最小 CR 创建后
+   GitHub 没有收到 Check，再由 PAC 管理员检查全局 GitHub App 是否覆盖
+   `alauda/docs-runme-tests` 以及 `push`、`pull_request`、`issue_comment` 事件。
 
    注册完成后，先不看构建日志，直接在第一条 PipelineRun 的 YAML/详情里核对 PAC 标记：
 
@@ -419,7 +426,7 @@ tkn pipelinerun logs <PipelineRun 名称> -n asm-dev -f
 
 常见故障定位：没有 PipelineRun 通常是 Repository/Webhook 未注册或分支表达式未匹配；
 `hub resolver` 报错时检查 Edge Hub 上的 `catalog/*` 版本；`secret not found` 或 401
-检查 `build-harbor-credentials` 的命名空间、键名和 Harbor push 权限；Git clone 失败则
+检查 `build-harbor.kauto.docfj` 的命名空间、键名和 Harbor push 权限；Git clone 失败则
 检查 PAC 生成的 `git_auth_secret` 是否存在以及 GitHub App 是否允许读取仓库。
 
 ---

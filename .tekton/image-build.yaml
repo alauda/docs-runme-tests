@@ -13,8 +13,8 @@
 #   仓库 ref；标准镜像构建 Pipeline 没有这三个项目专用 build-arg 的输入接口。
 #   Hub resolver 按 Edge 实际配置使用 catalog/kind/name/version 四个参数。
 #
-# registryconfig 工作区绑定 Edge 中的 build-harbor-credentials Secret。该 Secret 需要在
-# PipelineRun 所在命名空间提供 config.json 或 .dockerconfigjson；buildah Task 会通过
+# registryconfig 工作区绑定 asm-dev 中现有的 build-harbor.kauto.docfj Secret。该 Secret
+# 已由 Edge 生成 .dockerconfigjson，并指向 build-harbor.alauda.cn；buildah Task 会通过
 # registry-config 工作区读取它，不再依赖自定义 privileged step 或 ServiceAccount 注解。
 apiVersion: tekton.dev/v1
 kind: PipelineRun
@@ -287,7 +287,7 @@ spec:
     # Edge 标准 buildah Task 的 registry-config 工作区。
     - name: registryconfig
       secret:
-        secretName: build-harbor-credentials
+        secretName: build-harbor.kauto.docfj
 
   # Edge Hub 的 git-clone、run-script、buildah 均按非 root UID 65532 设计。
   taskRunTemplate:

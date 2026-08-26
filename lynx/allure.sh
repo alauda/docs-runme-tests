@@ -37,24 +37,46 @@ allure_emit_results() {
                        | {key: .case_id, value: {name: .case_name, tags: (.tags // "")}}]
                       | from_entries' "$results") || return 1
 
-    local line rtype project doc uuid cid
+    # 同一篇文档在一次 Run 里会出现多条 doctest 记录：不同 Case 各跑一遍
+    # （如 mesh/kiali 在 Case 3 与 Case 5 都跑），同一 Case 内也会先 --no-cleanup
+    # 再 --cleanup-only（phase 分别是 test / cleanup-only），个别 Case 甚至同一
+    # phase 重复跑（Case 4 的 install-mesh 跑两次）。
+    # historyId 必须把这些区分开：allure 把 historyId 相同的结果当成同一用例的重试，
+    # 只保留最后一条当作最终状态。实测后果——mesh Case 5 的 deploying-ambient-bookinfo
+    # 主跑 failed、随后的 cleanup-only passed，报告里就只剩 passed，
+    # 终端汇总明明是 31✓/1✗，allure 却是 failed=0，dailybuild 拿到的是假绿。
+    # 用 project|case_id|file|phase 做键，再加一个出现次序兜底重复。
+    # 计数用字符串而不是 declare -A：macOS 自带 bash 3.2 没有关联数组。
+    local line rtype project doc uuid cid phase rcase key seen_keys="" occ
     while IFS= read -r line; do
         [ -n "$line" ] || continue
         rtype=$(printf '%s' "$line" | jq -r '.type // ""')
         [ "$rtype" = "doctest" ] || continue
         project=$(printf '%s' "$line" | jq -r '.project')
         doc=$(printf '%s' "$line" | jq -r '.file')
+        phase=$(printf '%s' "$line" | jq -r '.phase // ""')
+        rcase=$(printf '%s' "$line" | jq -r '.case_id // ""')
         uuid=$(_allure_uuid)
         cid=$(_allure_case_id "$project" "$doc")
+        key="${project}|${rcase}|${doc}|${phase}"
+        occ=$(printf '%s' "$seen_keys" | grep -Fxc -- "$key" 2>/dev/null || true)
+        occ=$(( ${occ:-0} + 1 ))
+        seen_keys="${seen_keys}${key}
+"
         printf '%s' "$line" | jq \
-            --arg uuid "$uuid" --arg case_id "${cid:-}" --argjson casemap "$casemap" '
+            --arg uuid "$uuid" --arg case_id "${cid:-}" --argjson casemap "$casemap" \
+            --arg occ "$occ" --argjson multi "$( [ "$occ" -gt 1 ] && echo true || echo false )" '
             . as $r
             | ($casemap[$r.case_id] // {name: "（无 Case）", tags: ""}) as $c
+            # 名字保持可读：主跑仍是纯文档名，只给 cleanup-only 与重复出现加后缀
+            | ( ($r.file)
+                + (if ($r.phase // "") == "cleanup-only" then " (cleanup)" else "" end)
+                + (if $multi then " #\($occ)" else "" end) ) as $dname
             | {
                 uuid: $uuid,
-                name: $r.file,
-                fullName: "\($r.project)/\($r.file)",
-                historyId: "\($r.project)/\($r.file)",
+                name: $dname,
+                fullName: "\($r.project)/\($r.file) [Case \($r.case_id) \($r.phase // "")]",
+                historyId: "\($r.project)/\($r.file)|case\($r.case_id)|\($r.phase // "")|\($occ)",
                 status: $r.status,
                 statusDetails: {
                     message: (if $r.status == "failed" then ($r.fail_reason // "")

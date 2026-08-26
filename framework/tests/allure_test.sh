@@ -51,7 +51,8 @@ test_emit_results() {
     check_eq "生成 2 个用例文件" "$(find "$dir/allure-result" -name '*-result.json' | wc -l | tr -d ' ')" "2"
 
     local merged; merged="$(cat "$dir"/allure-result/*-result.json)"
-    check_contains "fullName 带项目前缀" "$merged" '"fullName": "mesh/install-mesh"'
+    check_contains "fullName 带项目前缀与 Case/phase" "$merged" '"fullName": "mesh/install-mesh [Case 3 test]"'
+    check_contains "historyId 带 Case/phase/序号"       "$merged" '"historyId": "mesh/install-mesh|case3|test|1"'
     check_contains "毫秒时间戳"          "$merged" '"start": 100000'
     check_contains "suite 标签"          "$merged" '"value": "Case 3: 单网格"'
     check_contains "feature 标签"        "$merged" '"value": "mesh"'
@@ -82,9 +83,44 @@ EOF
     check_contains "占位原因带 env 前缀"      "$merged" '"message": "[env] 非多集群环境"'
     check_contains "占位 suite 标签"          "$merged" '"value": "Case 6: 多集群自动升级"'
     check_eq "有 doctest 的 Case 不重复补占位" \
-        "$(printf '%s' "$merged" | grep -c '"fullName": "mesh/install-mesh"')" "1"
+        "$(printf '%s' "$merged" | grep -c '"fullName": "mesh/install-mesh \[Case 3 test\]"')" "1"
     check_eq "占位仅产出一次"                 \
         "$(printf '%s' "$merged" | grep -c '"fullName": "case/6"')" "1"
+    rm -rf "$dir"
+}
+
+# 同一篇文档在一次 Run 里会跑多次（不同 Case / --no-cleanup 与 --cleanup-only /
+# 同一 Case 内重复），historyId 必须各不相同——相同则被 allure 当成重试，
+# 只保留最后一条，失败会被后面的 passed 覆盖掉（实测 mesh Case 5 的
+# deploying-ambient-bookinfo 主跑 failed、cleanup-only passed，报告里 failed=0）
+test_emit_results_duplicate_docs() {
+    printf '\n== allure_emit_results 同文档多次执行不互相覆盖 ==\n'
+    local dir; dir="$(mktemp -d)"
+    cat > "$dir/results.jsonl" <<'EOF'
+{"type":"doctest","project":"mesh","file":"deploying-ambient-bookinfo","script":"a.sh","case_id":"5","case_name":"Ambient","phase":"test","status":"failed","skip_reason":"","fail_reason":"ztunnel 未纳管","start_ts":100,"end_ts":135,"duration_s":35}
+{"type":"doctest","project":"mesh","file":"deploying-ambient-bookinfo","script":"a.sh","case_id":"5","case_name":"Ambient","phase":"cleanup-only","status":"passed","skip_reason":"","fail_reason":"","start_ts":200,"end_ts":210,"duration_s":10}
+{"type":"doctest","project":"mesh","file":"kiali","script":"k.sh","case_id":"3","case_name":"单网格","phase":"test","status":"passed","skip_reason":"","fail_reason":"","start_ts":300,"end_ts":310,"duration_s":10}
+{"type":"doctest","project":"mesh","file":"kiali","script":"k.sh","case_id":"5","case_name":"Ambient","phase":"test","status":"failed","skip_reason":"","fail_reason":"boom","start_ts":320,"end_ts":330,"duration_s":10}
+{"type":"doctest","project":"mesh","file":"install-mesh","script":"i.sh","case_id":"4","case_name":"HA","phase":"test","status":"passed","skip_reason":"","fail_reason":"","start_ts":400,"end_ts":410,"duration_s":10}
+{"type":"doctest","project":"mesh","file":"install-mesh","script":"i.sh","case_id":"4","case_name":"HA","phase":"test","status":"failed","skip_reason":"","fail_reason":"第二次挂了","start_ts":420,"end_ts":430,"duration_s":10}
+{"type":"case","case_id":"3","case_name":"单网格","status":"passed","tags":"smoke","duration_s":10}
+{"type":"case","case_id":"4","case_name":"HA","status":"failed","tags":"ha","duration_s":30}
+{"type":"case","case_id":"5","case_name":"Ambient","status":"failed","tags":"smoke ambient","duration_s":110}
+EOF
+    ALLURE_CASE_IDS_FILE="$dir/nonexistent.tsv" allure_emit_results "$dir/results.jsonl" "$dir/allure-result"
+
+    local total uniq failed
+    total="$(find "$dir/allure-result" -name '*-result.json' | wc -l | tr -d ' ')"
+    uniq="$(jq -r '.historyId' "$dir"/allure-result/*-result.json | sort -u | wc -l | tr -d ' ')"
+    failed="$(jq -r '.status' "$dir"/allure-result/*-result.json | grep -c '^failed$' | tr -d ' ')"
+    check_eq "6 条 doctest 生成 6 个用例文件" "$total" "6"
+    check_eq "historyId 两两不同"             "$uniq"  "6"
+    check_eq "3 条 failed 都保留下来"          "$failed" "3"
+
+    local merged; merged="$(cat "$dir"/allure-result/*-result.json)"
+    check_contains "cleanup-only 用例名带后缀" "$merged" '"name": "deploying-ambient-bookinfo (cleanup)"'
+    check_contains "同 Case 同 phase 重复加序号" "$merged" '"name": "install-mesh #2"'
+    check_contains "主跑用例名保持纯文档名"     "$merged" '"name": "kiali"'
     rm -rf "$dir"
 }
 
@@ -131,6 +167,7 @@ test_generate_missing_cli() {
 main() {
     test_emit_results
     test_emit_results_orphan_case
+    test_emit_results_duplicate_docs
     test_emit_broken
     test_environment_and_categories
     test_generate_missing_cli

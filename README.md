@@ -58,7 +58,7 @@ docs-runme-tests/
 │   ├── case-ids.tsv        # case_id 清单（文档 → 稳定编号）
 │   ├── docs-refs.tsv       # 三个文档仓库在镜像里使用的 ref
 │   ├── release-matrix.tsv  # 发版分支 → ACP 大版本
-│   └── check-*.sh          # 四条清单/兼容性自检（构建期强制）
+│   └── check-*.sh          # 五条清单/兼容性自检（构建期强制）
 ├── .tekton/                # 镜像构建流水线（Pipelines-as-Code）
 ├── charts/
 │   └── mesh-v2-test-suite/ # Mesh v2 测试套件 ACP 集群插件
@@ -331,7 +331,7 @@ docker build --build-arg IMAGE_TAG=local-dev -t docs-runme-tests:local-dev .
 镜像自包含：三个文档仓库按 ref 浅克隆进 `/app/`，`runme` / `violet` / `istioctl` 预置到
 `bin/`（`istioctl` 版本从 mesh 文档的 runme 块推导，与 `install_istioctl` 的校验一致），
 文档引用的 17 个外部 sample YAML 按 `lynx/assets-manifest.tsv` 落到 `assets/`。
-构建期会跑 `lynx/check-{manifest,case-ids,docs-refs,shell-compat}.sh`，任一不通过即构建失败。
+构建期会跑 `lynx/check-{manifest,case-ids,docs-refs,shell-compat,runtime-shell}.sh`，任一不通过即构建失败。
 
 想知道某个镜像里装的是哪一组四仓组合：入口日志第一行会打印 tag 与三个文档仓库的 commit SHA，
 镜像内也可以 `cat /app/docs-runme-tests/.image-info`。

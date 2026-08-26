@@ -29,15 +29,23 @@ LABEL io.alauda.docs.mesh-ref="${MESH_DOCS_REF}" \
       io.alauda.docs.tracing-ref="${TRACING_DOCS_REF}" \
       io.alauda.runme-version="${RUNME_VERSION}"
 
+# SHELL 必须显式设置：runme 执行 ```bash 代码块时用 $SHELL 决定解释器，
+# 该变量为空就退回 /usr/bin/sh —— Ubuntu 上那是 dash。dash 不认 bash 的
+# $'\t'、数组、[[ ]] 等写法，文档里 `column -t -s $'\t'` 会被拆成字面量 `$\t`，
+# install-mesh / kiali 两篇的「检查可用版本」直接失败。
+# 本地手工跑时登录 shell 已经带了 SHELL=/bin/bash，所以这个坑只在容器里显形，
+# 已在 4.3.1 测试环境实测复现，别删。
 ENV DEBIAN_FRONTEND=noninteractive \
     TZ=Asia/Shanghai \
-    LANG=C.UTF-8
+    LANG=C.UTF-8 \
+    SHELL=/bin/bash
 
 # 基础工具 + JRE（allure CLI 需要）
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
         ca-certificates curl git jq openssl tzdata bash coreutils gawk sed tar gzip \
+        bsdextrautils \
         default-jre-headless; \
     rm -rf /var/lib/apt/lists/*
 
@@ -134,12 +142,15 @@ RUN set -eux; \
     done < lynx/assets-manifest.tsv; \
     echo "已预置资产: $(find assets -type f | wc -l) 个"
 
-# case_id 清单、文档 ref 清单、shell 兼容性自检
+# case_id 清单、文档 ref 清单、shell 兼容性自检、运行时 shell 自检
+# check-runtime-shell.sh 必须放在 runme 落盘之后：它会真跑一个含 bash 专有语法的
+# canary 代码块，确认 runme 用的是 bash 而不是 dash（见该脚本头部注释）。
 RUN set -eux; \
     cd /app/docs-runme-tests; \
     bash lynx/check-case-ids.sh; \
     bash lynx/check-docs-refs.sh; \
-    bash lynx/check-shell-compat.sh
+    bash lynx/check-shell-compat.sh; \
+    bash lynx/check-runtime-shell.sh
 
 # 构建期信息：入口据此回填 RUNME_VERSION 等（RUNME_VERSION 是 run.sh check_env 的必需项）
 # 同时落盘三个文档仓库的解析后 commit SHA：ref 可以是会移动的分支名，SHA 才能唯一

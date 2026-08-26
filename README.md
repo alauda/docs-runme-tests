@@ -17,8 +17,11 @@
 ## 变更操作手册
 
 本文档讲**怎么用**；改了东西之后还要同步改哪儿（新增 Case、文档外部链接变更、
-工具版本升级、插件包地址、四仓联合改动、发新版本、镜像构建与 tag 规则），
-统一见 **[UPDATE-README.md](UPDATE-README.md)**。
+工具版本升级、插件包地址、四仓联合改动、发新版本），统一见
+**[UPDATE-README.md](UPDATE-README.md)**。
+
+镜像构建、Edge 流水线和 tag 规则已单独整理到
+**[IMAGE-BUILD-README.md](IMAGE-BUILD-README.md)**。
 
 发版分支规则与 mesh-v2-test-suite 版本矩阵已迁至该文档的
 [「发新版本」](UPDATE-README.md#6-发新版本)一节。
@@ -28,7 +31,8 @@
 ```bash
 docs-runme-tests/
 ├── README.md               # 怎么用（本文）
-├── UPDATE-README.md        # 怎么改：新增 Case / 离线资源 / 版本升级 / 发版 / 镜像构建
+├── UPDATE-README.md        # 怎么改：新增 Case / 离线资源 / 版本升级 / 发版
+├── IMAGE-BUILD-README.md   # 镜像构建与 Edge 流水线操作手册
 ├── run.sh                  # 单测执行引擎（项目感知）
 ├── run-mesh-all.sh         # mesh 项目全量编排
 ├── run-otel-all.sh         # otel 项目全量编排
@@ -333,8 +337,8 @@ docker build --build-arg IMAGE_TAG=local-dev -t docs-runme-tests:local-dev .
 镜像内也可以 `cat /app/docs-runme-tests/.image-info`。
 
 **构建参数、tag 规则、流水线触发方式、四仓联合改动的构建流程**详见
-[UPDATE-README.md 第 7 节](UPDATE-README.md#7-镜像构建与-tag-规则)与
-[第 5 节](UPDATE-README.md#5-四仓联合改动文档仓库与本仓库要一起改)。
+[IMAGE-BUILD-README.md](IMAGE-BUILD-README.md)与
+[UPDATE-README.md 第 5 节](UPDATE-README.md#5-四仓联合改动文档仓库与本仓库要一起改)。
 
 ## 在 lynx / dailybuild 中运行
 

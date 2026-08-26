@@ -348,7 +348,7 @@ spec:
             value: docker
           - name: tlsVerify
             # 直接使用 Harbor registry Secret 时校验 registry TLS；Connector
-            # forward-proxy 方案按 UPDATE-README.md 的说明改为 "false"。
+            # forward-proxy 方案按 IMAGE-BUILD-README.md 的说明改为 "false"。
             value: "true"
           - name: buildArgs
             value:

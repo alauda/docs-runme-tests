@@ -18,6 +18,9 @@
 # topolvm RWO PVC；否则 arm64 Task 会因跨节点挂载失败。两个 Buildah Task 产出
 # 仅供合并使用的 _buildcache-* tag，merge-image 再把所有正式 tag 写成 manifest list。
 #
+# arm64 节点可能带 build-arm:NoSchedule 或 builder:NoSchedule 污点，两个 toleration
+# 都在对应 clone/build Task 中配置。
+#
 # registryconfig 工作区绑定 asm-dev 中现有的 build-harbor.kauto.docfj Secret。该 Secret
 # 已由 Edge 生成 .dockerconfigjson，并指向 build-harbor.alauda.cn；buildah Task 会通过
 # registry-config 工作区读取它，不再依赖自定义 privileged step 或 ServiceAccount 注解。
@@ -478,6 +481,9 @@ spec:
           - key: build-arm
             operator: Exists
             effect: NoSchedule
+          - key: builder
+            operator: Exists
+            effect: NoSchedule
     - pipelineTaskName: prepare-tags
       podTemplate:
         nodeSelector:
@@ -507,6 +513,9 @@ spec:
           kubernetes.io/arch: arm64
         tolerations:
           - key: build-arm
+            operator: Exists
+            effect: NoSchedule
+          - key: builder
             operator: Exists
             effect: NoSchedule
       computeResources:

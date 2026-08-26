@@ -309,8 +309,8 @@ amd64/arm64 节点，先推送 `_buildcache-<短 SHA>-amd64/arm64` 临时 tag，
 
 两个架构使用独立的 `topolvm` RWO 源码 PVC；不要把它们改回一个共享 RWO PVC，否则
 arm64 Task 跨节点挂载会卡住。Edge 集群必须存在带
-`kubernetes.io/arch: arm64` 的构建节点；若该节点有 `build-arm:NoSchedule` 污点，流水线
-已为 clone/build Task 配置对应 toleration。`buildah` 使用 Edge 内置镜像
+`kubernetes.io/arch: arm64` 的构建节点；若该节点有 `build-arm:NoSchedule` 或
+`builder:NoSchedule` 污点，流水线已为 clone/build Task 配置对应 toleration。`buildah` 使用 Edge 内置镜像
 `registry.alauda.cn:60070/devops/tektoncd/hub/buildah:v1.33`，所有 Task 按 UID 65532
 运行，不需要自定义 `privileged` step。
 

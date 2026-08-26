@@ -366,10 +366,11 @@ Repository 和 PipelineRun 的权限。
    `connector.namespace` 已弃用；多 Connector 或同命名空间 Connector 都统一按
    Edge/Connector 文档使用 `connectors` 属性；同命名空间时填写 Connector 名称，跨命名空间
    的格式以管理员在当前 Edge 版本确认的文档为准。
-2. **确认构建期网络**：`Dockerfile` 构建阶段需要访问 Docker Hub、GitHub 和公司 Minio
-   下载基础镜像、文档仓库及工具。若 `business-build` 禁止公网访问，请让平台提供内网
-   镜像/代理；Buildah Task 的 `registry-config` 也支持在 Secret 根目录放 `.env` 注入代理
-   变量。不要把这个问题和 Harbor push 凭据混在一起排查。
+2. **确认构建期网络**：`Dockerfile` 的 Ubuntu 22.04 基础镜像从公司 Harbor 的
+   `build-harbor.alauda.cn/ops/ubuntu:22.04` 拉取；后续仍需访问 GitHub 和公司 Minio
+   下载文档仓库及工具。若 `business-build` 禁止这些公网地址，请让平台提供内网镜像/代理；
+   Buildah Task 的 `registry-config` 也支持在 Secret 根目录放 `.env` 注入代理变量。不要把
+   这个问题和 Harbor push 凭据混在一起排查。
 3. **注册 GitHub Repository**：`business-build/alauda-dev` 中的参考 Repository
    `alauda-distributed-tracing-docs` 仅设置 `spec.url`，说明公司 PAC 已通过全局配置提供
    GitHub App/Webhook 凭据。目标命名空间按相同模式创建：

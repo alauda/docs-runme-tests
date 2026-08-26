@@ -4,8 +4,9 @@
 # 运行时零外网依赖——runme / violet / istioctl 与文档引用的 sample YAML 全部构建期落盘。
 #
 # 不复用 automation/ares:base-api-latest：那是 python/pytest 栈，我们一行 Python 都不跑，
-# 却会把镜像撑到 1G 以上。
-FROM ubuntu:22.04
+# 却会把镜像撑到 1G 以上。Edge 构建节点不保证能访问 Docker Hub，因此使用公司
+# Harbor 中同步的同版本 Ubuntu 基础镜像。
+FROM build-harbor.alauda.cn/ops/ubuntu:22.04
 
 # 三个文档仓库的默认分支并不一致：mesh 是 master，otel 与 tracing 是 main——
 # 这是各仓库自身历史造成的，不是笔误，后续维护请勿"顺手统一"改回同一个值。

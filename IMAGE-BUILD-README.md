@@ -21,7 +21,7 @@ git 会原样写进 `.git/config` 的 `remote.origin.url`，任何拿到镜像�
 
 镜像自包含：三个文档仓库按 ref 浅克隆进 `/app/`，`runme` / `violet` / `istioctl` 预置到 `bin/`，
 文档引用的 17 个外部 sample YAML 落到 `assets/`。构建期会跑
-[UPDATE-README.md 第 0 节](UPDATE-README.md#0-改完先跑这几条)的四条自检，任一不过即构建失败。
+[UPDATE-README.md 第 0 节](UPDATE-README.md#0-改完先跑这几条)的五条自检，任一不过即构建失败。
 
 ## 2. 流水线触发与构建步骤
 

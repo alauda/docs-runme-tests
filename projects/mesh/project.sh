@@ -456,11 +456,15 @@ install_all_servicemesh_operators() {
         # 通过临时覆盖 KUBECONFIG 指向单集群 kubeconfig (其 current-context 已是 $cluster)
         # 避免 kubectl config use-context 持久化改写 merged.yaml 的 current-context,
         # 否则循环结束时 merged.yaml 的 current-context 会停在最后一个集群
+        # 必须校验返回值：install_operator 内部任一步骤失败都会 return 1，
+        # 漏掉 `|| return 1` 会让「operator 压根没装上」的 init 依旧打印 SUCCESS 并以 0 退出，
+        # dailybuild 里 asm-init-* 是 continue_on_error: false，本该拦住的故障会一路放行到
+        # 后续测试项，最后表现为一堆莫名其妙的 Istio 资源创建失败。已实测复现。
         KUBECONFIG="$KUBECONFIG_DIR/${cluster}.yaml" install_operator \
             "servicemesh-operator2" \
             "sail-operator" \
             "$PKG_SERVICEMESH_OPERATOR2_URL" \
-            "install-mesh"
+            "install-mesh" || return 1
     done
 
     log_success "所有集群的 servicemesh-operator2 安装完成"

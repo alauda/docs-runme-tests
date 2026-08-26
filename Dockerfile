@@ -20,7 +20,13 @@ ARG OTEL_DOCS_REF=main
 ARG TRACING_DOCS_REF=main
 ARG RUNME_VERSION=3.16.11
 ARG ALLURE_VERSION=2.24.1
-ARG KUBECTL_VERSION=v1.31.4
+# kubectl 不能低于 v1.34：v1.34 起删除命名空间级资源的输出从
+# `xxx "name" deleted` 变成 `xxx "name" deleted from <ns> namespace`，
+# 而 servicemesh2-docs 的三处「Example output」按新格式写（uninstalling-alauda-service-mesh
+# 与 -in-ambient-mode）。用 v1.31.4 时 __cmp_contains 匹配不到，卸载测试必失败。
+# 反向兼容没问题：distributed-tracing-docs 里按旧格式写的四处期待输出是新输出的前缀，
+# __cmp_contains 依然命中。顺带修掉 v1.31 对 1.34.x 集群超出 ±1 版本偏斜的问题。
+ARG KUBECTL_VERSION=v1.34.1
 ARG IMAGE_TAG=dev
 ARG TARGETARCH=amd64
 
@@ -29,15 +35,23 @@ LABEL io.alauda.docs.mesh-ref="${MESH_DOCS_REF}" \
       io.alauda.docs.tracing-ref="${TRACING_DOCS_REF}" \
       io.alauda.runme-version="${RUNME_VERSION}"
 
+# SHELL 必须显式设置：runme 执行 ```bash 代码块时用 $SHELL 决定解释器，
+# 该变量为空就退回 /usr/bin/sh —— Ubuntu 上那是 dash。dash 不认 bash 的
+# $'\t'、数组、[[ ]] 等写法，文档里 `column -t -s $'\t'` 会被拆成字面量 `$\t`，
+# install-mesh / kiali 两篇的「检查可用版本」直接失败。
+# 本地手工跑时登录 shell 已经带了 SHELL=/bin/bash，所以这个坑只在容器里显形，
+# 已在 4.3.1 测试环境实测复现，别删。
 ENV DEBIAN_FRONTEND=noninteractive \
     TZ=Asia/Shanghai \
-    LANG=C.UTF-8
+    LANG=C.UTF-8 \
+    SHELL=/bin/bash
 
 # 基础工具 + JRE（allure CLI 需要）
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
         ca-certificates curl git jq openssl tzdata bash coreutils gawk sed tar gzip \
+        bsdextrautils gettext-base \
         default-jre-headless; \
     rm -rf /var/lib/apt/lists/*
 
@@ -134,12 +148,15 @@ RUN set -eux; \
     done < lynx/assets-manifest.tsv; \
     echo "已预置资产: $(find assets -type f | wc -l) 个"
 
-# case_id 清单、文档 ref 清单、shell 兼容性自检
+# case_id 清单、文档 ref 清单、shell 兼容性自检、运行时 shell 自检
+# check-runtime-shell.sh 必须放在 runme 落盘之后：它会真跑一个含 bash 专有语法的
+# canary 代码块，确认 runme 用的是 bash 而不是 dash（见该脚本头部注释）。
 RUN set -eux; \
     cd /app/docs-runme-tests; \
     bash lynx/check-case-ids.sh; \
     bash lynx/check-docs-refs.sh; \
-    bash lynx/check-shell-compat.sh
+    bash lynx/check-shell-compat.sh; \
+    bash lynx/check-runtime-shell.sh
 
 # 构建期信息：入口据此回填 RUNME_VERSION 等（RUNME_VERSION 是 run.sh check_env 的必需项）
 # 同时落盘三个文档仓库的解析后 commit SHA：ref 可以是会移动的分支名，SHA 才能唯一

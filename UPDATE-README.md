@@ -9,11 +9,12 @@ dailybuild 照常绿灯，但那条用例根本没跑**。所以每一节都给�
 ## 0. 改完先跑这几条
 
 ```bash
-# 四条清单自检（构建期也会跑，任一不过即构建失败）
+# 五条清单自检（构建期也会跑，任一不过即构建失败）
 bash lynx/check-manifest.sh       # 文档里的外部 URL 都登记了吗
 bash lynx/check-case-ids.sh       # 每个 runme-test_*.sh 都有 case_id 吗
 bash lynx/check-docs-refs.sh      # 三个文档仓库的 ref 清单合法吗
 bash lynx/check-shell-compat.sh   # 有没有 macOS/bash 3.2 会炸的写法
+bash lynx/check-runtime-shell.sh  # runme 真的用 bash 跑代码块吗、column 在不在
 
 # 全量单测（不依赖集群与网络）
 for t in framework/tests/*_test.sh; do bash "$t" >/dev/null || echo "FAIL: $t"; done
@@ -23,6 +24,12 @@ for t in framework/tests/*_test.sh; do bash "$t" >/dev/null || echo "FAIL: $t"; 
 一并扫描三个文档仓库，所以要求它们存在于兄弟目录；`check-docs-refs` 只看本仓库。
 `check-shell-compat` 覆盖四个仓库共 80 多个脚本——文档仓库里那 40 多个
 `runme-test_*.sh` 才是 shell 代码的大头，而镜像构建是四个仓库唯一汇合的地方。
+
+`check-runtime-shell` 查的是**运行环境**而不是代码：runme 用 `$SHELL` 决定拿什么解释器
+执行 mdx 里的 ```bash 代码块，`$SHELL` 为空就退回 dash，`column -t -s $'\t'` 这类写法
+当场失效；`column` 本身也不在 `ubuntu:22.04` 基础镜像里。本机跑它基本恒过（登录 shell
+自带 `SHELL=/bin/bash`），真正的价值在构建期——它拦的是「镜像里 runme 不用 bash」。
+前四条扫 `*.sh`，看不到 mdx 代码块，所以这条得单列。
 
 ---
 
@@ -310,3 +317,4 @@ release-mesh-2.1	4.4
 | 新增发版分支 | `release-matrix.tsv`、`.tekton` 分支正则 | `compute_tags_test.sh` |
 | 新增 L5 插件包 | release-config 的 `l5_plugin_packages` | verify-only 的未上架报错 |
 | 改任何 `.sh` | —— | `check-shell-compat.sh` + 全量单测 |
+| 改 `Dockerfile` 的 `ENV` / 装包列表 | —— | `check-runtime-shell.sh`（构建期自动跑） |

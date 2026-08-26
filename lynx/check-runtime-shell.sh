@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 校验：镜像里 runme 真的用 bash 执行 ```bash 代码块，且文档用到的 column 可用
+# 校验：镜像里 runme 真的用 bash 执行 ```bash 代码块，且文档依赖的外部命令齐全
 #
 # 为什么需要这条构建期闸门：
 #   runme 用 $SHELL 决定代码块的解释器，$SHELL 为空时退回 /usr/bin/sh —— Ubuntu 上
@@ -28,11 +28,29 @@ case "${SHELL}" in
 esac
 [ -x "${SHELL}" ] || fail "SHELL=${SHELL} 不可执行"
 
-# ── 2. column 必须存在且支持 -t -s <TAB> ────────────────────────────────
-command -v column >/dev/null 2>&1 || fail 'column 不存在（Ubuntu 上由 bsdextrautils 提供），install-mesh / kiali 的「检查可用版本」会失败'
+# ── 2. 文档代码块依赖的外部命令必须齐全 ────────────────────────────────
+# 这几个都不在 ubuntu:22.04 基础镜像里，缺了只在容器里才报错。
+# 想重新核对清单：把四个仓库的 *.sh 与 mdx 里 ```bash 块的命令位置词元提出来，
+# 减去镜像内 `compgen -c` 的结果即可（envsubst 与 column 就是这么找出来的）。
+#   column   ← bsdextrautils：install-mesh / kiali 的「检查可用版本」
+#   envsubst ← gettext-base：tracing 安装/升级、kiali、多集群 primary-remote 渲染 YAML
+for _cmd in column envsubst; do
+    command -v "${_cmd}" >/dev/null 2>&1 \
+        || fail "${_cmd} 不存在：文档代码块要用它（column←bsdextrautils，envsubst←gettext-base）"
+done
 tab="$(printf '\t')"
 printf 'A%sB\n' "${tab}" | column -t -s "${tab}" >/dev/null 2>&1 \
     || fail 'column -t -s <TAB> 执行失败'
+printf 'v=%s\n' '${DOCS_TEST_CANARY}' | DOCS_TEST_CANARY=ok envsubst | grep -q '^v=ok$' \
+    || fail 'envsubst 未按预期展开变量'
+
+# ── 2.1 kubectl 不能低于 v1.34（删除输出格式，见 Dockerfile 的 KUBECTL_VERSION 注释）──
+kver="$(kubectl version --client -o json 2>/dev/null | jq -r '.clientVersion.gitVersion // empty')"
+[ -n "${kver}" ] || fail '无法获取 kubectl 客户端版本'
+kmajor="${kver#v}"; kminor="${kmajor#*.}"; kminor="${kminor%%.*}"; kmajor="${kmajor%%.*}"
+if [ "${kmajor}" -lt 1 ] || { [ "${kmajor}" -eq 1 ] && [ "${kminor}" -lt 34 ]; }; then
+    fail "kubectl ${kver} 低于 v1.34：删除命名空间级资源的输出还是旧格式，servicemesh2-docs 的卸载测试会失败"
+fi
 
 # ── 3. 端到端：让 runme 真跑一个含 bash 专有语法的代码块 ────────────────
 [ -x "${RUNME_BIN}" ] || fail "未找到 ${RUNME_BIN}（本检查须在下载 runme 之后执行）"
@@ -59,4 +77,4 @@ want="$(printf 'ok\tend')"
 [ "${got}" = "${want}" ] \
     || fail "runme 未用 bash 执行代码块（期望 $(printf '%q' "${want}")，实际 $(printf '%q' "${got}")）；检查 Dockerfile 的 ENV SHELL"
 
-printf 'runtime shell 校验通过：SHELL=%s，runme 以 bash 执行代码块，column 可用\n' "${SHELL}"
+printf 'runtime 环境校验通过：SHELL=%s，runme 以 bash 执行代码块，column / envsubst 就绪，kubectl %s\n' "${SHELL}" "${kver}"

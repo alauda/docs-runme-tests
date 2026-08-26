@@ -20,7 +20,13 @@ ARG OTEL_DOCS_REF=main
 ARG TRACING_DOCS_REF=main
 ARG RUNME_VERSION=3.16.11
 ARG ALLURE_VERSION=2.24.1
-ARG KUBECTL_VERSION=v1.31.4
+# kubectl 不能低于 v1.34：v1.34 起删除命名空间级资源的输出从
+# `xxx "name" deleted` 变成 `xxx "name" deleted from <ns> namespace`，
+# 而 servicemesh2-docs 的三处「Example output」按新格式写（uninstalling-alauda-service-mesh
+# 与 -in-ambient-mode）。用 v1.31.4 时 __cmp_contains 匹配不到，卸载测试必失败。
+# 反向兼容没问题：distributed-tracing-docs 里按旧格式写的四处期待输出是新输出的前缀，
+# __cmp_contains 依然命中。顺带修掉 v1.31 对 1.34.x 集群超出 ±1 版本偏斜的问题。
+ARG KUBECTL_VERSION=v1.34.1
 ARG IMAGE_TAG=dev
 ARG TARGETARCH=amd64
 
@@ -45,7 +51,7 @@ RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
         ca-certificates curl git jq openssl tzdata bash coreutils gawk sed tar gzip \
-        bsdextrautils \
+        bsdextrautils gettext-base \
         default-jre-headless; \
     rm -rf /var/lib/apt/lists/*
 

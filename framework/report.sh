@@ -144,9 +144,45 @@ _case_record() {
         '{type:$type,case_id:$case_id,case_name:$case_name,status:$status,tags:$tags,duration_s:$duration_s}')"
 }
 
+# ── 内部：本 Case 内是否有已记录为 failed 的文档测试 ──
+#
+# 为什么 case_end 不能只信传进来的 rc：run-*-all.sh 里每个 Case 写成
+#     if ( set -e; cmd1; cmd2; ... ); then case_end 0; else case_end 1; fi
+# 而 bash 对「处于 if / while / && / || 条件语境的命令」会屏蔽 errexit——
+# 连子 shell 内部显式写的 set -e 也一并失效。实测后果有两条：
+#   1. cmd1 失败后 cmd2..cmdN 照跑，不是注释里说的「原子 case」；
+#   2. 子 shell 的退出码只等于**最后一条命令**的退出码，中途失败全被吞掉。
+# 于是「Case 5 ✓12 ✗3 却判 PASS」这种事就会发生（4.3.1 环境实测）。
+# 这里回头查一遍 results.jsonl 里本 Case 的 doctest 结果兜底。
+#
+# 之所以不改成真·fail-fast（把子 shell 挪出 if 语境）：Case 里的清理步骤都排在
+# 末尾，中途一失败就跳过清理，会把脏环境留给后面的 Case，代价比多跑几条大。
+_case_has_failed_doctest() {
+    local case_id="${RUNME_TEST_CASE_ID:-}" results n
+    [ -n "$case_id" ] || return 1
+    results="${RUNME_TEST_RUN_DIR:-}/results.jsonl"
+    [ -n "${RUNME_TEST_RUN_DIR:-}" ] && [ -f "$results" ] || return 1
+    n="$(jq -s --arg c "$case_id" \
+        '[.[] | select(.type == "doctest" and .case_id == $c and .status == "failed")] | length' \
+        "$results" 2>/dev/null)" || return 1
+    [ "${n:-0}" -gt 0 ]
+}
+
+# ── 内部：修正 Case 退出码，结果写入 __CASE_RC（见 _case_has_failed_doctest 的说明）──
+# 用全局变量而不是命令替换回传：log_warn 写的是 stdout，$(...) 会把告警文字
+# 一起吃进返回值，后面的 [ "$rc" -eq 0 ] 直接变成语法错误。
+_case_effective_rc() {
+    __CASE_RC="$1"
+    if [ "$__CASE_RC" -eq 0 ] && _case_has_failed_doctest; then
+        log_warn "Case ${RUNME_TEST_CASE_ID:-?}: 子 shell 返回 0，但本 Case 内有文档测试失败，按失败判定"
+        __CASE_RC=1
+    fi
+}
+
 # ── case_end <rc>：普通 Case，失败仅记录、不退出 ──
 case_end() {
-    if [ "$1" -eq 0 ]; then
+    _case_effective_rc "$1"
+    if [ "$__CASE_RC" -eq 0 ]; then
         _case_record "passed"
         log_success "Case ${RUNME_TEST_CASE_ID:-?}: ${RUNME_TEST_CASE_NAME:-} 通过"
     else
@@ -159,7 +195,8 @@ case_end() {
 
 # ── case_end_fatal <rc>：致命前置 Case，失败则 finalize + exit ──
 case_end_fatal() {
-    if [ "$1" -eq 0 ]; then
+    _case_effective_rc "$1"
+    if [ "$__CASE_RC" -eq 0 ]; then
         _case_record "passed"
         log_success "Case ${RUNME_TEST_CASE_ID:-?}: ${RUNME_TEST_CASE_NAME:-} 通过"
         unset RUNME_TEST_CASE_ID RUNME_TEST_CASE_NAME RUNME_TEST_CASE_TAGS

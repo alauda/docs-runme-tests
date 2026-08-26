@@ -63,8 +63,12 @@ fi
 # 卸载调用链使用 --skip-operator-and-crds 保留 OTel Operator 与 CRDs 供后续 case 复用。
 # ------------------------------------------------------------------
 if case_begin_if "3" "单网格安装与应用测试 (Single Mesh & App + Tracing)" smoke install sidecar; then
-    # 使用子 shell ( cmds ) 将多个命令组合为一个原子 case
-    # 任何一个命令失败都会导致整个 block 返回非 0 状态
+    # 用子 shell ( cmds ) 把多条命令归拢成一个 Case。
+    # 注意：子 shell 处在 if 的条件语境里，bash 会屏蔽 errexit——里面写的 set -e
+    # 不生效，中途失败不会中断后续命令，子 shell 的退出码也只等于最后一条命令的。
+    # 这一点是刻意保留的：Case 的清理步骤都排在末尾，中途断掉会把脏环境留给后面的
+    # Case。Case 的真实成败由 report.sh 的 case_end 回查本 Case 的 doctest 结果兜底
+    # （见 _case_has_failed_doctest），不要依赖这里的 set -e。
     if (
         set -e
         # 安装网格和应用

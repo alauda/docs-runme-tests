@@ -85,6 +85,52 @@ test_case_tags() {
     rm -rf "$RUNME_TEST_RUN_DIR"
 }
 
+# ── 测试：case_end 用本 Case 的 doctest 结果兜底判定 ──
+# 背景：run-*-all.sh 里 `if ( set -e; ... ); then` 的子 shell 处于 if 条件语境，
+# bash 会屏蔽 errexit，子 shell 退出码只等于最后一条命令的——中途失败会被吞掉。
+test_case_end_reflects_doctest() {
+    printf '\n== case_end 兜底判定 ==\n'
+    local line
+
+    # 中途有 doctest failed、但传入 rc=0（模拟"最后一条命令成功"）→ 应判 failed
+    new_sandbox
+    case_begin 5 "Ambient" "smoke install ambient" >/dev/null
+    report_record_doctest mesh kiali runme-test_kiali.sh test failed "" "envsubst 缺失" 100 160
+    report_record_doctest mesh waypoint-proxies runme-test_waypoint-proxies.sh test passed "" "" 160 200
+    case_end 0 >/dev/null
+    line="$(grep '"type":"case"' "$RUNME_TEST_RUN_DIR/results.jsonl")"
+    check_contains "中途失败 + rc=0 → case failed" "$line" '"status":"failed"'
+    rm -rf "$RUNME_TEST_RUN_DIR"
+
+    # 全部 doctest passed 且 rc=0 → 仍判 passed（不能误伤）
+    new_sandbox
+    case_begin 5 "Ambient" "smoke install ambient" >/dev/null
+    report_record_doctest mesh waypoint-proxies runme-test_waypoint-proxies.sh test passed "" "" 100 160
+    case_end 0 >/dev/null
+    line="$(grep '"type":"case"' "$RUNME_TEST_RUN_DIR/results.jsonl")"
+    check_contains "全部通过 + rc=0 → case passed" "$line" '"status":"passed"'
+    rm -rf "$RUNME_TEST_RUN_DIR"
+
+    # 别的 Case 失败不该影响本 Case
+    new_sandbox
+    RUNME_TEST_CASE_ID=3 report_record_doctest mesh kiali runme-test_kiali.sh test failed "" "x" 100 160
+    case_begin 5 "Ambient" "smoke install ambient" >/dev/null
+    report_record_doctest mesh waypoint-proxies runme-test_waypoint-proxies.sh test passed "" "" 160 200
+    case_end 0 >/dev/null
+    line="$(grep '"type":"case"' "$RUNME_TEST_RUN_DIR/results.jsonl")"
+    check_contains "只看本 Case 的 case_id" "$line" '"status":"passed"'
+    rm -rf "$RUNME_TEST_RUN_DIR"
+
+    # 传入 rc=1 时保持 failed（doctest 全过也不能翻案）
+    new_sandbox
+    case_begin 5 "Ambient" "smoke install ambient" >/dev/null
+    report_record_doctest mesh waypoint-proxies runme-test_waypoint-proxies.sh test passed "" "" 100 160
+    case_end 1 >/dev/null
+    line="$(grep '"type":"case"' "$RUNME_TEST_RUN_DIR/results.jsonl")"
+    check_contains "rc=1 仍判 failed" "$line" '"status":"failed"'
+    rm -rf "$RUNME_TEST_RUN_DIR"
+}
+
 # ── 测试：case_begin_if 按 CASE_TYPE 门控 ──
 test_case_begin_if() {
     printf '\n== case_begin_if ==\n'
@@ -291,6 +337,7 @@ main() {
     test_record_doctest
     test_case_skip
     test_case_tags
+    test_case_end_reflects_doctest
     test_case_begin_if
     test_finalize_exit
     test_exit_on_test_failure

@@ -299,7 +299,7 @@ App 的 `issue_comment` 事件和评论是否严格匹配，再看 Task 日志�
 流水线保留内联 `pipelineSpec`，但每个步骤都使用 Edge Hub 的产品化 Task：
 
 `git-clone-amd64` / `git-clone-arm64`（`catalog/git-clone:0.10`）
-→ `prepare-tags` / `prepare-refs`（`catalog/run-script:0.1`）
+→ `prepare-tags` / `prepare-arch-tags` / `prepare-refs`（`catalog/run-script:0.1`）
 → `build-image-amd64` / `build-image-arm64`（`catalog/buildah:0.10`）
 → `merge-image`（`catalog/merge-image:0.2`）。Hub resolver 按 Edge 实际配置使用
 `catalog`、`kind`、`name`、`version` 四个参数。两个 Buildah Task 分别调度到原生
@@ -441,8 +441,8 @@ Repository 和 PipelineRun 的权限。
    Repository/Webhook 注册，不要先改 Task 参数。
 
 代码推送到 GitHub 后，建议先在一个 PR 上评论 `/image-build` 验证，确认 Edge 中出现
-`git-clone-amd64`、`git-clone-arm64`、`prepare-tags`、`prepare-refs`、
-`build-image-amd64`、`build-image-arm64`、`merge-image` 七个 Task 且最终镜像可拉取，
+`git-clone-amd64`、`git-clone-arm64`、`prepare-tags`、`prepare-arch-tags`、
+`prepare-refs`、`build-image-amd64`、`build-image-arm64`、`merge-image` 八个 Task 且最终镜像可拉取，
 再合入 `main`。检查命令（需切换到 `business-build` 的授权 kubeconfig）：
 
 ```bash

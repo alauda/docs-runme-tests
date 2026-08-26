@@ -135,8 +135,8 @@ spec:
             workspace: basic-auth
 
       # 结果 array-result 是完整镜像地址，string-result 是首个 tag。
-      # buildah 的正式 tag 列表直接消费 array-result；object-result 中另外保存
-      # 两个架构各自的临时 tag，供 merge-image 读取。
+      # buildah 的正式 tag 列表直接消费 array-result；架构临时 tag 由下面的
+      # prepare-arch-tags 单独输出，避免依赖 Hub Task 的受限 object-result 字段。
       - name: prepare-tags
         runAfter: [git-clone-amd64]
         taskRef:
@@ -171,7 +171,6 @@ spec:
               repo="$1"
               branch="$2"
               commit="$3"
-              short="${commit:0:7}"
               case "$repo" in
                 ''|*[!A-Za-z0-9._:/-]*)
                   echo "镜像仓库地址包含不支持的字符" >&2
@@ -216,18 +215,65 @@ spec:
               printf ']\n' >> "$out_array"
               printf '%s' "${tags[0]}" > "$out_string"
 
-              # 两个架构先推送短 SHA 隔离的临时 tag，避免直接覆盖正式 tag；
-              # merge-image 会把所有正式 tag 重新写成同一个多架构 manifest。
-              printf '{"source-image-amd64":"%s:_buildcache-%s-amd64","source-image-arm64":"%s:_buildcache-%s-arm64"}\n' \
-                "$repo" "$short" "$repo" "$short" \
-                > "${RESULT_OBJECT_PATH:?run-script 未提供 object-result 路径}"
-
               printf '镜像 tag：%s\n' "$raw"
-              printf '架构临时 tag：%s:_buildcache-%s-amd64、%s:_buildcache-%s-arm64\n' \
-                "$repo" "$short" "$repo" "$short"
+              printf '正式 tag 已准备完成，架构临时 tag 将由 prepare-arch-tags 生成\n'
         workspaces:
           - name: source
             workspace: source-amd64
+
+      # run-script:0.1 的 object-result 只声明了 message 字段，不能承载自定义
+      # 架构字段。单独输出一个数组结果，供两个 Buildah Task 和 merge-image 取值。
+      - name: prepare-arch-tags
+        runAfter: [prepare-tags]
+        taskRef:
+          resolver: hub
+          params:
+            - name: catalog
+              value: catalog
+            - name: kind
+              value: task
+            - name: name
+              value: run-script
+            - name: version
+              value: "0.1"
+        params:
+          - name: args
+            value:
+              - "$(params.image-repo)"
+              - "$(params.git-commit)"
+          - name: script
+            value: |
+              #!/usr/bin/env bash
+              set -euo pipefail
+
+              if [ "$#" -lt 2 ]; then
+                echo "run-script 未收到镜像仓库和 commit 参数" >&2
+                exit 1
+              fi
+              repo="$1"
+              commit="$2"
+              case "$repo" in
+                ''|*[!A-Za-z0-9._:/-]*)
+                  echo "镜像仓库地址包含不支持的字符" >&2
+                  exit 1
+                  ;;
+              esac
+              case "$commit" in
+                ''|*[!0-9A-Fa-f]*)
+                  echo "Git commit 必须是十六进制 SHA" >&2
+                  exit 1
+                  ;;
+              esac
+              if [ "${#commit}" -lt 7 ]; then
+                echo "Git commit 长度不足 7 位" >&2
+                exit 1
+              fi
+              short="${commit:0:7}"
+              out_array="${RESULT_ARRAY_PATH:?run-script 未提供 array-result 路径}"
+              printf '["%s:_buildcache-%s-amd64","%s:_buildcache-%s-arm64"]\n' \
+                "$repo" "$short" "$repo" "$short" > "$out_array"
+              printf '架构临时 tag：%s:_buildcache-%s-amd64、%s:_buildcache-%s-arm64\n' \
+                "$repo" "$short" "$repo" "$short"
 
       # 单独读取文档 ref，使用 run-script 的 array-result 传给 buildah 的 buildArgs。
       - name: prepare-refs
@@ -271,7 +317,7 @@ spec:
             workspace: source-amd64
 
       - name: build-image-amd64
-        runAfter: [git-clone-amd64, prepare-tags, prepare-refs]
+        runAfter: [git-clone-amd64, prepare-tags, prepare-arch-tags, prepare-refs]
         taskRef:
           resolver: hub
           params:
@@ -287,7 +333,7 @@ spec:
           - name: images
             # 每个架构只构建一个临时 tag；正式 tag 由 merge-image 统一生成。
             value:
-              - "$(tasks.prepare-tags.results.object-result.source-image-amd64)"
+              - "$(tasks.prepare-arch-tags.results.array-result[0])"
           - name: builderImage
             value: "$(params.builder-image)"
           - name: containerfile
@@ -314,7 +360,7 @@ spec:
             workspace: registryconfig
 
       - name: build-image-arm64
-        runAfter: [git-clone-arm64, prepare-tags, prepare-refs]
+        runAfter: [git-clone-arm64, prepare-tags, prepare-arch-tags, prepare-refs]
         taskRef:
           resolver: hub
           params:
@@ -329,7 +375,7 @@ spec:
         params:
           - name: images
             value:
-              - "$(tasks.prepare-tags.results.object-result.source-image-arm64)"
+              - "$(tasks.prepare-arch-tags.results.array-result[1])"
           - name: builderImage
             value: "$(params.builder-image)"
           - name: containerfile
@@ -369,8 +415,8 @@ spec:
         params:
           - name: sourceImages
             value:
-              - "$(tasks.prepare-tags.results.object-result.source-image-amd64)"
-              - "$(tasks.prepare-tags.results.object-result.source-image-arm64)"
+              - "$(tasks.prepare-arch-tags.results.array-result[0])"
+              - "$(tasks.prepare-arch-tags.results.array-result[1])"
           - name: targetImages
             value: "$(tasks.prepare-tags.results.array-result[*])"
           - name: tlsVerify
@@ -433,6 +479,10 @@ spec:
             operator: Exists
             effect: NoSchedule
     - pipelineTaskName: prepare-tags
+      podTemplate:
+        nodeSelector:
+          kubernetes.io/arch: amd64
+    - pipelineTaskName: prepare-arch-tags
       podTemplate:
         nodeSelector:
           kubernetes.io/arch: amd64

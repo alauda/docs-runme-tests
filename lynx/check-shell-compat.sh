@@ -56,8 +56,9 @@ if [ ${#files[@]} -eq 0 ]; then
     exit 1
 fi
 
-# 反斜杠转义的 \$VAR 是字面量文本，不参与展开，排除掉
-pattern='(?<!\\)\$[A-Za-z_][A-Za-z0-9_]*(?=[^\x00-\x7F])'
+# 反斜杠转义的 \$VAR 是字面量文本，不参与展开，排除掉；整行注释里的示例
+# 也不会被 shell 执行，不应作为兼容性错误。
+pattern='^(?![[:space:]]*#).*?(?<!\\)\$[A-Za-z_][A-Za-z0-9_]*(?=[^\x00-\x7F])'
 
 hits="$(grep -nP "${pattern}" "${files[@]}" 2>/dev/null || true)"
 

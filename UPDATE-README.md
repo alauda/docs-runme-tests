@@ -339,7 +339,9 @@ Harbor 账号对目标项目/仓库的 push 权限，不要另建同名但内容
 `TRACING_DOCS_REF` build-arg。可填写分支名、tag 或 commit SHA；构建会先执行
 `lynx/check-docs-refs.sh`。当前 `/image-build` 评论命令不接受 `mesh=...` 这类参数，
 所以要控制 ref，先在本仓库 PR 修改该 TSV，再评论 `/image-build`。若要让结果可复现，
-优先填不可变 commit SHA；文档 PR 合入主干后再把对应行改回 `master`/`main`。
+优先填完整的不可变 commit SHA；构建通过 `lynx/clone-repo-at-ref.sh` 执行浅 fetch
+并 detached checkout，因此裸 SHA 也能正常工作。文档 PR 合入主干后再把对应行改回
+`master`/`main`。
 
 ### 7.4 首次接入 Edge 的操作清单
 

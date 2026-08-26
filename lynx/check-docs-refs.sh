@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# 校验 lynx/docs-refs.tsv：三个 build-arg 齐全、无重复、ref 非空且不含空白
+# 校验 lynx/docs-refs.tsv：三个 build-arg 齐全、无重复、ref 非空且不含空白。
+# 分支、tag 和完整 commit SHA 均由构建期 clone helper 处理；这里不限制具体命名，
+# 以免误伤文档仓库已有的合法 ref。
 # 用法: bash lynx/check-docs-refs.sh
 set -u
 

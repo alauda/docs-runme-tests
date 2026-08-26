@@ -68,10 +68,18 @@ COPY . /app/docs-runme-tests
 # remote.origin.url，任何拿到镜像的人 `cat /app/*/.git/config` 就能读到——
 # 这跟构建日志开不开 set -x 无关，是落盘残留（已实测复现）。
 # 将来若真出现私有文档仓库，用 BuildKit 的 --mount=type=secret，别再走 build-arg。
+# 用统一 helper 而不是 git clone --branch：后者对裸 commit SHA 会直接报
+# "Remote branch <sha> not found"，无法复现四仓联合 PR 的准确组合。
 RUN set -eux; \
-    git clone --depth 1 --branch "${MESH_DOCS_REF}"    "https://github.com/alauda/servicemesh2-docs.git"        /app/servicemesh2-docs; \
-    git clone --depth 1 --branch "${OTEL_DOCS_REF}"    "https://github.com/alauda/opentelemetry-docs.git"       /app/opentelemetry-docs; \
-    git clone --depth 1 --branch "${TRACING_DOCS_REF}" "https://github.com/alauda/distributed-tracing-docs.git" /app/distributed-tracing-docs; \
+    bash /app/docs-runme-tests/lynx/clone-repo-at-ref.sh \
+        "https://github.com/alauda/servicemesh2-docs.git" \
+        "${MESH_DOCS_REF}" /app/servicemesh2-docs; \
+    bash /app/docs-runme-tests/lynx/clone-repo-at-ref.sh \
+        "https://github.com/alauda/opentelemetry-docs.git" \
+        "${OTEL_DOCS_REF}" /app/opentelemetry-docs; \
+    bash /app/docs-runme-tests/lynx/clone-repo-at-ref.sh \
+        "https://github.com/alauda/distributed-tracing-docs.git" \
+        "${TRACING_DOCS_REF}" /app/distributed-tracing-docs; \
     grep -riE '(oauth2|x-access-token|ghp_|glpat-)' /app/servicemesh2-docs/.git/config \
         /app/opentelemetry-docs/.git/config /app/distributed-tracing-docs/.git/config \
         && { echo "clone URL 里出现了凭据，拒绝产出该镜像" >&2; exit 1; } || true

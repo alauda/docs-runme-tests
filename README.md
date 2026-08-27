@@ -200,6 +200,9 @@ export PKG_TOPOLVM_OPERATOR_URL=xxx       # Alauda Build of TopoLVM 包（自动
 export TRACING_TOPOLVM_DEVICE=/dev/vdb
 # Dashboards Ingress 的访问路径（可选，默认自动派生 /clusters/<集群名>/opensearch-dashboards）
 # export TRACING_OPENSEARCH_DASHBOARDS_BASEPATH=/clusters/business-1/opensearch-dashboards
+# OpenSearch HTTP API (9200) Ingress 的访问路径（可选，默认自动派生 /clusters/<集群名>/opensearch）
+# 自动安装时 TRACING_OPENSEARCH_ENDPOINT = 平台地址 + 该路径（集群内外都可访问）
+# export TRACING_OPENSEARCH_BASEPATH=/clusters/business-1/opensearch
 # 手动 OpenSearch 配置（自动安装条件不满足时使用）
 export TRACING_OPENSEARCH_ENDPOINT='https://opensearch.xx:9200'
 export TRACING_OPENSEARCH_USER='your-opensearch-username'
@@ -464,7 +467,7 @@ OpenSearch 就绪后给 tracing Case 2/4 补 `smoke` 标签即可纳入，表达
 | 分布式调用链安装（OpenSearch）    | `./run.sh --project tracing --file installing-distributed-tracing-opensearch`    |
 | 分布式调用链卸载                  | `./run.sh --project tracing --file uninstalling-distributed-tracing`             |
 
-> Elasticsearch 安装测试默认从 `TRACING_ACP_ES_CLUSTER` 指定的 ACP 集群（默认 `global`）读取 log-center Elasticsearch 配置；将其设为空时改用 `TRACING_ES_*` 手动配置（该加载逻辑位于 Elasticsearch 安装测试脚本，不再由 `project_prepare` 全局执行）。`TRACING_INSTALL_ES=true` 且 `PKG_LOG_CENTER_URL` 非空时，步骤 0 会先把 logcenter 集群插件（Single Node 模式）自动安装到该集群——对应集群已安装过则跳过（安装逻辑见 `projects/tracing/elasticsearch.sh`）。OpenSearch 安装测试默认自动安装存储后端：`TRACING_INSTALL_OPENSEARCH=true`（默认）且 `PKG_ACP_STORAGE_OPERATOR_URL` / `PKG_TOPOLVM_OPERATOR_URL` 齐全时，步骤 0 自动安装 TopoLVM + OpenSearch（幂等，opensearch-operator 插件包目前需手动上架）并用实际结果覆盖 `TRACING_OPENSEARCH_*`；条件不满足时降级用手动 `TRACING_OPENSEARCH_ENDPOINT/USER/PASS`，两者皆缺则该测试 SKIPPED（安装逻辑见 `projects/tracing/opensearch.sh`）。卸载测试存储无关，按 Jaeger 命名空间是否存在判定是否执行；OpenSearch/TopoLVM 作为环境级存储后端不随卸载清理。两个安装测试的步骤 1 会先按文档「Installing the Alauda Build of Jaeger v2 Cluster Plugin」CLI 章节安装 Jaeger v2 集群插件：`PKG_JAEGER_CLUSTER_PLUGIN_URL` 非空时若未上架会自动下载并 violet push 到 Global；留空则进入 verify-only 模式，要求该插件已在 Global 集群预上架，否则报错退出并提示确认 release-config 是否已声明该包；已安装则两种模式都幂等复用（两篇文档该章节内容一致，安装逻辑抽象为按 runme 前缀参数化的共享函数，见 `projects/tracing/jaeger-plugin.sh`），步骤 2 自动安装前置依赖 OpenTelemetry v2 Operator（其代码块位于 `opentelemetry-docs`）。
+> Elasticsearch 安装测试默认从 `TRACING_ACP_ES_CLUSTER` 指定的 ACP 集群（默认 `global`）读取 log-center Elasticsearch 配置；将其设为空时改用 `TRACING_ES_*` 手动配置（该加载逻辑位于 Elasticsearch 安装测试脚本，不再由 `project_prepare` 全局执行）。`TRACING_INSTALL_ES=true` 且 `PKG_LOG_CENTER_URL` 非空时，步骤 0 会先把 logcenter 集群插件（Single Node 模式）自动安装到该集群——对应集群已安装过则跳过（安装逻辑见 `projects/tracing/elasticsearch.sh`）。OpenSearch 安装测试默认自动安装存储后端：`TRACING_INSTALL_OPENSEARCH=true`（默认）且 `PKG_ACP_STORAGE_OPERATOR_URL` / `PKG_TOPOLVM_OPERATOR_URL` 齐全时，步骤 0 自动安装 TopoLVM + OpenSearch（幂等，opensearch-operator 插件包目前需手动上架）并用实际结果覆盖 `TRACING_OPENSEARCH_*`——OpenSearch 的 HTTP API 与 Dashboards 各由一条 Ingress 以 `/clusters/<集群名>/opensearch[-dashboards]` 子路径暴露，`TRACING_OPENSEARCH_ENDPOINT` 取前者（平台地址 + 子路径，集群内外都可访问，不再是集群内 svc 域名）；条件不满足时降级用手动 `TRACING_OPENSEARCH_ENDPOINT/USER/PASS`，两者皆缺则该测试 SKIPPED（安装逻辑见 `projects/tracing/opensearch.sh`）。卸载测试存储无关，按 Jaeger 命名空间是否存在判定是否执行；OpenSearch/TopoLVM 作为环境级存储后端不随卸载清理。两个安装测试的步骤 1 会先按文档「Installing the Alauda Build of Jaeger v2 Cluster Plugin」CLI 章节安装 Jaeger v2 集群插件：`PKG_JAEGER_CLUSTER_PLUGIN_URL` 非空时若未上架会自动下载并 violet push 到 Global；留空则进入 verify-only 模式，要求该插件已在 Global 集群预上架，否则报错退出并提示确认 release-config 是否已声明该包；已安装则两种模式都幂等复用（两篇文档该章节内容一致，安装逻辑抽象为按 runme 前缀参数化的共享函数，见 `projects/tracing/jaeger-plugin.sh`），步骤 2 自动安装前置依赖 OpenTelemetry v2 Operator（其代码块位于 `opentelemetry-docs`）。
 
 ## 工作原理
 

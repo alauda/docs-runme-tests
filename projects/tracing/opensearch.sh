@@ -16,6 +16,7 @@
 # 指引见 alauda/knowledge 仓库 OpenSearch_Installation_Guide.md）：
 #   TopoLVM:    acp-storage-operator(Manual 审批) → topolvm-operator → TopolvmCluster → StorageClass
 #   OpenSearch: opensearch-operator → OpenSearchCluster（含 dashboards）
+#   Ingress:    HTTP API (9200) 与 Dashboards (5601) 各一条，均以 /clusters/<集群名>/... 子路径暴露
 #
 # 由 projects/tracing/project.sh source；operator 安装复用 framework/common.sh 的
 # install_operator_cli（纯 kubectl，不依赖文档 runme 块）。
@@ -41,6 +42,9 @@ TRACING_OPENSEARCH_DASHBOARDS_VERSION="${TRACING_OPENSEARCH_DASHBOARDS_VERSION:-
 # Dashboards 经 Ingress 暴露的访问路径（留空则自动派生
 # /clusters/<集群名>/opensearch-dashboards，与 Jaeger UI 的 basepath 模式一致）
 TRACING_OPENSEARCH_DASHBOARDS_BASEPATH="${TRACING_OPENSEARCH_DASHBOARDS_BASEPATH:-}"
+# OpenSearch HTTP API (9200) 经 Ingress 暴露的访问路径（留空则自动派生
+# /clusters/<集群名>/opensearch）；TRACING_OPENSEARCH_ENDPOINT 即平台地址 + 该路径
+TRACING_OPENSEARCH_BASEPATH="${TRACING_OPENSEARCH_BASEPATH:-}"
 
 # ==============================================================================
 # 判定函数
@@ -248,6 +252,32 @@ _tracing_dashboards_basepath() {
     printf '/clusters/%s/opensearch-dashboards' "$cluster_name"
 }
 
+# 解析 OpenSearch HTTP API 访问路径并打印到 stdout（本函数经命令替换捕获，勿向 stdout 打日志）：
+# 优先取 TRACING_OPENSEARCH_BASEPATH，否则同 dashboards 派生 /clusters/<集群名>/opensearch
+_tracing_opensearch_basepath() {
+    if [ -n "$TRACING_OPENSEARCH_BASEPATH" ]; then
+        printf '%s' "$TRACING_OPENSEARCH_BASEPATH"
+        return 0
+    fi
+    local cluster_name
+    cluster_name=$(kubectl -nkube-public get configmap global-info \
+        -o jsonpath='{.data.clusterName}' 2>/dev/null)
+    [ -n "$cluster_name" ] || return 1
+    printf '/clusters/%s/opensearch' "$cluster_name"
+}
+
+# 拼出 OpenSearch 经 Ingress 暴露的访问地址并打印到 stdout（同 Jaeger UI 的访问方式：
+# 平台地址 + /clusters/<集群名>/<子路径>，由平台转发到本集群的系统 Ingress 控制器）。
+# 本函数经命令替换捕获，勿向 stdout 打日志。
+_tracing_opensearch_endpoint() {
+    local platform_url basepath
+    platform_url=$(kubectl -nkube-public get configmap global-info \
+        -o jsonpath='{.data.platformURL}' 2>/dev/null)
+    [ -n "$platform_url" ] || return 1
+    basepath=$(_tracing_opensearch_basepath) || return 1
+    printf '%s%s' "${platform_url%/}" "$basepath"
+}
+
 # 内联渲染 OpenSearchCluster（同 OpenSearch_Installation_Guide.md 的安装 yaml，
 # 存储类与版本参数化；TLS 自动生成，dashboards 一并启用）。
 # dashboards.basePath 使 operator 下发 server.basePath/server.rewriteBasePath 配置，
@@ -367,6 +397,101 @@ _tracing_install_opensearch_cluster() {
         return 1
     fi
     return 0
+}
+
+# 内联渲染 OpenSearch HTTP API Ingress（子路径模式同 Dashboards Ingress，差异在于
+# OpenSearch 自身不支持 basePath：子路径前缀必须由 Ingress 控制器改写掉再转给后端，
+# 故用 ingress-nginx 标准捕获组写法 <basepath>(/|$)(.*) + rewrite-target /$2；
+# 后端 9200 由 OpenSearchCluster 的 security.tls.http 开了 TLS，需声明 HTTPS 回源。
+# use-regex 仅 ingress-nginx 需要，ALB 按路径是否含正则字符自动判定、忽略该注解）
+# 用法: _tracing_render_opensearch_ingress <ingress_class> <basepath>
+_tracing_render_opensearch_ingress() {
+    local ingress_class="$1" basepath="$2"
+    cat <<EOF
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ${TRACING_OPENSEARCH_NAME}
+  namespace: ${TRACING_OPENSEARCH_NS}
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+    nginx.ingress.kubernetes.io/rewrite-target: /\$2
+    nginx.ingress.kubernetes.io/use-regex: "true"
+spec:
+  ingressClassName: ${ingress_class}
+  rules:
+    - http:
+        paths:
+          - path: ${basepath}(/|\$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: ${TRACING_OPENSEARCH_NAME}
+                port:
+                  number: 9200
+EOF
+}
+
+# 通过 Ingress 暴露 OpenSearch HTTP API（幂等，可重复调用）：创建 Ingress（已存在跳过）
+# 并等待地址就绪。暴露后 TRACING_OPENSEARCH_ENDPOINT 用该地址而非集群内 svc 域名——
+# 文档步骤里的 curl 在测试执行机上跑，集群外解析不到 *.svc.cluster.local。
+_tracing_install_opensearch_ingress() {
+    log_header "暴露 OpenSearch HTTP API（Ingress）"
+
+    local basepath ingress_class
+    basepath=$(_tracing_opensearch_basepath) || {
+        log_error "未能派生 OpenSearch 访问路径（读取 kube-public/global-info 的 clusterName 失败）"
+        return 1
+    }
+    ingress_class=$(kubectl -nkube-public get configmap global-info \
+        -o jsonpath='{.data.systemAlbIngressClassName}' 2>/dev/null)
+    if [ -z "$ingress_class" ]; then
+        log_error "未能从 kube-public/global-info 读取 systemAlbIngressClassName"
+        return 1
+    fi
+
+    local ingress_name="$TRACING_OPENSEARCH_NAME"
+    if kubectl -n "$TRACING_OPENSEARCH_NS" get ingress "$ingress_name" >/dev/null 2>&1; then
+        log_info "Ingress $ingress_name 已存在，跳过创建"
+    else
+        log_info "创建 Ingress ${TRACING_OPENSEARCH_NS}/${ingress_name} (class=$ingress_class, path=$basepath)"
+        _tracing_render_opensearch_ingress "$ingress_class" "$basepath" | kubectl apply -f - || {
+            log_error "创建 Ingress 失败"
+            return 1
+        }
+    fi
+
+    # 等待 Ingress 地址就绪（同 Dashboards Ingress 的等待方式）
+    kubectl wait --for=jsonpath='{.status.loadBalancer.ingress}' "ingress/$ingress_name" \
+        -n "$TRACING_OPENSEARCH_NS" --timeout=180s || {
+        log_error "Ingress 未在预期时间内就绪: ${TRACING_OPENSEARCH_NS}/${ingress_name}"
+        log_error "请检查命名空间 $TRACING_OPENSEARCH_NS 的项目标签 (cpaas.io/project) 与 Ingress 控制器状态"
+        return 1
+    }
+    return 0
+}
+
+# 等待经 Ingress 暴露的 OpenSearch API 真正可用：Ingress 规则下发到控制器有延迟，
+# 且子路径改写配错时只有实际发请求才看得出来（后续文档步骤全靠该地址读写 OpenSearch）。
+# 用法: _tracing_wait_opensearch_endpoint <endpoint> <user> <pass>
+_tracing_wait_opensearch_endpoint() {
+    local endpoint="$1" user="$2" pass="$3"
+    local attempt code=""
+    for ((attempt=1; attempt<=24; attempt++)); do
+        # curl 连不上时 %{http_code} 输出 000，故不另做 || echo 兜底（会拼出两行）
+        code=$(curl -k -s -o /dev/null -w '%{http_code}' --max-time 10 \
+            -u "${user}:${pass}" "${endpoint}/_cluster/health" 2>/dev/null) || true
+        [ -n "$code" ] || code="000"
+        if [ "$code" = "200" ]; then
+            log_success "OpenSearch API 经 Ingress 可访问: ${endpoint}"
+            return 0
+        fi
+        log_warn "等待 OpenSearch API 经 Ingress 就绪: HTTP ${code} (${attempt}/24)"
+        [ "$attempt" -lt 24 ] && sleep 5
+    done
+    log_error "OpenSearch API 经 Ingress 不可访问: ${endpoint}/_cluster/health (最后一次 HTTP ${code})"
+    log_error "请检查 Ingress ${TRACING_OPENSEARCH_NS}/${TRACING_OPENSEARCH_NAME} 的路径改写与后端 HTTPS 回源配置"
+    return 1
 }
 
 # 内联渲染 Dashboards Ingress（仿 installing 文档 Jaeger UI Ingress 的写法：
@@ -508,6 +633,7 @@ tracing_ensure_opensearch() {
     _tracing_prepare_opensearch_packages || return 1
     _tracing_install_topolvm || return 1
     _tracing_install_opensearch_cluster || return 1
+    _tracing_install_opensearch_ingress || return 1
     _tracing_install_dashboards_ingress || return 1
 
     # 等待 operator 生成的 admin 凭据 Secret
@@ -537,7 +663,16 @@ tracing_ensure_opensearch() {
         # 日志中变量不与全角字符相邻（macOS bash 3.2 解析 $var 紧跟多字节字符时会输出坏字节）
         log_warn "TRACING_OPENSEARCH_* 将被自动安装结果覆盖 (原 endpoint: ${TRACING_OPENSEARCH_ENDPOINT})"
     fi
-    export TRACING_OPENSEARCH_ENDPOINT="https://${TRACING_OPENSEARCH_NAME}.${TRACING_OPENSEARCH_NS}.svc.cluster.local:9200"
+    # endpoint 用 Ingress 暴露的地址而非集群内 svc 域名：文档步骤里的 curl 在测试执行机上
+    # 跑，集群外解析不到 *.svc.cluster.local；集群内的 rollover Job / Jaeger 实例走该地址
+    # 同样可达。地址可用后再覆盖变量，避免把不通的地址传给后续步骤。
+    local endpoint
+    endpoint=$(_tracing_opensearch_endpoint) || {
+        log_error "未能拼出 OpenSearch 访问地址（读取 kube-public/global-info 的 platformURL 失败）"
+        return 1
+    }
+    _tracing_wait_opensearch_endpoint "$endpoint" "$os_user" "$os_pass" || return 1
+    export TRACING_OPENSEARCH_ENDPOINT="$endpoint"
     export TRACING_OPENSEARCH_USER="$os_user"
     export TRACING_OPENSEARCH_PASS="$os_pass"
 

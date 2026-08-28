@@ -675,6 +675,36 @@ bash 用 locale 相关的 `isalnum()` 判断变量名边界。macOS 的 BSD libc
 未定义；叠加 `set -u` 直接退出。Linux（glibc）上看不出任何问题，所以只能靠
 `bash lynx/check-shell-compat.sh` 拦。
 
+### 多条命令的代码块：只有最后一条的返回码算数
+
+`runme run <块>` 与 `kubectl_apply_runme_block` 都只回传代码块里**最后一条**命令的
+返回码。文档里很常见的这种两条命令的块：
+
+```bash
+kubectl patch opentelemetrycollector jaeger -n ${JAEGER_NS} --type=merge -p "$(envsubst < patch.yaml)"
+
+kubectl rollout status deployment/jaeger-collector -n ${JAEGER_NS} --timeout=300s
+```
+
+`patch` 失败、`rollout status` 对**未发生变更**的 Deployment 照样成功时，整块返回 0——
+测试判定通过，实际什么都没改。这类失败往往要到很久以后才以别的症状暴露。
+
+同类形状还有「apply Job → wait → delete Job」（wait 超时被 delete 吞掉）、
+「rollout status → logs | grep || echo」（`|| echo` 恒为 0）。
+
+**写法**：这种块不要用 `runme run`，改成起一个 `bash -e` 子进程执行，首条失败即中断：
+
+```bash
+content=$(runme print "$block")
+bash -ec "$content"                  # 需要指定目录时: (cd /tmp && bash -ec "$content")
+```
+
+**不能用 `( set -e; eval "$content" )`** —— 实测 errexit 对 eval 的多行字符串不生效，
+`( set -e; eval 'false; true' )` 返回 0。代码块引用的变量都要是 `export` 的，子进程才继承。
+
+参考实现：`distributed-tracing-docs/docs/en/upgrading/_upgrade-common.sh` 的
+`_upgrade_run_block`。
+
 ### runme 不执行 ` ```yaml ` 代码块
 
 `runme run <yaml 块>` 只把内容**回显**出来、并不执行，而且返回码是 0——

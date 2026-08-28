@@ -42,3 +42,5 @@ tracing	installing-distributed-tracing-opensearch	TRACE-DOC-002
 tracing	uninstalling-distributed-tracing	TRACE-DOC-003
 tracing	spm-ha-elasticsearch	TRACE-DOC-004
 tracing	spm-ha-opensearch	TRACE-DOC-005
+tracing	upgrading-distributed-tracing-elasticsearch	TRACE-DOC-006
+tracing	upgrading-distributed-tracing-opensearch	TRACE-DOC-007

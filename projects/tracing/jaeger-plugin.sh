@@ -135,15 +135,21 @@ EOF
 }
 
 # 安装 Alauda Build of Jaeger v2 集群插件（执行文档 CLI 章节的 runme 代码块）
-# 用法: tracing_install_jaeger_plugin <runme_prefix> [target_cluster]
+# 用法: tracing_install_jaeger_plugin <runme_prefix> [target_cluster] [verify_cm_block]
 # 参数:
-#   runme_prefix   - 文档代码块前缀（install-tracing-elasticsearch / install-tracing-opensearch）
+#   runme_prefix   - 文档代码块前缀（install-tracing-elasticsearch / install-tracing-opensearch
+#                    / upgrade-tracing-elasticsearch / upgrade-tracing-opensearch）
 #   target_cluster - 插件落地的目标集群，默认 ${SINGLE_CLUSTER_NAME}（即当前被测业务集群）
+#   verify_cm_block - 目标集群侧校验镜像清单 ConfigMap 的代码块名，默认
+#                    <runme_prefix>:verify-jaeger-plugin-configmap；显式传空字符串即跳过
+#                    该步——两篇升级文档没有这个代码块，改用 get-plugin-images 直接读镜像
 # NOTE: 依赖 Global 集群独立 kubeconfig 已生成（tracing project_init 的 ensure_kubeconfig
 #       会追加 Global）；调用方 KUBECONFIG 需指向目标业务集群（文档代码块 4 在其上执行）
 tracing_install_jaeger_plugin() {
     local runme_prefix="$1"
     local target_cluster="${2:-${SINGLE_CLUSTER_NAME:-}}"
+    # 用 ${3-默认值}（不带冒号）取默认：显式传 "" 表示无该代码块，需与"未传参"区分
+    local verify_cm_block="${3-${runme_prefix}:verify-jaeger-plugin-configmap}"
 
     if [ -z "$runme_prefix" ] || [ -z "$target_cluster" ]; then
         log_error "tracing_install_jaeger_plugin: 缺少必要参数"
@@ -175,20 +181,25 @@ tracing_install_jaeger_plugin() {
     # 目标集群侧：文档代码块 4 —— 验证插件在目标集群创建的镜像清单 ConfigMap
     # （沿用调用方 KUBECONFIG，即当前被测业务集群；后续 get-platform-config 从该
     # ConfigMap 读取 Jaeger 相关镜像地址）
-    log_info "验证目标集群 ConfigMap (${runme_prefix}:verify-jaeger-plugin-configmap)"
-    local cm_output
-    cm_output=$(runme run "${runme_prefix}:verify-jaeger-plugin-configmap" 2>&1) || {
-        log_error "验证 jaeger-cluster-plugin-manifest ConfigMap 失败"
-        log_error "输出: $cm_output"
-        return 1
-    }
-    if ! __cmp_lines "$cm_output" "$(cat <<'EOF'
+    # 升级文档无此代码块（verify_cm_block 传空），镜像清单由 get-plugin-images 直接读取
+    if [ -z "$verify_cm_block" ]; then
+        log_info "调用方未提供 ConfigMap 校验代码块，跳过目标集群侧校验"
+    else
+        log_info "验证目标集群 ConfigMap (${verify_cm_block})"
+        local cm_output
+        cm_output=$(runme run "$verify_cm_block" 2>&1) || {
+            log_error "验证 jaeger-cluster-plugin-manifest ConfigMap 失败"
+            log_error "输出: $cm_output"
+            return 1
+        }
+        if ! __cmp_lines "$cm_output" "$(cat <<'EOF'
 + jaeger-cluster-plugin-manifest
 EOF
 )"; then
-        log_error "ConfigMap 验证失败（期待包含 jaeger-cluster-plugin-manifest）"
-        log_error "实际输出: $cm_output"
-        return 1
+            log_error "ConfigMap 验证失败（期待包含 jaeger-cluster-plugin-manifest）"
+            log_error "实际输出: $cm_output"
+            return 1
+        fi
     fi
 
     log_success "=========================================="

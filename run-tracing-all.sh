@@ -17,6 +17,11 @@
 #   - SPM 多副本（高可用）验证（Case 3/4）: 各自复用安装链装好 SPM 后，将 otel/jaeger 扩容到
 #     多副本并校验单写入者（每个 service 只被一个 Jaeger 副本聚合）；OpenSearch 存储后端
 #     不可用时 Case 4 自动 SKIPPED。可选环境变量：SPM_HA_REPLICAS（默认 2）、SPM_HA_SVC_COUNT（默认 6）。
+#   - v2.0 → v2.1 升级（Case 5/6）: 要求环境上**已存在一套 v2.0 部署**（Jaeger 2.16.0 +
+#     Alauda Build of OpenTelemetry v2 Operator 0.147.0）。测试脚本按存储后端与配置里的
+#     v2.0 特征字段做门槛，检测不到就 SKIPPED，不会误伤 Case 1-4 装出来的 v2.1 环境。
+#     一套环境只能有一种存储后端，故 Case 5/6 至多命中其一。两条 Case 不带 smoke 标签，
+#     dailybuild 现有测试项（CASE_TYPE="smoke and not egress"）不会选中它们。
 
 set -e
 
@@ -115,6 +120,39 @@ if case_begin_if "4" "SPM 多副本（高可用）验证 (OpenSearch)" ha opense
         ./run.sh --project tracing --file spm-ha-opensearch --cleanup-only
         # 清理
         ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds --skip-cluster-plugin
+    ); then
+        case_end 0
+    else
+        case_end 1
+    fi
+fi
+
+# ------------------------------------------------------------------
+# Case 5: 分布式调用链 v2.0 → v2.1 升级测试 (Elasticsearch)
+# 前置：环境上已有一套 Elasticsearch 后端的 v2.0 部署（本编排不负责搭建）。
+# 升级文档没有清理步骤代码块，故无 cleanup 函数，直接执行、不拆两步。
+# 升级后环境即为 v2.1，重复执行会因门槛检测（找不到 use_aliases/use_ilm）而 SKIPPED。
+# ------------------------------------------------------------------
+if case_begin_if "5" "分布式调用链 v2.0→v2.1 升级测试 (Elasticsearch)" upgrade elasticsearch; then
+    if (
+        set -e
+        ./run.sh --project tracing --file upgrading-distributed-tracing-elasticsearch
+    ); then
+        case_end 0
+    else
+        case_end 1
+    fi
+fi
+
+# ------------------------------------------------------------------
+# Case 6: 分布式调用链 v2.0 → v2.1 升级测试 (OpenSearch)
+# 同 Case 5，但走 OpenSearch 链：额外覆盖「按天日期索引 → ISM + 别名轮转」的迁移。
+# 前置同样是一套 v2.0 部署；不满足时门槛检测 SKIPPED，不阻断编排。
+# ------------------------------------------------------------------
+if case_begin_if "6" "分布式调用链 v2.0→v2.1 升级测试 (OpenSearch)" upgrade opensearch; then
+    if (
+        set -e
+        ./run.sh --project tracing --file upgrading-distributed-tracing-opensearch
     ); then
         case_end 0
     else

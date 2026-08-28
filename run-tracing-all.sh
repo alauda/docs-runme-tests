@@ -119,7 +119,7 @@ if case_begin_if "4" "SPM 多副本（高可用）验证 (OpenSearch)" ha opense
         ./run.sh --project tracing --file spm-ha-opensearch --no-cleanup
         ./run.sh --project tracing --file spm-ha-opensearch --cleanup-only
         # 清理
-        ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds --skip-cluster-plugin
+        ./run.sh --project tracing --file uninstalling-distributed-tracing
     ); then
         case_end 0
     else
@@ -137,6 +137,8 @@ if case_begin_if "5" "分布式调用链 v2.0→v2.1 升级测试 (Elasticsearch
     if (
         set -e
         ./run.sh --project tracing --file upgrading-distributed-tracing-elasticsearch
+        # 清理
+        ./run.sh --project tracing --file uninstalling-distributed-tracing
     ); then
         case_end 0
     else
@@ -153,6 +155,8 @@ if case_begin_if "6" "分布式调用链 v2.0→v2.1 升级测试 (OpenSearch)" 
     if (
         set -e
         ./run.sh --project tracing --file upgrading-distributed-tracing-opensearch
+        # 清理
+        ./run.sh --project tracing --file uninstalling-distributed-tracing
     ); then
         case_end 0
     else

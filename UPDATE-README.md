@@ -82,11 +82,19 @@ fi
 | 想要的效果 | 加什么标签 |
 | --- | --- |
 | 每次都跑（环境初始化这类前置） | `always`（保留标签，恒被选中，不参与表达式求值） |
-| 进首批 dailybuild | 必须带 `smoke`（首批表达式是 `smoke and not egress`） |
+| 进首批 dailybuild | 必须带 `smoke`（首批表达式是 `smoke and not egress and not elasticsearch`） |
 | 只在多集群测试项里跑 | `multicluster` |
-| 暂不纳入，先攒着 | 只给功能标签（如 `opensearch`），不给 `smoke` |
+| 暂不纳入，先攒着 | 只给功能标签（如 `opensearch`、`elasticsearch`），不给 `smoke` |
 
-DocTest 级别的细粒度开关用 `doctest_selected <tag>` 包住单篇文档（现在只有 `egress` 一处）。
+DocTest 级别的细粒度开关用 `doctest_selected <tag>` 包住单篇文档，现在有两处：
+`egress`（mesh Case 3/5 的三篇 `routing-egress-traffic-*`）与 `elasticsearch`
+（mesh Case 3 里调用链平台的装 / 卸两步）。
+
+环境能力（有没有 LoadBalancer、是不是双栈）不要用标签表达，用环境变量判断后
+`case_skip ... env` 或直接 `if` 包住——`CASE_TYPE` 表达的是「这轮想测什么」，
+环境变量表达的是「这套环境能测什么」，两者混在一起会让「环境没配好」混进
+「本来就不测」。现有例子：`IS_DUAL_STACK`（mesh Case 2）、`ENABLE_METALLB`
+（mesh Case 3/5 的 `exposing-*` 与 Case 6/7 多集群）。
 
 ### 1.4 需要新标签时，同步 release-config
 
@@ -98,10 +106,14 @@ DocTest 级别的细粒度开关用 `doctest_selected <tag>` 包住单篇文档�
 
 | 测试项 | order | CASE_TYPE |
 | --- | --- | --- |
-| `docs-mesh` | 0 | `smoke and not egress` |
-| `docs-otel` | 1 | `smoke and not egress` |
-| `docs-tracing` | 2 | `smoke and not egress` |
+| `docs-mesh` | 0 | `smoke and not egress and not elasticsearch` |
+| `docs-otel` | 1 | `smoke and not egress and not elasticsearch` |
+| `docs-tracing` | 2 | `smoke and not egress and not elasticsearch` |
 | `docs-mesh-multicluster` | 3 | `multicluster and not egress` |
+
+`not elasticsearch` 是天翼云 openSUSE MicroOS 环境的临时限制（根文件系统不可变只读，
+装不了 hostPath 方式的本地 ES 存储）。相关 Case 本身已经不带 `smoke`，表达式里这条是
+双保险；环境支持 ES 后两处一起改回来，详见 [README「Case 标签与 CASE_TYPE」](README.md#case-标签与-case_type)。
 
 新加的 Case 如果不在这几个表达式的选择范围内，它在 dailybuild 上就是**不会跑**的，
 而且不会有任何报错——只会在 allure 里显示成 `[expected] 未被 CASE_TYPE 选中` 的跳过。
@@ -109,7 +121,7 @@ DocTest 级别的细粒度开关用 `doctest_selected <tag>` 包住单篇文档�
 
 ```bash
 source lynx/case-filter.sh
-_case_type_matches "smoke and not egress" smoke install sidecar && echo 选中 || echo 未选中
+_case_type_matches "smoke and not egress and not elasticsearch" smoke install sidecar && echo 选中 || echo 未选中
 ```
 
 ### 1.5 同步 README 的两张表

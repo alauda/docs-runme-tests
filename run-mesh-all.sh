@@ -74,11 +74,18 @@ if case_begin_if "3" "单网格安装与应用测试 (Single Mesh & App + Tracin
         set -e
         # 安装网格和应用
         ./run.sh --project mesh --file install-mesh
-        # 入口网关 (sidecar 模式) 测试：复用 sidecar 控制面（含 IstioCNI），各自带清理
-        ./run.sh --project mesh --file exposing-a-service-via-istio-gateway --no-cleanup
-        ./run.sh --project mesh --file exposing-a-service-via-istio-gateway --cleanup-only
-        ./run.sh --project mesh --file exposing-a-service-via-k8s-gateway-api-in-sidecar-mode --no-cleanup
-        ./run.sh --project mesh --file exposing-a-service-via-k8s-gateway-api-in-sidecar-mode --cleanup-only
+        # 入口网关 (sidecar 模式) 测试：复用 sidecar 控制面（含 IstioCNI），各自带清理。
+        # 两篇都要把网关 Service 改成 type: LoadBalancer 再取 EXTERNAL-IP 发流量，
+        # 没有 MetalLB 就永远等不到地址、必然失败，故受 ENABLE_METALLB 门控
+        # （天翼云 openSUSE MicroOS 暂不支持自动配 VIP，dailybuild 已置 false）。
+        if [ "${ENABLE_METALLB:-false}" = "true" ]; then
+            ./run.sh --project mesh --file exposing-a-service-via-istio-gateway --no-cleanup
+            ./run.sh --project mesh --file exposing-a-service-via-istio-gateway --cleanup-only
+            ./run.sh --project mesh --file exposing-a-service-via-k8s-gateway-api-in-sidecar-mode --no-cleanup
+            ./run.sh --project mesh --file exposing-a-service-via-k8s-gateway-api-in-sidecar-mode --cleanup-only
+        else
+            log_warn "ENABLE_METALLB != true，跳过入口网关 LoadBalancer 测试 (exposing-a-service-via-istio-gateway / exposing-a-service-via-k8s-gateway-api-in-sidecar-mode)"
+        fi
         # 出口网关 (sidecar 模式) 测试：需要集群侧访问外网（httpbingo.org），
         # 离线环境用 CASE_TYPE 的 `not egress` 排除。
         # 注：doctest_selected 内部 case_selected 遇表达式非法会 exit 1，但这里处于
@@ -98,13 +105,27 @@ if case_begin_if "3" "单网格安装与应用测试 (Single Mesh & App + Tracin
         ./run.sh --project mesh --file mtls --no-cleanup
         # 调用链集成：先装调用链平台，再配置网格上报，再装含调用链集成的 kiali
         # mesh 场景下由 bookinfo 业务流量产生 trace，无需 telemetrygen 端到端验证
-        ./run.sh --project tracing --file installing-distributed-tracing-elasticsearch --skip-telemetrygen
+        #
+        # 调用链平台目前只有 Elasticsearch 一条可用的存储链，故装/卸两步受 DocTest 级
+        # 标签 elasticsearch 门控（与下面 egress 同一套机制）：天翼云 openSUSE MicroOS
+        # 根文件系统不可变只读，装不了 hostPath 方式的本地 ES 存储，dailybuild 环境没有
+        # ES 可用。CASE_TYPE 未设置（本地手工全量跑）时照常执行，行为不变。
+        # 中间的 config-with-service-mesh 与 kiali 不受门控：前者步骤 1 检测不到
+        # jaeger-system 命名空间就跳过、后者检测不到 jaeger-collector svc 就跳过调用链
+        # 集成部分，二者在没有调用链平台时都能跑完（Case 5 走的就是这条路径）。
+        if doctest_selected elasticsearch; then
+            ./run.sh --project tracing --file installing-distributed-tracing-elasticsearch --skip-telemetrygen
+        else
+            log_warn "CASE_TYPE 未选中 elasticsearch，跳过调用链平台安装，网格调用链集成只做配置不校验链路"
+        fi
         ./run.sh --project mesh --file config-with-service-mesh --no-cleanup
         ./run.sh --project mesh --file kiali
         # 清理（逆序）：先卸 kiali，再卸网格调用链配置，再卸调用链平台
         ./run.sh --project mesh --file uninstalling-alauda-build-of-kiali
         ./run.sh --project mesh --file config-with-service-mesh --cleanup-only
-        ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds --skip-cluster-plugin
+        if doctest_selected elasticsearch; then
+            ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds --skip-cluster-plugin
+        fi
         # 清理 bookinfo 命名空间的严格 mTLS 配置（在删除 bookinfo 前移除 PeerAuthentication）
         ./run.sh --project mesh --file mtls --cleanup-only
         ./run.sh --project mesh --file deploying-the-bookinfo-application --cleanup-only
@@ -153,9 +174,14 @@ if case_begin_if "5" "Ambient Mode 安装测试" smoke install ambient; then
         # L7 特性测试（独立测试，包含清理步骤）
         ./run.sh --project mesh --file ambient-l7-features --no-cleanup
         ./run.sh --project mesh --file ambient-l7-features --cleanup-only
-        # 入口网关 K8S Gateway API 测试（集群需要支持 `LoadBalancer`）
-        ./run.sh --project mesh --file exposing-a-service-via-k8s-gateway-api-in-ambient-mode --no-cleanup
-        ./run.sh --project mesh --file exposing-a-service-via-k8s-gateway-api-in-ambient-mode --cleanup-only
+        # 入口网关 K8S Gateway API 测试（集群需要支持 `LoadBalancer`）：
+        # 同 Case 3，取不到 EXTERNAL-IP 必然失败，故受 ENABLE_METALLB 门控。
+        if [ "${ENABLE_METALLB:-false}" = "true" ]; then
+            ./run.sh --project mesh --file exposing-a-service-via-k8s-gateway-api-in-ambient-mode --no-cleanup
+            ./run.sh --project mesh --file exposing-a-service-via-k8s-gateway-api-in-ambient-mode --cleanup-only
+        else
+            log_warn "ENABLE_METALLB != true，跳过入口网关 LoadBalancer 测试 (exposing-a-service-via-k8s-gateway-api-in-ambient-mode)"
+        fi
         # 出口网关 (Egress Gateway) 测试：同上，需要集群侧访问外网，离线环境用
         # CASE_TYPE 的 `not egress` 排除。
         # 注：doctest_selected 遇表达式非法会 exit 1，这里的 exit 只会终止本
@@ -185,7 +211,13 @@ fi
 # Case 6: 多集群 - 多主多网络拓扑 (Multi-Primary Multi-Network)
 # 注：会切换到双集群 kubeconfig，必须放在所有单集群 case 之后
 # ------------------------------------------------------------------
-if [ -z "${EAST_CLUSTER_NAME:-}" ] || [ -z "${WEST_CLUSTER_NAME:-}" ]; then
+if [ "${ENABLE_METALLB:-false}" != "true" ]; then
+    # 两种拓扑都靠东西向网关的 LoadBalancer 地址互联（install-multi-primary-multi-network
+    # 与 install-primary-remote-multi-network 都会读 .status.loadBalancer.ingress[0].ip），
+    # 没有 MetalLB 就取不到地址、必然失败，直接按环境不支持跳过。
+    case_skip "6" "多集群-多主多网络拓扑" "ENABLE_METALLB != true（东西向网关需要 LoadBalancer 地址）" env
+    case_skip "7" "多集群-主-远多网络拓扑" "ENABLE_METALLB != true（东西向网关需要 LoadBalancer 地址）" env
+elif [ -z "${EAST_CLUSTER_NAME:-}" ] || [ -z "${WEST_CLUSTER_NAME:-}" ]; then
     case_skip "6" "多集群-多主多网络拓扑" "未设置 EAST_CLUSTER_NAME / WEST_CLUSTER_NAME" env
     case_skip "7" "多集群-主-远多网络拓扑" "未设置 EAST_CLUSTER_NAME / WEST_CLUSTER_NAME" env
 else

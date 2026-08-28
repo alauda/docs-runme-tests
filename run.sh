@@ -35,6 +35,7 @@ CLEANUP_ONLY=false
 INIT_ONLY=false
 FORCE_INIT=false
 SKIP_OPERATOR_AND_CRDS=false
+SKIP_CLUSTER_PLUGIN=false
 SKIP_TELEMETRYGEN=false
 
 # 已注册（且仓库目录存在）的项目名列表（load_repos_conf 填充）
@@ -69,6 +70,8 @@ usage() {
   --force-init          强制执行环境初始化（用于 --file 模式）
   --skip-operator-and-crds
                         轻量清理开关，导出给测试脚本读取
+  --skip-cluster-plugin 跳过卸载集群插件（仅 uninstalling-distributed-tracing 读取；
+                        保留 Jaeger v2 集群插件与其镜像清单 ConfigMap，供后续 case 复用）
   --skip-telemetrygen   跳过 telemetrygen 端到端 trace 测试（仅
                         installing-distributed-tracing-{elasticsearch,opensearch} 读取；用于
                         mesh 等仅需安装调用链组件而无需 telemetrygen
@@ -139,6 +142,10 @@ parse_args() {
                 ;;
             --skip-operator-and-crds)
                 SKIP_OPERATOR_AND_CRDS=true
+                shift
+                ;;
+            --skip-cluster-plugin)
+                SKIP_CLUSTER_PLUGIN=true
                 shift
                 ;;
             --skip-telemetrygen)
@@ -419,7 +426,7 @@ main() {
         log_error "项目 '$PROJECT' 未在 repos.conf 注册，或其仓库目录不存在"
         exit 1
     fi
-    export DOC_REPO_ROOT PROJECT SKIP_OPERATOR_AND_CRDS SKIP_TELEMETRYGEN
+    export DOC_REPO_ROOT PROJECT SKIP_OPERATOR_AND_CRDS SKIP_CLUSTER_PLUGIN SKIP_TELEMETRYGEN
 
     # ── 加载项目钩子 ──
     local project_sh="$PROJECTS_DIR/$PROJECT/project.sh"

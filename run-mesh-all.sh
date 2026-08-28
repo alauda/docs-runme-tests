@@ -60,7 +60,8 @@ fi
 # ------------------------------------------------------------------
 # Case 3: 单网格安装与应用测试（含调用链集成）
 # 顺序：先装调用链再装 kiali；清理逆序（先卸 kiali、再卸调用链）。
-# 卸载调用链使用 --skip-operator-and-crds 保留 OTel Operator 与 CRDs 供后续 case 复用。
+# 卸载调用链使用 --skip-operator-and-crds 与 --skip-cluster-plugin，保留 OTel Operator、CRDs
+# 与 Jaeger v2 集群插件供后续 case 复用。
 # ------------------------------------------------------------------
 if case_begin_if "3" "单网格安装与应用测试 (Single Mesh & App + Tracing)" smoke install sidecar; then
     # 用子 shell ( cmds ) 把多条命令归拢成一个 Case。
@@ -103,7 +104,7 @@ if case_begin_if "3" "单网格安装与应用测试 (Single Mesh & App + Tracin
         # 清理（逆序）：先卸 kiali，再卸网格调用链配置，再卸调用链平台
         ./run.sh --project mesh --file uninstalling-alauda-build-of-kiali
         ./run.sh --project mesh --file config-with-service-mesh --cleanup-only
-        ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds
+        ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds --skip-cluster-plugin
         # 清理 bookinfo 命名空间的严格 mTLS 配置（在删除 bookinfo 前移除 PeerAuthentication）
         ./run.sh --project mesh --file mtls --cleanup-only
         ./run.sh --project mesh --file deploying-the-bookinfo-application --cleanup-only

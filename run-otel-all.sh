@@ -61,8 +61,13 @@ fi
 #       java-instrumentation 测试以 SKIPPED 退出，不阻断编排。
 # 顺序：先装分布式调用链（提供 jaeger-system 的 OTel Collector 作为 javaagent 导出端点）
 #       → 部署 Java OTel demo → 卸载 Java OTel demo → 卸载分布式调用链。
+#
+# 标签带 elasticsearch、且**不带 smoke**：本 Case 的调用链链路只有 Elasticsearch 一种
+# 存储后端实现，而天翼云 openSUSE MicroOS 根文件系统不可变只读、装不了 hostPath 方式的
+# 本地 ES 存储，dailybuild 环境没有 ES 可用。环境支持 ES 后把 smoke 加回来、并去掉
+# release-config 里 CASE_TYPE 的 `and not elasticsearch` 即可恢复。
 # ------------------------------------------------------------------
-if case_begin_if "2" "Java 自动注入示例服务 + 分布式调用链 (Java Instrumentation Demo)" smoke install java; then
+if case_begin_if "2" "Java 自动注入示例服务 + 分布式调用链 (Java Instrumentation Demo)" install java elasticsearch; then
     if (
         set -e
         ./run.sh --project tracing --file installing-distributed-tracing-elasticsearch --skip-telemetrygen --force-init

@@ -143,6 +143,9 @@ export AUTO_GEN_BOOKINFO_TRAFFIC=true
 # 高端口网关（东西向 / waypoint）走 Scenario 1（去 sysctls），特权端口网关（监听 80 的 ingress/egress）走 Scenario 2（+ NET_BIND_SERVICE + root）
 export ENABLE_GW_LINUX_KERNEL_COMPAT=false
 # 是否安装 MetalLB 集群插件（多集群网格 / 入口网关 LoadBalancer 场景需要，默认 false）
+# 置 false 时下列测试会被编排脚本主动跳过（没有 LoadBalancer 地址跑必失败）：
+# - mesh Case 3/5 的三篇 exposing-* 入口网关文档（日志里 log_warn，不产用例记录）
+# - mesh Case 6/7 多集群网格（按 env 分类 case_skip，报告里可见）
 export ENABLE_METALLB=false
 # 外部 IP 地址池地址（仅 ENABLE_METALLB=true 时需要）：JSON 数组，ipv6Addresses 为将来预留
 # - 多集群 Case 6/7：cluster 需与 EAST_CLUSTER_NAME / WEST_CLUSTER_NAME 对应
@@ -224,7 +227,7 @@ export TRACING_TEST_SPM=true
 | otel | 无（同上） | `USE_MESH_V2_TEST_SUITE_PLUGIN=true` 时需 `PKG_MESH_V2_TEST_SUITE_URL` 或平台已预上架 |
 | tracing | 无（同上） | ES / OpenSearch 存储后端配置同原表；Jaeger v2 集群插件需 `PKG_JAEGER_CLUSTER_PLUGIN_URL` 或平台已预上架 |
 
-> 注：`METALLB_EXTERNAL_ADDRESSES_JSON`（外部 IP 地址池地址，JSON 数组）在 `ENABLE_METALLB=true` 时由 `setup_external_ip_pools` 创建地址池时校验（不在 `project_check_env`）：多集群 Case 6/7 需含 `cluster=$EAST_CLUSTER_NAME`/`$WEST_CLUSTER_NAME` 条目；单集群入口网关 LoadBalancer 测试（Case 3/5 的 exposing-\* 文档）需含 `cluster=$SINGLE_CLUSTER_NAME` 条目。
+> 注：`METALLB_EXTERNAL_ADDRESSES_JSON`（外部 IP 地址池地址，JSON 数组）在 `ENABLE_METALLB=true` 时由 `setup_external_ip_pools` 创建地址池时校验（不在 `project_check_env`）：多集群 Case 6/7 需含 `cluster=$EAST_CLUSTER_NAME`/`$WEST_CLUSTER_NAME` 条目；单集群入口网关 LoadBalancer 测试（Case 3/5 的 exposing-\* 文档）需含 `cluster=$SINGLE_CLUSTER_NAME` 条目。`ENABLE_METALLB != true` 时这两组测试由 `run-mesh-all.sh` 直接跳过，不会走到这里。
 >
 > 地址池所有权：`init` 入口（`lynx/entrypoint.sh` 的 `docs-test init`）创建的池带
 > `runme-test/owner=init` 标签，长期存在、测试结束不清理；单篇测试脚本自建的池带
@@ -383,27 +386,47 @@ docker build --build-arg IMAGE_TAG=local-dev -t docs-runme-tests:local-dev .
 | mesh | 8 / 9 / 10 更新策略 | `update` |
 | mesh | 11 Ambient 更新 | `update ambient` |
 | otel | 1 安装与卸载 | `smoke install` |
-| otel | 2 Java 自动注入示例 | `smoke install java` |
-| tracing | 1 安装与卸载（ES） | `smoke install elasticsearch` |
-| tracing | 2 安装与卸载（OpenSearch） | `install opensearch` |
-| tracing | 3 SPM 多副本（ES） | `smoke ha elasticsearch` |
-| tracing | 4 SPM 多副本（OpenSearch） | `ha opensearch` |
-| tracing | 5 v2.0→v2.1 升级（ES） | `upgrade elasticsearch` |
-| tracing | 6 v2.0→v2.1 升级（OpenSearch） | `upgrade opensearch` |
+| otel | 2 Java 自动注入示例 | `install java elasticsearch` |
+| tracing | 1 环境初始化 | `smoke install` |
+| tracing | 2 安装与卸载（ES） | `install elasticsearch` |
+| tracing | 3 安装与卸载（OpenSearch） | `install opensearch` |
+| tracing | 4 SPM 多副本（ES） | `ha elasticsearch` |
+| tracing | 5 SPM 多副本（OpenSearch） | `ha opensearch` |
+| tracing | 6 v2.0→v2.1 升级（ES） | `upgrade elasticsearch` |
+| tracing | 7 v2.0→v2.1 升级（OpenSearch） | `upgrade opensearch` |
 
-DocTest 级标签只有 `egress`（mesh Case 3 / 5 中的三篇 `routing-egress-traffic-*`）。
+DocTest 级标签有两个：
+
+- `egress`（mesh Case 3 / 5 中的三篇 `routing-egress-traffic-*`）
+- `elasticsearch`（mesh Case 3 中的调用链平台装 / 卸两步）
 
 dailybuild 目前开了四个测试项：`docs-mesh` / `docs-otel` / `docs-tracing` 用
-`CASE_TYPE="smoke and not egress"`，`docs-mesh-multicluster` 单独用
+`CASE_TYPE="smoke and not egress and not elasticsearch"`，`docs-mesh-multicluster` 单独用
 `CASE_TYPE="multicluster and not egress"`。多集群必须单开一项，因为表达式不支持 `or`，
 `smoke` 那三项选不到只带 `multicluster` 标签的 Case 6/7。
 
-OpenSearch 就绪后给 tracing Case 2/4 补 `smoke` 标签即可纳入，表达式不用改。
+**存储后端两条链目前都不在 dailybuild 的选择范围内**，原因不同：
 
-tracing Case 5/6（升级）只带 `upgrade`，四个现有测试项都选不中它们——这是有意的：升级测试
+- Elasticsearch（otel Case 2、tracing Case 2/4/6）：天翼云 openSUSE MicroOS 的根文件系统
+  不可变只读，装不了 hostPath 方式的本地 ES 存储，dailybuild 环境的 `asm-1` 集群已去掉
+  `log_storage` 声明。这些 Case 都不带 `smoke`、都带 `elasticsearch`，且 `CASE_TYPE` 里
+  额外写了 `and not elasticsearch` 双保险。环境支持后：把 `smoke` 加回 otel Case 2 与
+  tracing Case 2/4，并去掉 `CASE_TYPE` 里的 `and not elasticsearch`。
+- OpenSearch（tracing Case 3/5/7）：需要业务集群各节点有空闲裸盘（TopoLVM），dailybuild 的
+  `asm-1` 未挂数据盘。环境支持后给 tracing Case 3/5 补 `smoke` 标签即可，表达式不用改。
+
+因此 `docs-tracing` 测试项当前只会选中 tracing Case 1（环境初始化）——它不碰任何存储后端，
+是这个测试项唯一跑得起来的 Case；没有它该测试项一个用例都不会跑。
+
+tracing Case 6/7（升级）只带 `upgrade`，四个现有测试项都选不中它们——这是有意的：升级测试
 要求环境上先有一套 v2.0 部署，dailybuild 的环境是全新安装出来的 v2.1，跑了也只会 SKIPPED。
 将来要纳入，得按多集群那样单开一个 `CASE_TYPE="upgrade"` 的 lynx 测试项，并让该测试项的
 环境停在 v2.0。
+
+`ENABLE_METALLB=false` 时另有两处按环境跳过（与 `CASE_TYPE` 无关，见上文该变量说明）：
+mesh Case 3/5 的三篇 `exposing-*` 入口网关文档、mesh Case 6/7 多集群网格。天翼云 MicroOS
+暂不支持 `other_vips` 机制、给 MetalLB 自动配 VIP，dailybuild 四个测试项已全部置 false，
+`docs-mesh-multicluster` 因此暂时只会跑环境初始化、两个多集群 Case 均按 `[env]` 跳过。
 
 新增或修改标签时要同步 release-config 的 `CASE_TYPE`，
 详见 [UPDATE-README.md 第 1.4 节](UPDATE-README.md#14-需要新标签时同步-release-config)。
@@ -476,7 +499,7 @@ tracing Case 5/6（升级）只带 `upgrade`，四个现有测试项都选不中
 | 分布式调用链 v2.0→v2.1 升级（Elasticsearch） | `./run.sh --project tracing --file upgrading-distributed-tracing-elasticsearch` |
 | 分布式调用链 v2.0→v2.1 升级（OpenSearch）    | `./run.sh --project tracing --file upgrading-distributed-tracing-opensearch`    |
 
-> Elasticsearch 安装测试默认从 `TRACING_ACP_ES_CLUSTER` 指定的 ACP 集群（默认 `global`）读取 log-center Elasticsearch 配置；将其设为空时改用 `TRACING_ES_*` 手动配置（该加载逻辑位于 Elasticsearch 安装测试脚本，不再由 `project_prepare` 全局执行）。`TRACING_INSTALL_ES=true` 且 `PKG_LOG_CENTER_URL` 非空时，步骤 0 会先把 logcenter 集群插件（Single Node 模式）自动安装到该集群——对应集群已安装过则跳过（安装逻辑见 `projects/tracing/elasticsearch.sh`）。OpenSearch 安装测试默认自动安装存储后端：`TRACING_INSTALL_OPENSEARCH=true`（默认）且 `PKG_ACP_STORAGE_OPERATOR_URL` / `PKG_TOPOLVM_OPERATOR_URL` 齐全时，步骤 0 自动安装 TopoLVM + OpenSearch（幂等，opensearch-operator 插件包目前需手动上架）并用实际结果覆盖 `TRACING_OPENSEARCH_*`——OpenSearch 的 HTTP API 与 Dashboards 各由一条 Ingress 以 `/clusters/<集群名>/opensearch[-dashboards]` 子路径暴露，`TRACING_OPENSEARCH_ENDPOINT` 取前者（平台地址 + 子路径，集群内外都可访问，不再是集群内 svc 域名）；条件不满足时降级用手动 `TRACING_OPENSEARCH_ENDPOINT/USER/PASS`，两者皆缺则该测试 SKIPPED（安装逻辑见 `projects/tracing/opensearch.sh`）。卸载测试存储无关，按 Jaeger 命名空间是否存在判定是否执行；OpenSearch/TopoLVM 作为环境级存储后端不随卸载清理。卸载测试覆盖 `uninstalling-distributed-tracing.mdx` 的「Uninstalling via the CLI」全部章节，最后一步按「(Optional) Uninstall the Alauda Build of Jaeger v2 Cluster Plugin」在 Global 集群按 label 删除该插件的 `ModuleInfo`（平台会把它重命名为 `<cluster>-<hash>`，只能按 label 定位），再回目标集群确认镜像清单 ConfigMap 已回收；`--skip-cluster-plugin` 保留该插件，`--skip-operator-and-crds` 保留 OTel Operator subscription 与 CRDs——编排脚本里的调用两个都带，供后续 case 复用。两个安装测试的步骤 1 会先按文档「Installing the Alauda Build of Jaeger v2 Cluster Plugin」CLI 章节安装 Jaeger v2 集群插件：`PKG_JAEGER_CLUSTER_PLUGIN_URL` 非空时若未上架会自动下载并 violet push 到 Global；留空则进入 verify-only 模式，要求该插件已在 Global 集群预上架，否则报错退出并提示确认 release-config 是否已声明该包；已安装则两种模式都幂等复用（两篇文档该章节内容一致，安装逻辑抽象为按 runme 前缀参数化的共享函数，见 `projects/tracing/jaeger-plugin.sh`），步骤 2 自动安装前置依赖 OpenTelemetry v2 Operator（其代码块位于 `opentelemetry-docs`）。两篇升级测试（v2.0 → v2.1）要求环境上**先有一套 v2.0 部署**（Jaeger 2.16.0 + Alauda Build of OpenTelemetry v2 Operator 0.147.0），本框架不负责搭建：脚本开头按「Jaeger 命名空间与实例存在 / 存储后端与本篇匹配 / 配置里带 v2.0 特征字段（ES 看 `use_aliases`、`use_ilm`，OpenSearch 看 `indices.spans.date_layout`）」三条做门槛，任一不满足即 `skip_test_env` 退出，不会误伤 Case 1-4 装出来的 v2.1 环境；升级完成后重复执行同样会因门槛而 SKIPPED。两篇文档 23 / 29 个代码块中有 16 个逐字节相同（集群插件安装、Operator 升级、otel Collector 配置迁移、两段 SPM patch、收尾验证），已按 runme 前缀参数化抽到 `distributed-tracing-docs/docs/en/upgrading/_upgrade-common.sh`（落点与同仓 `_spm-ha-common.sh` 一致）；差异只剩存储侧中段与两次 patch 的先后顺序——**Elasticsearch 篇先换 oauth2-proxy 镜像再打配置 patch，OpenSearch 篇必须反过来**，否则那次重启会让 v2.16 用默认的 `create_mappings=true` 覆盖掉 `jaeger-es-rollover init` 刚写的索引模板。ISM policy 的两个辅助函数（清理遗留 policy、等待 ISM 接管写索引）由 OpenSearch 安装测试与升级测试共用，位于 `projects/tracing/opensearch.sh`。两段 (Optional) SPM 章节按当前部署是否配了 spanmetrics connector 自动决定跑不跑，`TRACING_TEST_SPM=false` 可强制跳过。
+> Elasticsearch 安装测试默认从 `TRACING_ACP_ES_CLUSTER` 指定的 ACP 集群（默认 `global`）读取 log-center Elasticsearch 配置；将其设为空时改用 `TRACING_ES_*` 手动配置（该加载逻辑位于 Elasticsearch 安装测试脚本，不再由 `project_prepare` 全局执行）。`TRACING_INSTALL_ES=true` 且 `PKG_LOG_CENTER_URL` 非空时，步骤 0 会先把 logcenter 集群插件（Single Node 模式）自动安装到该集群——对应集群已安装过则跳过（安装逻辑见 `projects/tracing/elasticsearch.sh`）。OpenSearch 安装测试默认自动安装存储后端：`TRACING_INSTALL_OPENSEARCH=true`（默认）且 `PKG_ACP_STORAGE_OPERATOR_URL` / `PKG_TOPOLVM_OPERATOR_URL` 齐全时，步骤 0 自动安装 TopoLVM + OpenSearch（幂等，opensearch-operator 插件包目前需手动上架）并用实际结果覆盖 `TRACING_OPENSEARCH_*`——OpenSearch 的 HTTP API 与 Dashboards 各由一条 Ingress 以 `/clusters/<集群名>/opensearch[-dashboards]` 子路径暴露，`TRACING_OPENSEARCH_ENDPOINT` 取前者（平台地址 + 子路径，集群内外都可访问，不再是集群内 svc 域名）；条件不满足时降级用手动 `TRACING_OPENSEARCH_ENDPOINT/USER/PASS`，两者皆缺则该测试 SKIPPED（安装逻辑见 `projects/tracing/opensearch.sh`）。卸载测试存储无关，按 Jaeger 命名空间是否存在判定是否执行；OpenSearch/TopoLVM 作为环境级存储后端不随卸载清理。卸载测试覆盖 `uninstalling-distributed-tracing.mdx` 的「Uninstalling via the CLI」全部章节，最后一步按「(Optional) Uninstall the Alauda Build of Jaeger v2 Cluster Plugin」在 Global 集群按 label 删除该插件的 `ModuleInfo`（平台会把它重命名为 `<cluster>-<hash>`，只能按 label 定位），再回目标集群确认镜像清单 ConfigMap 已回收；`--skip-cluster-plugin` 保留该插件，`--skip-operator-and-crds` 保留 OTel Operator subscription 与 CRDs——编排脚本里的调用两个都带，供后续 case 复用。两个安装测试的步骤 1 会先按文档「Installing the Alauda Build of Jaeger v2 Cluster Plugin」CLI 章节安装 Jaeger v2 集群插件：`PKG_JAEGER_CLUSTER_PLUGIN_URL` 非空时若未上架会自动下载并 violet push 到 Global；留空则进入 verify-only 模式，要求该插件已在 Global 集群预上架，否则报错退出并提示确认 release-config 是否已声明该包；已安装则两种模式都幂等复用（两篇文档该章节内容一致，安装逻辑抽象为按 runme 前缀参数化的共享函数，见 `projects/tracing/jaeger-plugin.sh`），步骤 2 自动安装前置依赖 OpenTelemetry v2 Operator（其代码块位于 `opentelemetry-docs`）。两篇升级测试（v2.0 → v2.1）要求环境上**先有一套 v2.0 部署**（Jaeger 2.16.0 + Alauda Build of OpenTelemetry v2 Operator 0.147.0），本框架不负责搭建：脚本开头按「Jaeger 命名空间与实例存在 / 存储后端与本篇匹配 / 配置里带 v2.0 特征字段（ES 看 `use_aliases`、`use_ilm`，OpenSearch 看 `indices.spans.date_layout`）」三条做门槛，任一不满足即 `skip_test_env` 退出，不会误伤 Case 2-5 装出来的 v2.1 环境；升级完成后重复执行同样会因门槛而 SKIPPED。两篇文档 23 / 29 个代码块中有 16 个逐字节相同（集群插件安装、Operator 升级、otel Collector 配置迁移、两段 SPM patch、收尾验证），已按 runme 前缀参数化抽到 `distributed-tracing-docs/docs/en/upgrading/_upgrade-common.sh`（落点与同仓 `_spm-ha-common.sh` 一致）；差异只剩存储侧中段与两次 patch 的先后顺序——**Elasticsearch 篇先换 oauth2-proxy 镜像再打配置 patch，OpenSearch 篇必须反过来**，否则那次重启会让 v2.16 用默认的 `create_mappings=true` 覆盖掉 `jaeger-es-rollover init` 刚写的索引模板。ISM policy 的两个辅助函数（清理遗留 policy、等待 ISM 接管写索引）由 OpenSearch 安装测试与升级测试共用，位于 `projects/tracing/opensearch.sh`。两段 (Optional) SPM 章节按当前部署是否配了 spanmetrics connector 自动决定跑不跑，`TRACING_TEST_SPM=false` 可强制跳过。
 
 ## 工作原理
 

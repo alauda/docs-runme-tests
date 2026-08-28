@@ -69,7 +69,7 @@ if case_begin_if "2" "Java 自动注入示例服务 + 分布式调用链 (Java I
         ./run.sh --project otel --file java-instrumentation --no-cleanup
         # 清理
         ./run.sh --project otel --file java-instrumentation --cleanup-only
-        ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds
+        ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds --skip-cluster-plugin
     ); then
         case_end 0
     else

@@ -74,6 +74,9 @@ if case_begin_if "3" "单网格安装与应用测试 (Single Mesh & App + Tracin
         set -e
         # 安装网格和应用
         ./run.sh --project mesh --file install-mesh
+        # Pod Security Admission：给 istio / istio-waypoint 两个网关类打 seccompProfile overlay，
+        # 使 Gateway API 网关与 waypoint 能被 Restricted 命名空间准入（须在建 Gateway 之前）
+        ./run.sh --project mesh --file pod-security-admission
         # 入口网关 (sidecar 模式) 测试：复用 sidecar 控制面（含 IstioCNI），各自带清理。
         # 两篇都要把网关 Service 改成 type: LoadBalancer 再取 EXTERNAL-IP 发流量，
         # 没有 MetalLB 就永远等不到地址、必然失败，故受 ENABLE_METALLB 门控

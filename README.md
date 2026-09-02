@@ -438,6 +438,7 @@ mesh Case 3/5 的三篇 `exposing-*` 入口网关文档、mesh Case 6/7 多集�
 | ---------------------------------- | ------------------------------------------------------------------------------------------- |
 | 双栈网格安装                       | `./run.sh --project mesh --file install-mesh-in-dual-stack-mode`                            |
 | 网格安装                           | `./run.sh --project mesh --file install-mesh`                                               |
+| Pod Security Admission（网关类）   | `./run.sh --project mesh --file pod-security-admission`                                     |
 | Istio HA - 自动伸缩                | `./run.sh --project mesh --file configuring-istio-ha-by-using-autoscaling`                  |
 | Istio HA - 固定副本数              | `./run.sh --project mesh --file configuring-istio-ha-by-using-replica-count`                |
 | 指标与服务网格集成                 | `./run.sh --project mesh --file metrics-and-mesh`                                           |
@@ -539,8 +540,13 @@ source "$FRAMEWORK_ROOT/framework/verify.sh"
 | `install_gateway_via_injection <gw_name> <gw_ns> [context]`                       | 通过 gateway injection 安装网关（含可选 HPA/PDB；去 infra 调度；`ENABLE_GW_LINUX_KERNEL_COMPAT=true` 时 Deployment 以 root 运行） |
 | `apply_kernel_compat_istio_gateway [run_as_root=true] [context]`                  | Istio Gateway（注入）路径内核兼容：修补 mesh 级注入模板并等待 Istio Ready；关时 no-op                                             |
 | `apply_kernel_compat_k8s_gateway_api <ns> <gw_name> [run_as_root=true] [context]` | K8s Gateway API 路径内核兼容：建 `asm-kube-gateway-options` ConfigMap 并给 Gateway 挂 `parametersRef`；关时 no-op                 |
+| `relax_psa_for_root_gateway <ns> [run_as_root=true] [context]`                    | 内核兼容且网关以 root 运行时，把该命名空间的 PSA `enforce` 从 `restricted` 放宽为 `baseline`；关时 no-op                          |
 
 > 两个 `apply_kernel_compat_*` 受 `ENABLE_GW_LINUX_KERNEL_COMPAT` 门控（默认 false 时直接返回）。`run_as_root=false` → Scenario 1（仅去 sysctls，高端口网关）；`true` → Scenario 2（+ NET_BIND_SERVICE + root，特权端口网关）。多集群东西向网关与 ambient waypoint 传 `false`；监听 80 的 ambient ingress 网关用默认 `true`。
+
+> **与 Restricted PSA 的关系**：文档已把 bookinfo / httpbin / curl / egress-gateway 等测试应用命名空间设为 `pod-security.kubernetes.io/enforce=restricted`。Restricted profile 禁止 root 容器，与 Scenario 2 的 `runAsUser: 0` 互斥，故 `apply_kernel_compat_k8s_gateway_api` 与 `reconcile_injected_gateway_runasroot` 在 `run_as_root=true` 时会先调 `relax_psa_for_root_gateway` 把命名空间放宽为 `baseline`（与 `linux-kernel-compatibility-notice.mdx` 的结论一致）。默认 `ENABLE_GW_LINUX_KERNEL_COMPAT=false` 时不触发，命名空间保持 Restricted。
+>
+> Gateway API 网关与 waypoint 的 seccomp 配置走另一条通道：`Istio` 资源的 `spec.values.gatewayClasses.<class>.deployment` overlay，由各文档自己的 `*:patch-gatewayclass*` 代码块下发（详见 `installing/pod-security-admission.mdx`），必须在创建 `Gateway` 之前执行。
 
 ## 测试结果统计（三层：Run → Case → DocTest）
 
@@ -573,6 +579,7 @@ bash framework/tests/acp_auth_test.sh
 bash framework/tests/allure_test.sh
 bash framework/tests/assets_test.sh
 bash framework/tests/case_filter_test.sh
+bash framework/tests/create_namespace_test.sh
 bash framework/tests/entrypoint_test.sh
 bash framework/tests/env_adapter_test.sh
 bash framework/tests/install_cluster_plugin_test.sh

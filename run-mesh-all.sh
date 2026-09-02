@@ -167,16 +167,6 @@ if case_begin_if "5" "Ambient Mode 安装测试" smoke install ambient; then
         set -e
         # 安装 ambient 网格和应用（operator 可能已经被删除，所以要 --force-init）
         ./run.sh --project mesh --file installing-ambient-mode --force-init
-        ./run.sh --project mesh --file metrics-and-mesh
-        ./run.sh --project mesh --file deploying-ambient-bookinfo --no-cleanup
-        # 为 bookinfo 命名空间启用严格 mTLS（PeerAuthentication STRICT）
-        ./run.sh --project mesh --file mtls --no-cleanup
-        ./run.sh --project mesh --file config-with-service-mesh --no-cleanup
-        ./run.sh --project mesh --file kiali
-        ./run.sh --project mesh --file waypoint-proxies
-        # L7 特性测试（独立测试，包含清理步骤）
-        ./run.sh --project mesh --file ambient-l7-features --no-cleanup
-        ./run.sh --project mesh --file ambient-l7-features --cleanup-only
         # 入口网关 K8S Gateway API 测试（集群需要支持 `LoadBalancer`）：
         # 同 Case 3，取不到 EXTERNAL-IP 必然失败，故受 ENABLE_METALLB 门控。
         if [ "${ENABLE_METALLB:-false}" = "true" ]; then
@@ -195,6 +185,17 @@ if case_begin_if "5" "Ambient Mode 安装测试" smoke install ambient; then
             ./run.sh --project mesh --file routing-egress-traffic-via-k8s-gateway-api-in-ambient-mode --no-cleanup
             ./run.sh --project mesh --file routing-egress-traffic-via-k8s-gateway-api-in-ambient-mode --cleanup-only
         fi
+        ./run.sh --project mesh --file metrics-and-mesh
+        ./run.sh --project mesh --file deploying-ambient-bookinfo --no-cleanup
+        # 为 bookinfo 命名空间启用严格 mTLS（PeerAuthentication STRICT）
+        ./run.sh --project mesh --file mtls --no-cleanup
+        ./run.sh --project mesh --file config-with-service-mesh --no-cleanup
+        ./run.sh --project mesh --file kiali
+        ./run.sh --project mesh --file waypoint-proxies
+        # L7 特性测试（独立测试，包含清理步骤）
+        ./run.sh --project mesh --file ambient-l7-features --no-cleanup
+        ./run.sh --project mesh --file ambient-l7-features --cleanup-only
+
         # 清理 bookinfo 命名空间的严格 mTLS 配置（在卸载网格前移除 PeerAuthentication）
         ./run.sh --project mesh --file mtls --cleanup-only
         # 卸载 kiali

@@ -15,6 +15,6 @@
 # 这是各仓库自身历史造成的，不是笔误，不要"顺手统一"。
 #
 # 校验：bash lynx/check-docs-refs.sh（构建期与本地测试都会跑）
-MESH_DOCS_REF	fix-2.2/psa-strict-ns
+MESH_DOCS_REF	release-2.2
 OTEL_DOCS_REF	release-2.1
 TRACING_DOCS_REF	release-2.1

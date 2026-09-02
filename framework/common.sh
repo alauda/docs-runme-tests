@@ -205,6 +205,9 @@ _wait_for_ingress_lb() {
 # 说明:
 #   - 适用于"重复执行可能遇到 AlreadyExists"的场景 (如多集群多次重建)
 #   - 命令本身的失败被忽略,以最终 `kubectl get ns` 是否成功作为判定依据
+#   - 逐行执行代码块而非 `runme run`: runme 块内首条命令失败即停,命名空间已存在时
+#     `kubectl create namespace` 会失败,后续命令(再建一个命名空间、或紧随其后的
+#     PSA `kubectl label` 等)就被静默跳过,导致命名空间少建或标签没打上
 _create_namespace_safe() {
     local block_name="$1"
     local ns_list="$2"
@@ -216,8 +219,39 @@ _create_namespace_safe() {
         return 1
     fi
 
-    # 执行 runme 块,容忍 AlreadyExists 等错误
-    runme run "$block_name" 2>&1 || true
+    # 渲染代码块并逐行执行,每行独立容错(容忍 AlreadyExists 等错误)
+    local block_content line
+    block_content=$(runme print "$block_name" 2>/dev/null)
+    if [ -z "$block_content" ]; then
+        log_error "无法获取代码块内容: $block_name"
+        return 1
+    fi
+    while IFS= read -r line; do
+        case "$line" in
+            ''|'#'*) continue ;;
+        esac
+        eval "$line" 2>&1 || true
+    done <<< "$block_content"
+
+    # 校验代码块里打的 PSA enforce 标签确实生效
+    # (Restricted 是这些文档测试的前提;标签没打上,"严格模式下可用"的结论就是假的)
+    local psa_line psa_ns psa_want psa_got
+    while IFS= read -r psa_line; do
+        case "$psa_line" in
+            *"pod-security.kubernetes.io/enforce="*) : ;;
+            *) continue ;;
+        esac
+        psa_ns=$(printf '%s' "$psa_line" | sed -e 's/.*label namespace //' -e 's/ .*//')
+        psa_want=${psa_line#*pod-security.kubernetes.io/enforce=}
+        psa_want=${psa_want%% *}
+        psa_got=$(kubectl --context "$context" get namespace "$psa_ns" \
+            -o jsonpath='{.metadata.labels.pod-security\.kubernetes\.io/enforce}' 2>/dev/null)
+        if [ "$psa_got" != "$psa_want" ]; then
+            log_error "PSA enforce 标签未生效: ns=$psa_ns 期望=$psa_want 实际=${psa_got:-<空>}"
+            return 1
+        fi
+        log_info "PSA enforce=$psa_want 已生效: ns=$psa_ns"
+    done <<< "$block_content"
 
     # 验证每个命名空间已存在
     local ns

@@ -142,6 +142,38 @@ _gw_inject_ctx() {
     fi
 }
 
+# 内核 < 4.11 且网关以 root 运行时,把网关所在命名空间的 PSA enforce 放宽到 baseline
+# 用法: relax_psa_for_root_gateway <namespace> [run_as_root=true] [context]
+# 说明:
+#   - 仅 ENABLE_GW_LINUX_KERNEL_COMPAT=true 且 run_as_root=true 时生效,否则 no-op;
+#     内核 >= 4.11 的常规环境不会走到这里,命名空间保持 Restricted。
+#   - Restricted profile 禁止 root 容器,与 Scenario 2 的 runAsUser: 0 互斥。文档
+#     gateways/gateway-installation/linux-kernel-compatibility-notice.mdx 明确要求
+#     这种场景下网关命名空间使用 Baseline 或更低的 profile,这里按文档结论对齐环境。
+relax_psa_for_root_gateway() {
+    [ "${ENABLE_GW_LINUX_KERNEL_COMPAT:-false}" = "true" ] || return 0
+    local ns="$1" run_as_root="${2:-true}" ctx="${3:-}"
+    [ "$run_as_root" = "true" ] || return 0
+    if [ -z "$ns" ]; then
+        log_error "relax_psa_for_root_gateway: 用法 <namespace> [run_as_root] [context]"
+        return 1
+    fi
+    local kargs=(kubectl); [ -n "$ctx" ] && kargs+=(--context "$ctx")
+
+    # 命名空间没打 enforce 标签时无需放宽(默认即 privileged)
+    local current
+    current=$("${kargs[@]}" get namespace "$ns" \
+        -o jsonpath='{.metadata.labels.pod-security\.kubernetes\.io/enforce}' 2>/dev/null)
+    [ "$current" = "restricted" ] || return 0
+
+    log_warn "内核兼容(root)与 Restricted PSA 互斥,将命名空间 $ns 的 enforce 放宽为 baseline"
+    "${kargs[@]}" label namespace "$ns" pod-security.kubernetes.io/enforce=baseline --overwrite || {
+        log_error "放宽命名空间 $ns 的 PSA enforce 失败"
+        return 1
+    }
+    return 0
+}
+
 # 通过 gateway injection 安装网关 (installing-a-gateway-via-injection.mdx)
 # 用法: install_gateway_via_injection <gateway_name> <gateway_namespace> [run_as_root=true] [context]
 # 说明:
@@ -298,6 +330,9 @@ reconcile_injected_gateway_runasroot() {
     fi
     local kargs=(kubectl); [ -n "$ctx" ] && kargs+=(--context "$ctx")
 
+    # 以 root 运行与 Restricted PSA 互斥,先按文档把命名空间放宽到 baseline
+    relax_psa_for_root_gateway "$ns" "$run_as_root" "$ctx" || return 1
+
     log_info "内核兼容(root): 修正注入网关 Deployment $dep 的 istio-proxy runAsNonRoot=false (ns=$ns)"
     # 策略合并 (默认 strategic): 按容器名 istio-proxy 合并，仅改 runAsNonRoot，保留其余 securityContext 字段；
     # patch 触发滚动更新，新副本以一致的 securityContext 重新注入后即可被准入。
@@ -322,6 +357,9 @@ apply_kernel_compat_k8s_gateway_api() {
     local kargs=(kubectl); [ -n "$ctx" ] && kargs+=(--context "$ctx")
 
     log_info "K8s Gateway API 内核兼容: ns=$ns gw=$gw_name run_as_root=$run_as_root${ctx:+ context=$ctx}"
+
+    # 0. Scenario 2 让网关以 root 运行,与 Restricted PSA 互斥,先按文档把命名空间放宽到 baseline
+    relax_psa_for_root_gateway "$ns" "$run_as_root" "$ctx" || return 1
 
     # 1. asm-kube-gateway-options ConfigMap (幂等)
     local cm_block cm_yaml

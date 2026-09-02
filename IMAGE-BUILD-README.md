@@ -66,8 +66,7 @@ Harbor 账号对目标项目/仓库的 push 权限，不要另建同名但内容
 | 分支 | 产出的 tag |
 | --- | --- |
 | `main` | `latest`、`main-<短 commit>` |
-| `release-mesh-x.y`（已登记） | `release-<ACP大版本>`、`release-mesh-x.y-<短 commit>` |
-| `release-mesh-x.y`（未登记） | 构建失败 |
+| `release-mesh-x.y` | `release-mesh-x.y-<短 commit>` |
 | 其余特性分支 | 只有 `<净化后的分支名>-<短 commit>`，无浮动 tag |
 
 分支名净化：非 `[A-Za-z0-9_.-]` 换成 `-`，去掉开头的 `.` 与 `-`，截断到 120 字符。

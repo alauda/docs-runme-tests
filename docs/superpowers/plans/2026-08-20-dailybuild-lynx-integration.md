@@ -19,7 +19,7 @@
 - **`CASE_TYPE` 语法**：只支持 `and` 连接的合取式与 `not` 取反；出现 `or` 必须报错退出。
 - **保留标签 `always`**：带该标签的 Case 恒被选中，不参与表达式求值。
 - **skip 前缀**：环境不支持 → `[env] `；预期不测试 → `[expected] `。
-- **镜像 tag 规则**：`main` → `latest` + `main-<短 commit>`；`release-mesh-2.x` → `release-<ACP 大版本>` + `<branch>-<短 commit>`。
+- **镜像 tag 规则**：`main` → `latest` + `main-<短 commit>`；其他分支（包括 `release-mesh-2.x`）→ `<branch>-<短 commit>`。
 - **镜像仓库**：`build-harbor.alauda.cn/asm/docs-runme-tests`。
 - **单测必须不依赖集群与平台**：新增单测一律用伪造的 `kubectl` / `runme` / `allure`。
 - **提交规范**：不使用 `git commit --amend`；提交信息不含 `Co-Authored-By` 与 `Claude-Session`。
@@ -2919,7 +2919,6 @@ git commit -m "feat: 编排 Case 打标签、egress 门控与 case_id 清单
 **Files:**
 - Create: `Dockerfile`
 - Create: `.dockerignore`
-- Create: `lynx/release-matrix.tsv`
 - Modify: `README.md`（新增「构建测试镜像」章节）
 
 **Interfaces:**
@@ -2927,7 +2926,6 @@ git commit -m "feat: 编排 Case 打标签、egress 门控与 case_id 清单
 - Produces:
   - 镜像内 `/app/docs-runme-tests/.image-info`：`RUNME_VERSION` / `DOCS_TEST_IMAGE_TAG` / `MESH_DOCS_REF` / `OTEL_DOCS_REF` / `TRACING_DOCS_REF`
   - `/usr/local/bin/docs-test` → `lynx/entrypoint.sh` 的软链
-  - `lynx/release-matrix.tsv`：两列 TSV，`<docs-runme-tests 分支><TAB><ACP 大版本>`
 
 - [ ] **Step 1: 写 `.dockerignore`**
 
@@ -2946,16 +2944,7 @@ docs/superpowers
 
 > 注意 `bin/` 与 `assets/` 必须排除：它们是本机产物（可能是 macOS 二进制），镜像内要重新下载 Linux 版。
 
-- [ ] **Step 2: 写 `lynx/release-matrix.tsv`**
-
-```
-# docs-runme-tests 分支 → ACP 大版本，供构建流水线决定 release tag
-# main 不在此表内，固定出 latest
-release-mesh-2.2	4.5
-release-mesh-2.1	4.4
-```
-
-- [ ] **Step 3: 写 `Dockerfile`**
+- [ ] **Step 2: 写 `Dockerfile`**
 
 ```dockerfile
 # 文档自动化测试镜像
@@ -3088,7 +3077,7 @@ WORKDIR /app/docs-runme-tests
 ENTRYPOINT ["/app/docs-runme-tests/lynx/entrypoint.sh"]
 ```
 
-- [ ] **Step 4: 本地构建镜像**
+- [ ] **Step 3: 本地构建镜像**
 
 ```bash
 docker build \
@@ -3103,7 +3092,7 @@ docker build \
 
 > 若文档仓库是私有仓库，clone 会失败，加 `--build-arg GIT_TOKEN=<只读 token>` 重试。
 
-- [ ] **Step 5: 验证镜像内的自包含性与入口**
+- [ ] **Step 4: 验证镜像内的自包含性与入口**
 
 ```bash
 # 用法提示
@@ -3138,7 +3127,7 @@ docker run --rm --entrypoint bash docs-runme-tests:local-dev -c '
 
 预期：用法提示正确；三个文档仓库各有测试脚本；资产 17 个；`.image-info` 五个字段齐全；所有单测 `PASS`。
 
-- [ ] **Step 6: 验证离线运行（断网跑到「连不上平台」为止）**
+- [ ] **Step 5: 验证离线运行（断网跑到「连不上平台」为止）**
 
 ```bash
 docker run --rm --network none \
@@ -3162,7 +3151,7 @@ docker run --rm --network none \
 
 预期：打印出 `index.html` 路径与一个含 `broken` 的 result.json。
 
-- [ ] **Step 7: 更新 README，新增构建章节**
+- [ ] **Step 6: 更新 README，新增构建章节**
 
 在 `README.md` 的「在 lynx / dailybuild 中运行」章节之前插入：
 
@@ -3183,16 +3172,16 @@ docker build \
 文档引用的 17 个外部 sample YAML 按 `lynx/assets-manifest.tsv` 落到 `assets/`。
 构建期会跑 `lynx/check-manifest.sh` 与 `lynx/check-case-ids.sh`，任一不通过即构建失败。
 
-tag 规则：`main` → `latest` + `main-<短 commit>`；`release-mesh-2.x` → 按
-`lynx/release-matrix.tsv` 映射到 `release-<ACP 大版本>` + `<branch>-<短 commit>`。
+tag 规则：`main` → `latest` + `main-<短 commit>`；`release-mesh-2.x` →
+`release-mesh-2.x-<短 commit>`。
 
 文档仓库若为私有仓库，构建时加 `--build-arg GIT_TOKEN=<只读 token>`。
 ```
 
-- [ ] **Step 8: 提交**
+- [ ] **Step 7: 提交**
 
 ```bash
-git add Dockerfile .dockerignore lynx/release-matrix.tsv README.md
+git add Dockerfile .dockerignore README.md
 git commit -m "feat: 测试镜像 Dockerfile
 
 - ubuntu:22.04 基础镜像 + kubectl / jq / openssl / JRE + allure CLI 2.24.1
@@ -3207,10 +3196,9 @@ git commit -m "feat: 测试镜像 Dockerfile
 
 **Files:**
 - Create: `.tekton/image-build.yaml`
-- Modify: `lynx/release-matrix.tsv`（补注释说明流水线怎么用它）
 
 **Interfaces:**
-- Consumes: `Dockerfile`、`lynx/release-matrix.tsv`（Task 10）
+- Consumes: `Dockerfile`、`lynx/compute-tags.sh`（Task 10）
 - Produces: 推送到 `build-harbor.alauda.cn/asm/docs-runme-tests` 的镜像
 
 > 参照仓库：`../servicemesh2-docs/.tekton/doc-build.yaml` 是同一套 PaC 约定的现成样例，
@@ -3291,20 +3279,12 @@ branch="${1:?用法: compute-tags.sh <branch> <commit>}"
 commit="${2:?用法: compute-tags.sh <branch> <commit>}"
 short="${commit:0:7}"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MATRIX="$SCRIPT_DIR/release-matrix.tsv"
-
 if [ "$branch" = "main" ]; then
     printf 'latest,main-%s\n' "$short"
     exit 0
 fi
 
-acp_version="$(awk -F'\t' -v b="$branch" '!/^#/ && $1 == b {print $2; exit}' "$MATRIX")"
-if [ -z "$acp_version" ]; then
-    printf '错误: 分支 %s 未在 %s 中登记对应的 ACP 大版本\n' "$branch" "$MATRIX" >&2
-    exit 1
-fi
-printf 'release-%s,%s-%s\n' "$acp_version" "$branch" "$short"
+printf '%s-%s\n' "$branch" "$short"
 ```
 
 本地验证：
@@ -3316,7 +3296,7 @@ bash lynx/compute-tags.sh release-mesh-2.2 abcdef1234567890
 bash lynx/compute-tags.sh release-mesh-9.9 abcdef1234567890; echo "rc=$?"
 ```
 
-预期依次输出：`latest,main-abcdef1`、`release-4.5,release-mesh-2.2-abcdef1`、未登记分支报错且 `rc=1`。
+预期依次输出：`latest,main-abcdef1`、`release-mesh-2.2-abcdef1`、`release-mesh-9.9-abcdef1`。
 
 - [ ] **Step 4: 触发一次构建并确认镜像可拉**
 
@@ -3337,11 +3317,11 @@ docker inspect build-harbor.alauda.cn/asm/docs-runme-tests:latest \
 - [ ] **Step 5: 提交**
 
 ```bash
-git add .tekton/image-build.yaml lynx/compute-tags.sh lynx/release-matrix.tsv
+git add .tekton/image-build.yaml lynx/compute-tags.sh
 git commit -m "ci: 新增镜像构建流水线
 
 - .tekton/image-build.yaml：push main / release-mesh-* 或评论 /image-build 触发
-- lynx/compute-tags.sh：main→latest，release-mesh-x.y→按 release-matrix 映射 release-<ACP>
+- lynx/compute-tags.sh：main→latest，其他分支按分支名生成短 commit tag
 - 镜像推送到 build-harbor.alauda.cn/asm/docs-runme-tests"
 ```
 
@@ -3642,7 +3622,7 @@ git diff --stat
 | §6.2 TestTemplate 增量 | Task 12 Step 3 |
 | §6.3 Release YAML 增量 | Task 12 Step 4 |
 | §7.3 退出码 / `EXIT_ON_TEST_FAILURE` | Task 3 Step 5、Task 8 Step 3 |
-| §7.4 报告缺失的防御 | Task 8 Step 5（`trap _emergency_report`）、Task 10 Step 6（实测） |
+| §7.4 报告缺失的防御 | Task 8 Step 5（`trap _emergency_report`）、Task 10 Step 5（实测） |
 | §8.1 规范偏离说明 | Task 12 Step 6（写进 MR 描述） |
 | §9 case_id 编号规则 | Task 9 Step 1、2 |
 | §10 交付阶段 1–4 | Task 1–9 / 10 / 11 / 12 |
@@ -3663,5 +3643,4 @@ git diff --stat
 - `allure_emit_results` / `allure_emit_broken` / `allure_write_environment` / `allure_write_categories` / `allure_generate` / `allure_finalize` → Task 3 定义，Task 8 的 `_emergency_report` 消费其中四个，名称一致。
 - `fetch_url_content` / `rewrite_urls_to_assets` / `runme_run_with_assets` → Task 4 定义，Task 4 Step 6（`kubectl_apply_with_mirror`）与 Task 5（9 处调用点）消费，一致。
 - `_operator_csv_from_packagemanifest` → Task 6 定义并在同任务的 `install_operator` 中消费，一致。
-- `.image-info` 的五个变量名 → Task 10 Step 3 写入、Task 8 Step 3 读取，一致。
-
+- `.image-info` 的五个变量名 → Task 10 Step 2 写入、Task 8 Step 3 读取，一致。

@@ -127,7 +127,7 @@ test_manifest_wellformed() {
     printf '\n== lynx/assets-manifest.tsv 格式 ==\n'
     local f="$FRAMEWORK_ROOT/lynx/assets-manifest.tsv"
     check_eq "清单存在" "$([ -f "$f" ] && echo yes || echo no)" "yes"
-    check_eq "17 条记录" "$(grep -cE '^https?://' "$f")" "17"
+    check_eq "16 条记录" "$(grep -cE '^https?://' "$f")" "16"
     check_eq "每行恰好两列" "$(awk -F'\t' '/^https?:\/\// && NF != 2 {c++} END {print c+0}' "$f")" "0"
     check_eq "路径无重复"   "$(awk -F'\t' '/^https?:\/\//{print $2}' "$f" | sort | uniq -d | wc -l | tr -d ' ')" "0"
     check_eq "URL 无重复"   "$(awk -F'\t' '/^https?:\/\//{print $1}' "$f" | sort | uniq -d | wc -l | tr -d ' ')" "0"

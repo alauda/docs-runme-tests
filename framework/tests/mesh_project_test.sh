@@ -64,8 +64,59 @@ test_fetch_platform_ca_fallback_stdout_is_pure() {
     rm -rf "$sandbox"
 }
 
+test_relax_psa_for_root_gateway() {
+    printf '\n== relax_psa_for_root_gateway 门控与放宽行为 ==\n'
+
+    local calls_file
+    calls_file="$(mktemp)"
+
+    # 桩 kubectl：记录调用，并按 PSA_LABEL 返回命名空间当前的 enforce 值
+    kubectl() {
+        printf '%s\n' "$*" >> "$calls_file"
+        case "$*" in
+            *"jsonpath="*) printf '%s' "${PSA_LABEL:-}" ;;
+        esac
+        return 0
+    }
+
+    # 1) 门控关闭 → no-op
+    : > "$calls_file"
+    ENABLE_GW_LINUX_KERNEL_COMPAT=false PSA_LABEL=restricted \
+        relax_psa_for_root_gateway bookinfo true >/dev/null 2>&1
+    check_eq "门控关闭时不调用 kubectl" "$(wc -l < "$calls_file" | tr -d ' ')" "0"
+
+    # 2) 门控开启但非 root → no-op
+    : > "$calls_file"
+    ENABLE_GW_LINUX_KERNEL_COMPAT=true PSA_LABEL=restricted \
+        relax_psa_for_root_gateway bookinfo false >/dev/null 2>&1
+    check_eq "非 root 时不调用 kubectl" "$(wc -l < "$calls_file" | tr -d ' ')" "0"
+
+    # 3) 门控开启 + root + 命名空间为 restricted → 放宽为 baseline
+    : > "$calls_file"
+    ENABLE_GW_LINUX_KERNEL_COMPAT=true PSA_LABEL=restricted \
+        relax_psa_for_root_gateway bookinfo true >/dev/null 2>&1
+    check_contains "restricted 时放宽为 baseline" "$(cat "$calls_file")" \
+        "label namespace bookinfo pod-security.kubernetes.io/enforce=baseline --overwrite"
+
+    # 4) 门控开启 + root，但命名空间没打 enforce 标签 → 只查询不改标签
+    : > "$calls_file"
+    ENABLE_GW_LINUX_KERNEL_COMPAT=true PSA_LABEL= \
+        relax_psa_for_root_gateway bookinfo true >/dev/null 2>&1
+    check_eq "无 enforce 标签时不改标签" "$(grep -c 'label namespace' "$calls_file" | tr -d ' ')" "0"
+
+    # 5) 多集群：传入 context 时注入 --context
+    : > "$calls_file"
+    ENABLE_GW_LINUX_KERNEL_COMPAT=true PSA_LABEL=restricted \
+        relax_psa_for_root_gateway sample true cluster1 >/dev/null 2>&1
+    check_contains "带 context 时注入 --context" "$(cat "$calls_file")" "--context cluster1 label namespace sample"
+
+    unset -f kubectl
+    rm -f "$calls_file"
+}
+
 main() {
     test_fetch_platform_ca_fallback_stdout_is_pure
+    test_relax_psa_for_root_gateway
     printf '\n==================================\n'
     printf '通过: %d  失败: %d\n' "$T_PASS" "$T_FAIL"
     [ "$T_FAIL" -eq 0 ]

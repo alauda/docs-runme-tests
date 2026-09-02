@@ -23,7 +23,7 @@
 镜像构建、Edge 流水线和 tag 规则已单独整理到
 **[IMAGE-BUILD-README.md](IMAGE-BUILD-README.md)**。
 
-发版分支规则与 mesh-v2-test-suite 版本矩阵已迁至该文档的
+发版分支规则与发版版本矩阵已迁至该文档的
 [「发新版本」](UPDATE-README.md#6-发新版本)一节。
 
 ## 目录结构
@@ -57,7 +57,6 @@ docs-runme-tests/
 │   ├── assets-manifest.tsv # 离线资产清单（外部 URL → 镜像内路径）
 │   ├── case-ids.tsv        # case_id 清单（文档 → 稳定编号）
 │   ├── docs-refs.tsv       # 三个文档仓库在镜像里使用的 ref
-│   ├── release-matrix.tsv  # 发版分支 → ACP 大版本
 │   └── check-*.sh          # 五条清单/兼容性自检（构建期强制）
 ├── .tekton/                # 镜像构建流水线（Pipelines-as-Code）
 ├── charts/

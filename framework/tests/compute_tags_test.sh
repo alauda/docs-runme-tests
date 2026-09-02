@@ -2,11 +2,9 @@
 # lynx/compute-tags.sh 单元测试（纯字符串计算，不依赖网络与集群）
 #
 # 重点覆盖两条容易写反的规则：
-#   - 特性分支要能算出 tag（否则 PR 上 /image-build 直接失败，四仓联合改动没法在
-#     合入前验证），但**不能**带 latest / release-<x> 这类浮动 tag（否则会覆盖
-#     dailybuild 正在用的镜像）
-#   - release-mesh-* 形状却没登记进 release-matrix.tsv 时必须报错，不能降级成
-#     特性分支 tag —— 那样发版镜像会缺 release-<ACP大版本> 这个被真正引用的 tag
+#   - 特性分支和发版分支都要能算出 tag（否则 PR 上 /image-build 直接失败，四仓联合
+#     改动没法在合入前验证），但不能带浮动 tag
+#   - 分支名中的斜杠等非法字符必须被净化，且净化后为空时要报错
 #
 # 用法: bash framework/tests/compute_tags_test.sh
 set -u
@@ -42,19 +40,15 @@ test_main_branch() {
     check_eq "tag 列表" "${OUT}" "latest,main-615f797"
 }
 
-test_registered_release_branch() {
-    printf '\n== 已登记的 release 分支出 release-<ACP大版本> + 分支 tag ==\n'
+test_release_branch_gets_only_scoped_tag() {
+    printf '\n== release 分支只出分支短 commit tag ==\n'
     tags_of release-mesh-2.2
     check_eq "rc=0" "${RC}" "0"
-    check_eq "tag 列表" "${OUT}" "release-4.5,release-mesh-2.2-615f797"
-}
+    check_eq "tag 列表" "${OUT}" "release-mesh-2.2-615f797"
 
-test_unregistered_release_branch_fails() {
-    printf '\n== release-mesh-* 形状但未登记 -> 必须报错，不能降级 ==\n'
     tags_of release-mesh-99.9
-    check_eq "rc=1" "${RC}" "1"
-    check_eq "错误信息提到 release-matrix.tsv" \
-        "$(printf '%s' "${OUT}" | grep -c 'release-matrix.tsv')" "1"
+    check_eq "未登记版本的 release 分支也可构建" "${RC}" "0"
+    check_eq "未登记版本只出分支 tag" "${OUT}" "release-mesh-99.9-615f797"
 }
 
 test_feature_branch_gets_only_scoped_tag() {
@@ -64,7 +58,7 @@ test_feature_branch_gets_only_scoped_tag() {
     check_eq "斜杠被净化成短横，只有一个 tag" \
         "${OUT}" "feat-dailybuild-lynx-integration-615f797"
     check_eq "不含 latest" "$(printf '%s' "${OUT}" | grep -c 'latest')" "0"
-    check_eq "不含 release- 前缀的浮动 tag" \
+    check_eq "不含数字 release 前缀的浮动 tag" \
         "$(printf '%s' "${OUT}" | grep -c '^release-[0-9]')" "0"
 }
 
@@ -85,8 +79,7 @@ test_empty_after_sanitize_fails() {
 
 main() {
     test_main_branch
-    test_registered_release_branch
-    test_unregistered_release_branch_fails
+    test_release_branch_gets_only_scoped_tag
     test_feature_branch_gets_only_scoped_tag
     test_leading_punctuation_stripped
     test_empty_after_sanitize_fails

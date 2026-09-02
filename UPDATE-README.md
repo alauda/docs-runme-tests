@@ -231,7 +231,7 @@ lynx 上跑时**所有 `PKG_*_URL` 都不设置**，框架进 verify-only 模式
    ```
 
 2. 在 PR 上评论 `/image-build`。特性分支会得到 `<净化后的分支名>-<短 commit>` 这个专属 tag，
-   **不会**产出 `latest` / `release-<x>` 这类浮动 tag，不污染 dailybuild 正在用的镜像。
+   **不会**产出 `latest` 这类浮动 tag，不污染 dailybuild 正在用的镜像。
 3. 用那个 tag 在测试环境真跑一遍。
 4. 合入顺序：**文档仓库的 PR 先合** → 回本仓库把 `docs-refs.tsv` 改回主干分支名 → 本仓库 PR 合入。
 5. 合入后 push 到 `main` 会自动触发构建，产出 `latest`。
@@ -250,36 +250,26 @@ commit SHA，镜像内也可以直接 `cat /app/docs-runme-tests/.image-info`。
 > mesh、OTel 和 Tracing 会同时发版，所以只创建 mesh 发版分支。
 > mesh 2.1 对应 OTel 2.0 和 Tracing 2.0，以此类推。
 
-### 6.2 登记 release-matrix.tsv —— **必做，否则构建报错**
-
-`lynx/release-matrix.tsv` 两列 TAB 分隔 `<branch><TAB><acp_version>`：
-
-```
-release-mesh-2.2	4.5
-release-mesh-2.1	4.4
-```
-
-`release-mesh-*` 形状的分支**没登记就直接构建失败**（rc=1），不会降级成特性分支 tag——
-那样发版镜像会缺 `release-<ACP大版本>` 这个 dailybuild 真正引用的浮动 tag。
-
-### 6.3 同步 .tekton 的分支白名单
+### 6.2 同步 .tekton 的分支白名单
 
 `.tekton/image-build.yaml` 的 `on-cel-expression` 里 `source_branch.matches(...)` 正则
-必须覆盖新分支。两处（矩阵 + 正则）的分支集合要一致，否则会出现
-"能触发构建但 tag 算不出来"或反过来"登记了却触发不了"。
+必须覆盖新分支，否则会出现新分支无法自动触发构建的问题。
 
-现有正则已覆盖 `release-mesh-<x.y>` 通配，通常只需要改矩阵；改成别的命名形状时才要动正则。
+现有正则已覆盖 `release-mesh-<x.y>` 通配；改成别的命名形状时才要动正则。
 
-### 6.4 mesh-v2-test-suite 矩阵
+### 6.3 发版版本矩阵
 
-| docs-runme-tests 分支 | mesh-v2-test-suite 版本 |
-| --------------------- | ----------------------- |
-| release-mesh-2.1      | v1.0.x                  |
-| release-mesh-2.2      | v2.2.x-rN               |
+| docs-runme-tests 分支 | ACP 版本 | mesh-v2-test-suite 版本 |
+| --------------------- | -------- | ----------------------- |
+| release-mesh-2.1      | 4.4      | v1.0.x                  |
+| release-mesh-2.2      | 4.5      | v2.2.x-rN               |
+
+以后新增或升级发版版本只维护这张表；表中的 ACP 版本和
+`mesh-v2-test-suite` 版本分别用于对应的发版配置与插件上架。
 
 打包与上架方式见 [Chart 说明](charts/mesh-v2-test-suite/README.md)。
 
-### 6.5 ACP 大版本变了
+### 6.4 ACP 大版本变了
 
 `apt-test/release-config` 里要新建 `enviroments/<新版本>/` 与 `tests/<新版本>/` 目录，
 把 `dailybuild_mircos_g1.yaml` 的 asm 相关部分（两个 region、两个 initials、四个 tests）
@@ -326,7 +316,7 @@ release-mesh-2.1	4.4
 | 文档块改用 `runme_run_with_assets` | `lynx/docs-refs.tsv` 指到文档特性分支 | `/image-build` 出镜像真跑 |
 | 升级 runme/allure/kubectl | `Dockerfile` 的 ARG、重建镜像 | 构建期版本断言 |
 | 升级 istio | 只改文档、重建镜像 | 构建期 istioctl 版本断言 |
-| 新增发版分支 | `release-matrix.tsv`、`.tekton` 分支正则 | `compute_tags_test.sh` |
+| 新增发版分支 | 本节发版版本矩阵；`.tekton` 分支正则（命名形状变化时） | `compute_tags_test.sh` |
 | 新增 L5 插件包 | release-config 的 `l5_plugin_packages` | verify-only 的未上架报错 |
 | 改任何 `.sh` | —— | `check-shell-compat.sh` + 全量单测 |
 | 改 `Dockerfile` 的 `ENV` / 装包列表 | —— | `check-runtime-shell.sh`（构建期自动跑） |

@@ -1,6 +1,6 @@
 # docs-runme-tests 镜像构建流水线（Pipelines-as-Code）
 #
-# 依赖：仓库根 Dockerfile、lynx/release-matrix.tsv、lynx/compute-tags.sh、lynx/docs-refs.tsv。
+# 依赖：仓库根 Dockerfile、lynx/compute-tags.sh、lynx/docs-refs.tsv。
 # 产物：推送到 build-harbor.alauda.cn/asm/docs-runme-tests 的镜像。
 #
 # 触发：
@@ -33,7 +33,7 @@ metadata:
     pipelinesascode.tekton.dev/on-comment: "^(/image-build)$"
     pipelinesascode.tekton.dev/cancel-in-progress: "true"
     pipelinesascode.tekton.dev/max-keep-runs: "10"
-    # 分支白名单需与 lynx/release-matrix.tsv 的登记集合保持一致。
+    # 分支白名单与 release-mesh 分支命名规则保持一致。
     pipelinesascode.tekton.dev/on-cel-expression: |-
       (
         event == "push" &&

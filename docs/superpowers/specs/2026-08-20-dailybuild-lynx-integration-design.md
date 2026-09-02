@@ -31,7 +31,7 @@
 | D1 | lynx 中按项目拆 **3 个测试项**：`docs-mesh` / `docs-otel` / `docs-tracing`，用 `order` 串行 |
 | D2 | 镜像由 **Tekton PaC** 构建并推到 **build-harbor.alauda.cn 的 ASM 命名空间** |
 | D3 | 三个文档仓库在**构建时按 ref clone** 进镜像 |
-| D4 | tag 规则：`main` → `latest`，`release-mesh-2.x` → `release-<ACP 大版本>` |
+| D4 | tag 规则：`main` → `latest`，`release-mesh-2.x` → `<branch>-<短 commit>` |
 | D5 | 首批范围：otel 全部 + tracing Elasticsearch 链 + mesh Case 1/3/5；升级类与多集群类稳定后再放开 |
 | D6 | Elasticsearch 由 **EnvironmentTemplate 的 `log_storage`** 部署在业务集群 1，框架只读 `Feature` CR |
 | D7 | 插件包全部由 **dailybuild 预上架**，框架侧改为「只校验不下载不上架」 |
@@ -121,9 +121,9 @@
 | 分支 | tag |
 | --- | --- |
 | `main` | `latest` + `main-<短 commit>` |
-| `release-mesh-2.x` | `release-<ACP 大版本>` + `<branch>-<短 commit>` |
+| `release-mesh-2.x` | `<branch>-<短 commit>` |
 
-mesh 版本与 ACP 大版本的对应关系维护在 `lynx/release-matrix.tsv`（两列：`docs-runme-tests 分支` / `ACP 大版本`），构建脚本读取它决定 tag。这是 D4 要求的映射表的落地位置。
+mesh 版本与 ACP 版本的对应关系维护在 `UPDATE-README.md` 的发版版本矩阵中；该表用于发版配置与插件上架，不参与镜像 tag 计算。
 
 ### 5.2 lynx 适配层
 
@@ -460,7 +460,7 @@ lynx 的已知故障模式是「测试任务被杀 → 留下空的 allure 报�
 | 阶段 | 内容 | 可验证点 |
 | --- | --- | --- |
 | 1 | 框架侧：allure 后端、`lynx/` 适配层、CASE_TYPE 过滤与 Case 标签、离线资产、verify-only 插件模式、地址池所有权、skip 二分类、`case-ids.tsv` | `framework/tests/*.sh` 全绿（含新增的 allure / case-filter / verify-only 单测）；本地不设任何 `PKG_*_URL` 跑通一条完整链 |
-| 2 | `Dockerfile` + `.tekton/image-build.yaml` + `release-matrix.tsv` | 镜像可拉；开发机 `docker run` 执行 `docs-test tracing` 跑通并产出可打开的 allure 报告 |
+| 2 | `Dockerfile` + `.tekton/image-build.yaml` | 镜像可拉；开发机 `docker run` 执行 `docs-test tracing` 跑通并产出可打开的 allure 报告 |
 | 3 | 独立 `EnvironmentTemplate` + `ReleaseTestPlan` 天翼云自测 | idp 上一次绿色 run，allure 报告可打开，三个测试项各自出报告 |
 | 4 | 合入 `release-config` 的 dailybuild MicroOS 基准（§6） | 次日 dailybuild 出报告 |
 | 5 | 观察 2 周后逐步放开 `update` / `multicluster` / `ha` | 只改 `CASE_TYPE` 与 `timeout`，不改代码 |
@@ -480,7 +480,7 @@ lynx 的已知故障模式是「测试任务被杀 → 留下空的 allure 报�
 
 **docs-runme-tests**
 
-- 新增：`Dockerfile`、`.tekton/image-build.yaml`、`lynx/{entrypoint,env-adapter,case-filter,allure,check-manifest}.sh`、`lynx/{case-ids,assets-manifest,release-matrix}.tsv`、`framework/assets.sh`
+- 新增：`Dockerfile`、`.tekton/image-build.yaml`、`lynx/{entrypoint,env-adapter,case-filter,allure,check-manifest}.sh`、`lynx/{case-ids,assets-manifest}.tsv`、`framework/assets.sh`
 - 修改：`framework/report.sh`（allure 后端）、`framework/common.sh`（`install_operator` / `install_cluster_plugin` 的 verify-only、地址池所有权、`skip_test_env` / `skip_test_expected`、`case_begin` 标签参数）、`framework/tools.sh`（verify-only 分流）、`projects/*/project.sh`（`PKG_*_URL` 可选、`fetch_url_content`）、`run-*-all.sh`（Case 标签 + `case_selected` / `doctest_selected`）、`README.md`
 - 新增单测：`framework/tests/{allure_test,case_filter_test,verify_only_test}.sh`
 

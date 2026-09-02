@@ -14,7 +14,7 @@ data:
     data.otel-java-jvm-monitor-dashboard.yaml 保存配套的自定义监控面板
     （HTTP / JVM MonitorDashboard）。安装后可通过下列命令一键部署：
 
-    # 1. 创建示例命名空间
+    # 1. 创建示例命名空间（严格模式）
     kubectl create ns otelv2-java-demo
     kubectl label namespace otelv2-java-demo \
       pod-security.kubernetes.io/enforce=restricted \

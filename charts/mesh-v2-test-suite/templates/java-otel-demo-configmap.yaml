@@ -16,6 +16,11 @@ data:
 
     # 1. 创建示例命名空间
     kubectl create ns otelv2-java-demo
+    kubectl label namespace otelv2-java-demo \
+      pod-security.kubernetes.io/enforce=restricted \
+      pod-security.kubernetes.io/audit=restricted \
+      pod-security.kubernetes.io/warn=restricted \
+      --overwrite
 
     # 2. 部署 Instrumentation（OTel javaagent 注入配置）
     kubectl get cm {{ include "mesh-v2-test-suite.name" . }}-java-otel-demo -n {{ .Values.global.namespace }} -o jsonpath='{.data.java-instrumentation\.yaml}' | kubectl apply -n otelv2-java-demo -f -

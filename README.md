@@ -138,6 +138,13 @@ export REGISTRY_MIRROR_ADDRESS=docker-mirrors.alauda.cn
 # ── 测试行为开关（mesh，可选）────────────────────────────────
 export IS_DUAL_STACK=false
 export AUTO_GEN_BOOKINFO_TRAFFIC=true
+# Kiali 监控功能验证（默认 false）：开启后 kiali 用例在装完 Kiali 之后额外验证「监控真的能用」——
+# 用平台账号经 dex 换 Kiali 会话，再断言 /api/istio/status 的 istiod / prometheus 为 Healthy
+# （已对接调用链平台时 tracing 也必须 Healthy），以及 /api/namespaces/graph 能算出 bookinfo
+# 命名空间速率大于 0 的边。sidecar 模式看 http 边、ambient 模式看 ztunnel 的 tcp 边，两种模式都支持。
+# 依赖 bookinfo 已部署（Case 3 / Case 5 的编排里 kiali 用例就在 bookinfo 之后），
+# 命名空间可用 KIALI_VERIFY_NAMESPACE 覆盖（默认 bookinfo）。
+export KIALI_VERIFY_MONITORING=false
 # 网关内核兼容（仅内核 < 4.11/CentOS7 需要，默认 false）：开启后网关按 Linux 内核兼容处理——
 # 高端口网关（东西向 / waypoint）走 Scenario 1（去 sysctls），特权端口网关（监听 80 的 ingress/egress）走 Scenario 2（+ NET_BIND_SERVICE + root）
 export ENABLE_GW_LINUX_KERNEL_COMPAT=false
@@ -222,6 +229,15 @@ export TRACING_TELEMETRYGEN_TEST_DURATION_1=30s
 export TRACING_TELEMETRYGEN_TEST_DURATION_2=130s
 # 是否测试 SPM (Service Performance Monitoring) 章节（可选，需 ACP monitoring）
 export TRACING_TEST_SPM=true
+# 调用链查询验证（默认 false）：开启后两篇安装测试在 telemetrygen 之后额外验证「调用链真能查到」——
+# 走 ACP 的 Service 代理（不经 Jaeger Ingress 与 oauth2-proxy）依次查 Jaeger v3 Query API 的
+# /services、/operations、/trace-summaries，断言窗口内至少有 2 条调用链；不够就整轮重试。
+# 先按服务名 jaeger 查（Jaeger 自身的调用链，跳过 telemetrygen 时也一定有），真跑过
+# telemetrygen 时再按服务名 telemetrygen 查一次（业务侧 span 的完整通路）；SPM 章节重新
+# 部署 telemetrygen 之后还会再验一次（那次 patch 重启过 Jaeger 并改了 Collector 路由）。
+# 默认服务名可用 TRACING_VERIFY_TRACE_SERVICE 覆盖，条数门槛用 TRACING_VERIFY_TRACE_MIN_COUNT
+# （默认 2）；重试与窗口见 projects/tracing/trace-query.sh。
+export TRACING_VERIFY_TRACE_QUERY=false
 ```
 
 **通用必需变量**（引擎 `check_env` 校验）：`RUNME_VERSION` `PLATFORM_ADDRESS` `PLATFORM_USERNAME` `PLATFORM_PASSWORD`。`ACP_API_TOKEN` 为可选（见下节）。
@@ -373,6 +389,18 @@ docker build --build-arg IMAGE_TAG=local-dev -t docs-runme-tests:local-dev .
 `ACP_KUBECONFIG_MODE=direct`、`AUTO_GEN_BOOKINFO_TRAFFIC=true`、`ENABLE_GW_LINUX_KERNEL_COMPAT=false`、
 `RESOURCE_PREFIX`。所有 `PKG_*_URL` **不设置**（verify-only，见上文）。
 
+`KIALI_VERIFY_MONITORING` 可选（默认 `false`）：置 `true` 后 mesh Case 3 / Case 5 的 kiali 用例
+会额外验证 Kiali 的监控功能真的可用，需要模板已提供平台账号密码（框架必需项，本就有）。
+
+`TRACING_VERIFY_TRACE_QUERY` 可选（默认 `false`）：置 `true` 后 tracing 的两篇安装测试会额外
+验证调用链真能查到。它用的 ACP token 由引擎按平台账号密码自动换取（框架必需项，本就有），
+不需要模板再配任何东西。
+
+mesh Case 3 / Case 5 里调用链平台的装 / 卸两步走 OpenSearch 链（DocTest 标签 `opensearch`）。
+`docs-mesh` 现有的 `CASE_TYPE` 选不中它，模板不必配任何 OpenSearch 变量；将来要放开，
+被测业务集群得满足 TopoLVM 的前提（至少 3 个节点、各节点有空闲裸盘），
+`TRACING_*` / `PKG_*` 按上文「分布式调用链测试专用」补齐即可（留空即 verify-only）。
+
 报告产物：`$TEST_RESULT_DIR/allure-result/` 与 `$TEST_RESULT_DIR/allure-report/`。
 用例粒度为一篇文档的一次执行（DocTest），Case 作为 allure suite 分组。
 
@@ -405,7 +433,7 @@ docker build --build-arg IMAGE_TAG=local-dev -t docs-runme-tests:local-dev .
 DocTest 级标签有两个：
 
 - `egress`（mesh Case 3 / 5 中的三篇 `routing-egress-traffic-*`）
-- `elasticsearch`（mesh Case 3 中的调用链平台装 / 卸两步）
+- `opensearch`（mesh Case 3 / 5 中的调用链平台装 / 卸两步）
 
 dailybuild 目前开了四个测试项：`docs-mesh` / `docs-otel` / `docs-tracing` 用
 `CASE_TYPE="smoke and not egress and not elasticsearch"`，`docs-mesh-multicluster` 单独用
@@ -419,8 +447,11 @@ dailybuild 目前开了四个测试项：`docs-mesh` / `docs-otel` / `docs-traci
   `log_storage` 声明。这些 Case 都不带 `smoke`、都带 `elasticsearch`，且 `CASE_TYPE` 里
   额外写了 `and not elasticsearch` 双保险。环境支持后：把 `smoke` 加回 otel Case 2 与
   tracing Case 2/4，并去掉 `CASE_TYPE` 里的 `and not elasticsearch`。
-- OpenSearch（tracing Case 3/5/7）：需要业务集群各节点有空闲裸盘（TopoLVM），dailybuild 的
-  `asm-1` 未挂数据盘。环境支持后给 tracing Case 3/5 补 `smoke` 标签即可，表达式不用改。
+- OpenSearch（tracing Case 3/5/7，以及 mesh Case 3/5 里调用链平台的装 / 卸两步）：需要业务集群
+  各节点有空闲裸盘（TopoLVM），dailybuild 的 `asm-1` 未挂数据盘。环境支持后给 tracing Case 3/5
+  补 `smoke` 标签即可，表达式不用改；mesh 那两步是 DocTest 级标签 `opensearch`，`smoke and ...`
+  天然选不中（DocTest 的标签组里没有 `smoke`），要放开得把 `smoke` 一并写进那两处的
+  `doctest_selected`。
 
 因此 `docs-tracing` 测试项当前只会选中 tracing Case 1（环境初始化）——它不碰任何存储后端，
 是这个测试项唯一跑得起来的 Case；没有它该测试项一个用例都不会跑。
@@ -507,7 +538,7 @@ mesh Case 3/5 的三篇 `exposing-*` 入口网关文档、mesh Case 6/7 多集�
 | 分布式调用链 v2.0→v2.1 升级（Elasticsearch） | `./run.sh --project tracing --file upgrading-distributed-tracing-elasticsearch` |
 | 分布式调用链 v2.0→v2.1 升级（OpenSearch）    | `./run.sh --project tracing --file upgrading-distributed-tracing-opensearch`    |
 
-> Elasticsearch 安装测试默认从 `TRACING_ACP_ES_CLUSTER` 指定的 ACP 集群（默认 `global`）读取 log-center Elasticsearch 配置；将其设为空时改用 `TRACING_ES_*` 手动配置（该加载逻辑位于 Elasticsearch 安装测试脚本，不再由 `project_prepare` 全局执行）。`TRACING_INSTALL_ES=true` 且 `PKG_LOG_CENTER_URL` 非空时，步骤 0 会先把 logcenter 集群插件（Single Node 模式）自动安装到该集群——对应集群已安装过则跳过（安装逻辑见 `projects/tracing/elasticsearch.sh`）。OpenSearch 安装测试默认自动安装存储后端：`TRACING_INSTALL_OPENSEARCH=true`（默认）且 `PKG_ACP_STORAGE_OPERATOR_URL` / `PKG_TOPOLVM_OPERATOR_URL` 齐全时，步骤 0 自动安装 TopoLVM + OpenSearch（幂等）并用实际结果覆盖 `TRACING_OPENSEARCH_*`——安装用到的三个插件包（`acp-storage-operator` / `topolvm-operator` / `opensearch-operator`）都由步骤 0 先查 `ArtifactVersion` 再决定是否下载上架，已上架的跳过（`opensearch-operator` 的包 3GB 级别，重复下载代价高），地址留空即 verify-only、未预上架则报错退出——OpenSearch 的 HTTP API 与 Dashboards 各由一条 Ingress 以 `/clusters/<集群名>/opensearch[-dashboards]` 子路径暴露，`TRACING_OPENSEARCH_ENDPOINT` 取前者（平台地址 + 子路径，集群内外都可访问，不再是集群内 svc 域名）；条件不满足时降级用手动 `TRACING_OPENSEARCH_ENDPOINT/USER/PASS`，两者皆缺则该测试 SKIPPED（安装逻辑见 `projects/tracing/opensearch.sh`）。卸载测试存储无关，按 Jaeger 命名空间是否存在判定是否执行；OpenSearch/TopoLVM 作为环境级存储后端不随卸载清理。卸载测试覆盖 `uninstalling-distributed-tracing.mdx` 的「Uninstalling via the CLI」全部章节，最后一步按「(Optional) Uninstall the Alauda Build of Jaeger v2 Cluster Plugin」在 Global 集群按 label 删除该插件的 `ModuleInfo`（平台会把它重命名为 `<cluster>-<hash>`，只能按 label 定位），再回目标集群确认镜像清单 ConfigMap 已回收；`--skip-cluster-plugin` 保留该插件，`--skip-operator-and-crds` 保留 OTel Operator subscription 与 CRDs——编排脚本里的调用两个都带，供后续 case 复用。两个安装测试的步骤 1 会先按文档「Installing the Alauda Build of Jaeger v2 Cluster Plugin」CLI 章节安装 Jaeger v2 集群插件：`PKG_JAEGER_CLUSTER_PLUGIN_URL` 非空时若未上架会自动下载并 violet push 到 Global；留空则进入 verify-only 模式，要求该插件已在 Global 集群预上架，否则报错退出并提示确认 release-config 是否已声明该包；已安装则两种模式都幂等复用（两篇文档该章节内容一致，安装逻辑抽象为按 runme 前缀参数化的共享函数，见 `projects/tracing/jaeger-plugin.sh`），步骤 2 自动安装前置依赖 OpenTelemetry v2 Operator（其代码块位于 `opentelemetry-docs`）。两篇升级测试（v2.0 → v2.1）要求环境上**先有一套 v2.0 部署**（Jaeger 2.16.0 + Alauda Build of OpenTelemetry v2 Operator 0.147.0），本框架不负责搭建：脚本开头按「Jaeger 命名空间与实例存在 / 存储后端与本篇匹配 / 配置里带 v2.0 特征字段（ES 看 `use_aliases`、`use_ilm`，OpenSearch 看 `indices.spans.date_layout`）」三条做门槛，任一不满足即 `skip_test_env` 退出，不会误伤 Case 2-5 装出来的 v2.1 环境；升级完成后重复执行同样会因门槛而 SKIPPED。两篇文档 23 / 29 个代码块中有 16 个逐字节相同（集群插件安装、Operator 升级、otel Collector 配置迁移、两段 SPM patch、收尾验证），已按 runme 前缀参数化抽到 `distributed-tracing-docs/docs/en/upgrading/_upgrade-common.sh`（落点与同仓 `_spm-ha-common.sh` 一致）；差异只剩存储侧中段与两次 patch 的先后顺序——**Elasticsearch 篇先换 oauth2-proxy 镜像再打配置 patch，OpenSearch 篇必须反过来**，否则那次重启会让 v2.16 用默认的 `create_mappings=true` 覆盖掉 `jaeger-es-rollover init` 刚写的索引模板。ISM policy 的两个辅助函数（清理遗留 policy、等待 ISM 接管写索引）由 OpenSearch 安装测试与升级测试共用，位于 `projects/tracing/opensearch.sh`。两段 (Optional) SPM 章节按当前部署是否配了 spanmetrics connector 自动决定跑不跑，`TRACING_TEST_SPM=false` 可强制跳过。
+> Elasticsearch 安装测试默认从 `TRACING_ACP_ES_CLUSTER` 指定的 ACP 集群（默认 `global`）读取 log-center Elasticsearch 配置；将其设为空时改用 `TRACING_ES_*` 手动配置（该加载逻辑位于 Elasticsearch 安装测试脚本，不再由 `project_prepare` 全局执行）。`TRACING_INSTALL_ES=true` 且 `PKG_LOG_CENTER_URL` 非空时，步骤 0 会先把 logcenter 集群插件（Single Node 模式）自动安装到该集群——对应集群已安装过则跳过（安装逻辑见 `projects/tracing/elasticsearch.sh`）。OpenSearch 安装测试默认自动安装存储后端：`TRACING_INSTALL_OPENSEARCH=true`（默认）且 `PKG_ACP_STORAGE_OPERATOR_URL` / `PKG_TOPOLVM_OPERATOR_URL` 齐全时，步骤 0 自动安装 TopoLVM + OpenSearch（幂等）并用实际结果覆盖 `TRACING_OPENSEARCH_*`——安装用到的三个插件包（`acp-storage-operator` / `topolvm-operator` / `opensearch-operator`）都由步骤 0 先查 `ArtifactVersion` 再决定是否下载上架，已上架的跳过（`opensearch-operator` 的包 3GB 级别，重复下载代价高），地址留空即 verify-only、未预上架则报错退出——OpenSearch 的 HTTP API 与 Dashboards 各由一条 Ingress 以 `/clusters/<集群名>/opensearch[-dashboards]` 子路径暴露，`TRACING_OPENSEARCH_ENDPOINT` 取前者（平台地址 + 子路径，集群内外都可访问，不再是集群内 svc 域名）；条件不满足时降级用手动 `TRACING_OPENSEARCH_ENDPOINT/USER/PASS`，两者皆缺则该测试 SKIPPED（安装逻辑见 `projects/tracing/opensearch.sh`）。卸载测试存储无关，按 Jaeger 命名空间是否存在判定是否执行；OpenSearch/TopoLVM 作为环境级存储后端不随卸载清理。卸载测试覆盖 `uninstalling-distributed-tracing.mdx` 的「Uninstalling via the CLI」全部章节，最后一步按「(Optional) Uninstall the Alauda Build of Jaeger v2 Cluster Plugin」在 Global 集群按 label 删除该插件的 `ModuleInfo`（平台会把它重命名为 `<cluster>-<hash>`，只能按 label 定位），再回目标集群确认镜像清单 ConfigMap 已回收；`--skip-cluster-plugin` 保留该插件，`--skip-operator-and-crds` 保留 OTel Operator subscription 与 CRDs——编排脚本里的调用两个都带，供后续 case 复用。两个安装测试的步骤 1 会先按文档「Installing the Alauda Build of Jaeger v2 Cluster Plugin」CLI 章节安装 Jaeger v2 集群插件：`PKG_JAEGER_CLUSTER_PLUGIN_URL` 非空时若未上架会自动下载并 violet push 到 Global；留空则进入 verify-only 模式，要求该插件已在 Global 集群预上架，否则报错退出并提示确认 release-config 是否已声明该包；已安装则两种模式都幂等复用（两篇文档该章节内容一致，安装逻辑抽象为按 runme 前缀参数化的共享函数，见 `projects/tracing/jaeger-plugin.sh`），步骤 2 自动安装前置依赖 OpenTelemetry v2 Operator（其代码块位于 `opentelemetry-docs`）。两篇升级测试（v2.0 → v2.1）要求环境上**先有一套 v2.0 部署**（Jaeger 2.16.0 + Alauda Build of OpenTelemetry v2 Operator 0.147.0），本框架不负责搭建：脚本开头按「Jaeger 命名空间与实例存在 / 存储后端与本篇匹配 / 配置里带 v2.0 特征字段（ES 看 `use_aliases`、`use_ilm`，OpenSearch 看 `indices.spans.date_layout`）」三条做门槛，任一不满足即 `skip_test_env` 退出，不会误伤 Case 2-5 装出来的 v2.1 环境；升级完成后重复执行同样会因门槛而 SKIPPED。两篇文档 23 / 29 个代码块中有 16 个逐字节相同（集群插件安装、Operator 升级、otel Collector 配置迁移、两段 SPM patch、收尾验证），已按 runme 前缀参数化抽到 `distributed-tracing-docs/docs/en/upgrading/_upgrade-common.sh`（落点与同仓 `_spm-ha-common.sh` 一致）；差异只剩存储侧中段与两次 patch 的先后顺序——**Elasticsearch 篇先换 oauth2-proxy 镜像再打配置 patch，OpenSearch 篇必须反过来**，否则那次重启会让 v2.16 用默认的 `create_mappings=true` 覆盖掉 `jaeger-es-rollover init` 刚写的索引模板。ISM policy 的两个辅助函数（清理遗留 policy、等待 ISM 接管写索引）由 OpenSearch 安装测试与升级测试共用，位于 `projects/tracing/opensearch.sh`。两段 (Optional) SPM 章节按当前部署是否配了 spanmetrics connector 自动决定跑不跑，`TRACING_TEST_SPM=false` 可强制跳过。两个安装测试在 telemetrygen 之后、SPM 章节之前还有一步可选的调用链查询验证（`TRACING_VERIFY_TRACE_QUERY=true` 才执行，默认关闭）：走 ACP 的 kube-apiserver Service 代理（`.../services/<Jaeger 实例名>-collector-extension:16686/proxy<JAEGER_BASEPATH>/api/v3/...`，不经 Jaeger Ingress 与 oauth2-proxy，只用引擎已备好的 ACP token）依次查 `/services`、`/operations`、`/trace-summaries`，断言时间窗口内至少查到 2 条调用链（门槛取 2 而不是 1：只有 1 条时无法区分「链路真的通了」和「刚好撞上一条孤立记录」，可用 `TRACING_VERIFY_TRACE_MIN_COUNT` 调整）——span 从写入到可查询隔着 collector 的 batch 与存储的 refresh，所以三步在同一轮里按序执行、任一步不通就整轮重试并重算时间窗口，逻辑两篇共用（见 `projects/tracing/trace-query.sh`，单测 `framework/tests/tracing_trace_query_test.sh`）。它按两个服务名各查一次：先是 `jaeger`（Jaeger 自身的调用链，`--skip-telemetrygen` 的编排场景下也一定有），真跑过 telemetrygen 时再按 `telemetrygen` 查一次——后者走的是业务侧 span 经 OTel Collector → Jaeger → 存储的完整通路，正是文档 Verification 里「在 Service 下拉框选 telemetrygen 再 Find Traces」那一步的自动化。SPM 章节重新部署 telemetrygen 之后（步骤 27.1）还会再验一次：那段 patch 重启过 Jaeger、又把 OTel Collector 改成 `load_balancing` 按 service 路由，两处都可能把 span 的写入通路弄坏，而 spanmetrics 指标走的是 monitoring 存储，指标正常并不能说明调用链还写得进存储、查得出来。它验证的是 `jaeger_storage` 的存储地址 / 索引前缀 / 凭据、`jaeger_query` 的 `base_path`，以及 rollover（ES）/ ISM（OpenSearch）建出来的读别名——这些配错时 Deployment 照样 Ready，只有真查一次 Query API 才暴露；SPM 不在其验证范围内。
 
 ## 工作原理
 
@@ -587,6 +618,8 @@ bash framework/tests/acp_auth_test.sh
 bash framework/tests/allure_test.sh
 bash framework/tests/assets_test.sh
 bash framework/tests/case_filter_test.sh
+bash framework/tests/clone_repo_at_ref_test.sh
+bash framework/tests/compute_tags_test.sh
 bash framework/tests/create_namespace_test.sh
 bash framework/tests/entrypoint_test.sh
 bash framework/tests/env_adapter_test.sh
@@ -594,7 +627,15 @@ bash framework/tests/install_cluster_plugin_test.sh
 bash framework/tests/install_operator_test.sh
 bash framework/tests/ip_pool_test.sh
 bash framework/tests/mesh_project_test.sh
+bash framework/tests/tracing_opensearch_test.sh
+bash framework/tests/tracing_trace_query_test.sh
 bash framework/tests/verify_only_test.sh
+```
+
+一次跑全（构建期也是这么跑的）：
+
+```bash
+for t in framework/tests/*_test.sh; do bash "$t" >/dev/null || echo "FAIL: $t"; done
 ```
 
 ## 编写新测试

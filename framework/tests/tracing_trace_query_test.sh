@@ -81,11 +81,12 @@ setup_env() {
     export STUB_SUMMARIES_CODE=200
     export STUB_SERVICES_BODY='{"services":["jaeger","telemetrygen"]}'
     export STUB_OPERATIONS_BODY='{"operations":[{"name":"/api/v3/services","spanKind":"internal"}]}'
-    export STUB_SUMMARIES_BODY='{"summaries":[{"traceId":"abc","rootServiceName":"jaeger","spanCount":2}]}'
+    export STUB_SUMMARIES_BODY='{"summaries":[{"traceId":"abc","rootServiceName":"jaeger","spanCount":2},{"traceId":"def","rootServiceName":"jaeger","spanCount":3}]}'
 }
 
 teardown_env() {
     unset TRACING_VERIFY_TRACE_QUERY TRACING_VERIFY_TRACE_SERVICE \
+        TRACING_VERIFY_TRACE_MIN_COUNT \
         TRACING_VERIFY_TRACE_RETRIES TRACING_VERIFY_TRACE_INTERVAL \
         PLATFORM_URL CLUSTER_NAME JAEGER_NS JAEGER_INSTANCE_NAME JAEGER_BASEPATH \
         ACP_API_TOKEN
@@ -127,7 +128,7 @@ test_happy_path() {
     check_contains "第 1 次是 services" "$(sed -n '1p' "$STUB/calls")" "/api/v3/services"
     check_contains "第 2 次是 operations" "$(sed -n '2p' "$STUB/calls")" "/api/v3/operations"
     check_contains "第 3 次是 trace-summaries" "$(sed -n '3p' "$STUB/calls")" "/api/v3/trace-summaries"
-    check_contains "断言查到 1 条" "$out" "查询到 1 条调用链"
+    check_contains "断言查到 2 条" "$out" "查询到 2 条调用链"
     check_contains "URL 走 ACP Service 代理" "$(sed -n '1p' "$STUB/calls")" \
         "https://platform.test/kubernetes/business-1/api/v1/namespaces/jaeger-system/services/jaeger-collector-extension:16686/proxy/clusters/business-1/jaeger/api/v3"
     teardown_env; rm -rf "$STUB"
@@ -141,7 +142,7 @@ test_empty_summaries_retries_then_fails() {
     out=$(verify_jaeger_trace_query 2>&1) || rc=$?
     check_eq "返回 1" "$rc" "1"
     check_eq "2 轮 × 3 个接口 = 6 次请求" "$(calls_count)" "6"
-    check_contains "提示窗口内没查到" "$out" "内未查到服务 jaeger 的调用链"
+    check_contains "提示条数不够" "$out" "的调用链只有 0 条（需要 2 条）"
     check_contains "给出排查方向" "$out" "rollover / ISM 是否建出读别名"
     teardown_env; rm -rf "$STUB"
 }
@@ -205,15 +206,70 @@ test_rfc3339_format() {
     fi
 }
 
+
+test_min_count_boundary() {
+    printf '\n== 门槛为 2：只有 1 条时不算通过 ==\n'
+    make_curl_stub; setup_env
+    export STUB_SUMMARIES_BODY='{"summaries":[{"traceId":"only-one"}]}'
+    local out rc=0
+    out=$(verify_jaeger_trace_query 2>&1) || rc=$?
+    check_eq "返回 1" "$rc" "1"
+    check_contains "点明只有 1 条" "$out" "的调用链只有 1 条（需要 2 条）"
+    teardown_env; rm -rf "$STUB"
+}
+
+test_min_count_override() {
+    printf '\n== TRACING_VERIFY_TRACE_MIN_COUNT 可调门槛 ==\n'
+    make_curl_stub; setup_env
+    export STUB_SUMMARIES_BODY='{"summaries":[{"traceId":"only-one"}]}'
+    export TRACING_VERIFY_TRACE_MIN_COUNT=1
+    local out rc=0
+    out=$(verify_jaeger_trace_query 2>&1) || rc=$?
+    check_eq "门槛降到 1 后通过" "$rc" "0"
+    check_contains "日志里写明门槛" "$out" "至少 1 条"
+    teardown_env; rm -rf "$STUB"
+}
+
+test_service_arg_overrides_env() {
+    printf '\n== 第一个参数可指定服务名，优先于 TRACING_VERIFY_TRACE_SERVICE ==\n'
+    make_curl_stub; setup_env
+    export TRACING_VERIFY_TRACE_SERVICE=jaeger
+    export STUB_SERVICES_BODY='{"services":["jaeger","telemetrygen"]}'
+    local out rc=0
+    out=$(verify_jaeger_trace_query telemetrygen 2>&1) || rc=$?
+    check_eq "返回 0" "$rc" "0"
+    check_contains "按参数里的服务名查询" "$out" "查询服务: telemetrygen"
+    check_contains "通过日志带服务名" "$out" "调用链查询验证通过（服务 telemetrygen）"
+    check_contains "operations 请求带上该服务名" \
+        "$(sed -n '2p' "$STUB/calls")" "/api/v3/operations"
+    teardown_env; rm -rf "$STUB"
+}
+
+test_service_arg_not_in_services_list() {
+    printf '\n== 指定的服务名不在列表里：短路重试后失败 ==\n'
+    make_curl_stub; setup_env
+    export STUB_SERVICES_BODY='{"services":["jaeger"]}'
+    local out rc=0
+    out=$(verify_jaeger_trace_query telemetrygen 2>&1) || rc=$?
+    check_eq "返回 1" "$rc" "1"
+    check_contains "点名 telemetrygen 未出现" "$out" "服务列表里暂未出现 telemetrygen"
+    check_eq "每轮只发 1 次请求，共 2 次" "$(calls_count)" "2"
+    teardown_env; rm -rf "$STUB"
+}
+
 main() {
     test_disabled_by_default
     test_missing_vars
     test_happy_path
     test_empty_summaries_retries_then_fails
+    test_min_count_boundary
+    test_min_count_override
     test_service_absent_short_circuits
     test_http_error_reported
     test_streamed_json_response
     test_custom_service_name
+    test_service_arg_overrides_env
+    test_service_arg_not_in_services_list
     test_rfc3339_format
     printf '\n==================================\n'
     printf '通过: %d  失败: %d\n' "$T_PASS" "$T_FAIL"

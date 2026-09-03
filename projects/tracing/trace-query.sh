@@ -10,7 +10,9 @@
 # 本文件提供 verify_jaeger_trace_query，按下面三步查 Jaeger 的 v3 Query API：
 #   1. GET /api/v3/services                  —— 存储里的 service 列表（读通路是否打通）
 #   2. GET /api/v3/operations?service=<服务> —— 目标服务的 operation 列表
-#   3. GET /api/v3/trace-summaries?...       —— 断言时间窗口内至少查到 1 条调用链
+#   3. GET /api/v3/trace-summaries?...       —— 断言时间窗口内至少查到 2 条调用链
+# 门槛取 2 而不是 1：只查到 1 条时无法区分「链路真的通了」和「刚好撞上一条孤立记录」
+# （比如上一轮验证自己留下的那条），2 条才说明存储在持续接收并可检索。
 # 三步在同一轮里按序执行，任一步不通就整轮重试（而不是单独重试某一步），因为：
 #   - span 从写入到可查询之间隔着 collector 的 batch 与存储的 refresh，第一轮查不到是常态；
 #   - 每轮都重算时间窗口（now-lookback ~ now），窗口跟着重试往前滚，不会停在旧区间；
@@ -27,8 +29,10 @@
 #
 # 环境变量：
 #   TRACING_VERIFY_TRACE_QUERY          默认 false；置 true 才执行本验证
-#   TRACING_VERIFY_TRACE_SERVICE        查询用的服务名，默认 jaeger——Jaeger 自身的调用链，
-#                                       SKIP_TELEMETRYGEN=true 跳过 telemetrygen 时也一定有
+#   TRACING_VERIFY_TRACE_SERVICE        默认查询的服务名，默认 jaeger——Jaeger 自身的调用链，
+#                                       SKIP_TELEMETRYGEN=true 跳过 telemetrygen 时也一定有。
+#                                       调用时传第一个参数可覆盖它（如按服务名查 telemetrygen）
+#   TRACING_VERIFY_TRACE_MIN_COUNT      判定通过所需的最少调用链条数，默认 2
 #   TRACING_VERIFY_TRACE_RETRIES        整轮重试次数，默认 10
 #   TRACING_VERIFY_TRACE_INTERVAL       重试间隔（秒），默认 15
 #   TRACING_VERIFY_TRACE_LOOKBACK       查询时间窗口长度（秒），默认 300
@@ -102,6 +106,7 @@ _tracing_trace_query_round() {
     local svc="$1"
     local lookback="${TRACING_VERIFY_TRACE_LOOKBACK:-300}"
     local depth="${TRACING_VERIFY_TRACE_SEARCH_DEPTH:-20}"
+    local min_count="${TRACING_VERIFY_TRACE_MIN_COUNT:-2}"
     local code count now min_ts max_ts
 
     # 1. 服务列表：断言目标服务已出现，否则后面两步没有意义
@@ -146,8 +151,8 @@ _tracing_trace_query_round() {
     }
     count=$(jq -rs '[.[] | (.summaries // [])[]] | length' < "$__TRACING_QUERY_BODY_FILE" 2>/dev/null || echo 0)
     case "$count" in ''|*[!0-9]*) count=0 ;; esac
-    if [ "$count" -eq 0 ]; then
-        log_warn "窗口 ${min_ts} ~ ${max_ts} 内未查到服务 ${svc} 的调用链，本轮重试"
+    if [ "$count" -lt "$min_count" ]; then
+        log_warn "窗口 ${min_ts} ~ ${max_ts} 内服务 ${svc} 的调用链只有 ${count} 条（需要 ${min_count} 条），本轮重试"
         return 1
     fi
 
@@ -158,18 +163,22 @@ _tracing_trace_query_round() {
 # ── 对外函数 ────────────────────────────────────────────────────────────────
 
 # 验证调用链能被查询到（两篇安装文档测试脚本共用）
-# 用法: verify_jaeger_trace_query
+# 用法: verify_jaeger_trace_query [<服务名>]
 # 说明: TRACING_VERIFY_TRACE_QUERY != true 时静默跳过（默认关闭）。
+#       服务名不传时取 TRACING_VERIFY_TRACE_SERVICE，再缺省为 jaeger；跑过 telemetrygen
+#       的场景由调用方再传一次 telemetrygen，对应文档 Verification 里「在 Service 下拉框
+#       选 telemetrygen 再 Find Traces」那一步。
 #       依赖文档代码块 get-platform-config / set-jaeger-defaults 已 export 的
 #       PLATFORM_URL / CLUSTER_NAME / JAEGER_NS / JAEGER_INSTANCE_NAME / JAEGER_BASEPATH。
 verify_jaeger_trace_query() {
+    local svc="${1:-${TRACING_VERIFY_TRACE_SERVICE:-jaeger}}"
     if [ "${TRACING_VERIFY_TRACE_QUERY:-false}" != "true" ]; then
         log_info "TRACING_VERIFY_TRACE_QUERY != true，跳过调用链查询验证"
         return 0
     fi
 
     log_info "=========================================="
-    log_info "开始调用链查询验证 (TRACING_VERIFY_TRACE_QUERY=true)"
+    log_info "开始调用链查询验证 (TRACING_VERIFY_TRACE_QUERY=true)，服务 ${svc}"
     log_info "=========================================="
 
     local tool missing=()
@@ -210,14 +219,13 @@ verify_jaeger_trace_query() {
         fi
     fi
 
-    local svc="${TRACING_VERIFY_TRACE_SERVICE:-jaeger}"
     local retries="${TRACING_VERIFY_TRACE_RETRIES:-10}"
     local interval="${TRACING_VERIFY_TRACE_INTERVAL:-15}"
 
     __TRACING_QUERY_BASE="${platform%/}/kubernetes/${cluster}/api/v1/namespaces/${ns}/services/${instance}-collector-extension:16686/proxy${basepath}/api/v3"
     __TRACING_QUERY_BODY_FILE=$(mktemp) || return 1
     log_info "Jaeger Query API: ${__TRACING_QUERY_BASE}"
-    log_info "查询服务: ${svc}，最多 ${retries} 轮、间隔 ${interval}s"
+    log_info "查询服务: ${svc}，至少 ${TRACING_VERIFY_TRACE_MIN_COUNT:-2} 条，最多 ${retries} 轮、间隔 ${interval}s"
 
     local rc=1 attempt=1
     while [ "$attempt" -le "$retries" ]; do
@@ -237,14 +245,14 @@ verify_jaeger_trace_query() {
     __TRACING_QUERY_BASE=""
 
     if [ "$rc" -ne 0 ]; then
-        log_error "调用链查询验证失败：${retries} 轮重试后仍未查到服务 ${svc} 的调用链"
+        log_error "调用链查询验证失败：${retries} 轮重试后服务 ${svc} 的调用链仍不足 ${TRACING_VERIFY_TRACE_MIN_COUNT:-2} 条"
         log_error "排查方向：Jaeger 的 jaeger_storage 是否指向本次部署的存储后端、"
         log_error "          rollover / ISM 是否建出读别名、collector 是否已把 span 写进存储"
         return 1
     fi
 
     log_success "=========================================="
-    log_success "调用链查询验证通过"
+    log_success "调用链查询验证通过（服务 ${svc}）"
     log_success "=========================================="
     return 0
 }

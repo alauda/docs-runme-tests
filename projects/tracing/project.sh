@@ -149,7 +149,9 @@ project_check_env() {
     #     projects/tracing/elasticsearch.sh）
     #   - OpenSearch:    默认自动安装（TRACING_INSTALL_OPENSEARCH=true 且
     #     PKG_ACP_STORAGE_OPERATOR_URL / PKG_TOPOLVM_OPERATOR_URL 齐全，见
-    #     projects/tracing/opensearch.sh）；不满足时降级用手动 TRACING_OPENSEARCH_ENDPOINT/USER/PASS
+    #     projects/tracing/opensearch.sh）；不满足时降级用手动 TRACING_OPENSEARCH_ENDPOINT/USER/PASS。
+    #     安装用到的三个插件包（含 PKG_OPENSEARCH_OPERATOR_URL）由安装测试的步骤 0 按需
+    #     下载上架，地址留空即 verify-only（要求平台已预上架）
     return 0
 }
 

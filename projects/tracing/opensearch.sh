@@ -7,10 +7,12 @@
 # TRACING_OPENSEARCH_ENDPOINT/USER/PASS（不要求用户手动设置）。
 #
 # 前提约束：
-#   - OpenSearch 目前仅支持 ACP 离线环境；opensearch-operator 插件包需手动 violet
-#     上架（下载地址为带签名的临时 URL，无法自动下载，见下方 TODO）
 #   - 业务集群至少 3 个节点（OpenSearchCluster 3 副本，TopoLVM 逐节点建 VG）
 #   - 各节点存在空闲磁盘设备（默认 /dev/vdb，可用 TRACING_TOPOLVM_DEVICE 覆盖）
+#
+# 三个插件包（acp-storage-operator / topolvm-operator / opensearch-operator）都由
+# _tracing_prepare_opensearch_packages 按需下载并 violet 上架到业务集群；地址留空即
+# verify-only（要求平台已预上架），与框架其余 PKG_*_URL 的约定一致。
 #
 # 安装步骤复刻 UI 操作（TopoLVM 仅有 UI 安装文档，无 CLI 文档；OpenSearch 离线安装
 # 指引见 alauda/knowledge 仓库 OpenSearch_Installation_Guide.md）：
@@ -37,8 +39,17 @@ TRACING_TOPOLVM_IMAGE="${TRACING_TOPOLVM_IMAGE:-build-harbor.alauda.cn/acp/topol
 # OpenSearch 实例位置与版本
 TRACING_OPENSEARCH_NS="${TRACING_OPENSEARCH_NS:-opensearch-demo}"
 TRACING_OPENSEARCH_NAME="${TRACING_OPENSEARCH_NAME:-my-opensearch}"
-TRACING_OPENSEARCH_VERSION="${TRACING_OPENSEARCH_VERSION:-3.3.1}"
-TRACING_OPENSEARCH_DASHBOARDS_VERSION="${TRACING_OPENSEARCH_DASHBOARDS_VERSION:-3.3.0}"
+# 版本需与插件包内置的镜像 tag 对应（离线环境只有包里带的那几个 tag）：
+# opensearch-operator v2.8.0 随包发布 opensearch / opensearch-dashboards 的 3.7.0 与 2.19.6，
+# 取其中较新的 3.7.0
+TRACING_OPENSEARCH_VERSION="${TRACING_OPENSEARCH_VERSION:-3.7.0}"
+TRACING_OPENSEARCH_DASHBOARDS_VERSION="${TRACING_OPENSEARCH_DASHBOARDS_VERSION:-3.7.0}"
+# opensearch-operator 的安装命名空间与订阅 channel。命名空间默认取 CSV 的
+# operatorframework.io/suggested-namespace（即 UI 安装的落点），与 UI 装出来的实例
+# 互相幂等；channel 留空则由 install_operator_cli 取 PackageManifest 的 defaultChannel
+# （v2.8.0 的包只有 alpha 一条 channel，写死 stable 会解析不到 startingCSV）
+TRACING_OPENSEARCH_OPERATOR_NS="${TRACING_OPENSEARCH_OPERATOR_NS:-opensearch-operator}"
+TRACING_OPENSEARCH_OPERATOR_CHANNEL="${TRACING_OPENSEARCH_OPERATOR_CHANNEL:-}"
 # Dashboards 经 Ingress 暴露的访问路径（留空则自动派生
 # /clusters/<集群名>/opensearch-dashboards，与 Jaeger UI 的 basepath 模式一致）
 TRACING_OPENSEARCH_DASHBOARDS_BASEPATH="${TRACING_OPENSEARCH_DASHBOARDS_BASEPATH:-}"
@@ -71,13 +82,29 @@ _tracing_opensearch_precheck() {
     return 0
 }
 
+# 按需下载并上架单个插件包到当前业务集群（幂等）。
+# 先查 ArtifactVersion 再决定要不要下载：opensearch-operator 的包有 3GB 级别，
+# 已上架时白下一遍既慢又占磁盘（download_package 只按文件名缓存，不看是否已上架）。
+# 用法: _tracing_upload_package_if_needed <cluster> <package_url>
+_tracing_upload_package_if_needed() {
+    local cluster="$1" pkg_url="$2"
+
+    if check_package_uploaded "$cluster" "$pkg_url"; then
+        log_info "插件包已上架，跳过下载上架: $(basename "$pkg_url")"
+        return 0
+    fi
+    download_package "$pkg_url" || return 1
+    upload_package "$cluster" "$pkg_url" || return 1
+    return 0
+}
+
 # 准备插件包（原属 project_init，挪到测试步骤 0 内闭环：仅 OpenSearch 安装测试
-# 需要这些包，测试 ES 等场景不应连带下载上架）：
-#   - TopoLVM 两个插件包（acp-storage-operator / topolvm-operator）下载并上架到当前业务集群
-#   - opensearch-operator 插件包目前仅支持离线环境手动 violet 上架（下载地址为带
-#     签名的临时 URL），此处仅检查 PackageManifest 是否存在并给出指引，不中断流程。
-#     TODO: 待 OpenSearch 支持在线环境后，新增 PKG_OPENSEARCH_OPERATOR_URL 并在此
-#     一并 download_package + upload_package 自动上架。
+# 需要这些包，测试 ES 等场景不应连带下载上架）。
+# 三个包都上架到当前业务集群（Operator 包按集群上架，不同于集群插件只上架 Global）：
+#   - acp-storage-operator / topolvm-operator：TopoLVM 存储链
+#   - opensearch-operator：OpenSearch 本体
+# 每个包的地址留空即 verify-only：不下载不上架，改为校验它已在本集群上架，
+# 未上架则报错退出并给出排查方向（同 jaeger 集群插件的 verify-only 处理）。
 _tracing_prepare_opensearch_packages() {
     local cluster
     cluster=$(kubectl config current-context 2>/dev/null)
@@ -86,19 +113,35 @@ _tracing_prepare_opensearch_packages() {
         return 1
     fi
 
-    log_info "准备 TopoLVM 插件包 (下载并上架到集群 ${cluster})..."
-    local pkg
-    for pkg in "$PKG_ACP_STORAGE_OPERATOR_URL" "$PKG_TOPOLVM_OPERATOR_URL"; do
-        download_package "$pkg" || return 1
-        if ! check_package_uploaded "$cluster" "$pkg"; then
-            upload_package "$cluster" "$pkg" || return 1
-        fi
-    done
+    log_info "准备 OpenSearch 相关插件包 (集群 ${cluster})..."
 
-    if ! kubectl get packagemanifest opensearch-operator >/dev/null 2>&1; then
-        log_warn "集群 ${cluster} 未检测到 opensearch-operator PackageManifest (插件包未上架)"
-        log_warn "请手动下载 opensearch-operator 插件包并 violet 上架到该集群，否则 OpenSearch 安装将失败"
-    fi
+    # entry 形如 "<PackageManifest 名>|<插件包地址>"：地址非空则下载上架，
+    # 为空则退回按 PackageManifest 校验是否已预上架
+    local entry pm_name pkg_url
+    for entry in \
+        "acp-storage-operator|${PKG_ACP_STORAGE_OPERATOR_URL:-}" \
+        "topolvm-operator|${PKG_TOPOLVM_OPERATOR_URL:-}" \
+        "opensearch-operator|${PKG_OPENSEARCH_OPERATOR_URL:-}"; do
+        pm_name="${entry%%|*}"
+        pkg_url="${entry#*|}"
+
+        if [ -n "$pkg_url" ]; then
+            _tracing_upload_package_if_needed "$cluster" "$pkg_url" || return 1
+            continue
+        fi
+
+        if kubectl get packagemanifest "$pm_name" >/dev/null 2>&1; then
+            log_info "插件 ${pm_name} 已上架到集群 ${cluster}（verify-only）"
+            continue
+        fi
+        # 变量名转大写拼出对应的 PKG_*_URL，提示里直接给出要设的变量
+        local pkg_var
+        pkg_var="PKG_$(printf '%s' "$pm_name" | tr 'a-z-' 'A-Z_')_URL"
+        log_error "集群 ${cluster} 未上架插件 ${pm_name}，且未提供 ${pkg_var}（verify-only 模式）"
+        log_error "- dailybuild：确认 release-config 的 Release YAML 已声明该插件包"
+        log_error "- 本地：export ${pkg_var}=<包地址>"
+        return 1
+    done
     return 0
 }
 
@@ -337,16 +380,35 @@ spec:
 EOF
 }
 
+# 解析 opensearch-operator 的安装命名空间并打印到 stdout（本函数经命令替换捕获，
+# 勿向 stdout 打日志）：已装过就沿用它所在的命名空间，否则用 TRACING_OPENSEARCH_OPERATOR_NS。
+# install_operator_cli 的幂等判断只看指定命名空间，不认这一条会在换过默认命名空间的
+# 环境上再装一套 operator，两套 operator 同时 reconcile 同一批 OpenSearchCluster。
+_tracing_opensearch_operator_ns() {
+    local existing_ns
+    existing_ns=$(kubectl get subscription --all-namespaces \
+        -o jsonpath='{range .items[?(@.spec.name=="opensearch-operator")]}{.metadata.namespace}{"\n"}{end}' \
+        2>/dev/null | head -n 1)
+    if [ -n "$existing_ns" ]; then
+        printf '%s' "$existing_ns"
+        return 0
+    fi
+    printf '%s' "$TRACING_OPENSEARCH_OPERATOR_NS"
+}
+
 # 安装 OpenSearch：opensearch-operator → OpenSearchCluster（等待 RUNNING + green）
-# TODO: opensearch-operator 插件包目前仅支持离线环境手动 violet 上架（下载地址为带
-#       签名的临时 URL，无法自动下载）。待 OpenSearch 支持在线环境后，新增
-#       PKG_OPENSEARCH_OPERATOR_URL 并在 project_init 中走 download_package +
-#       upload_package 自动下载上架（同 TopoLVM 两个插件包的处理方式）。
+# 插件包由 _tracing_prepare_opensearch_packages 提前下载上架，这里只管安装。
 _tracing_install_opensearch_cluster() {
     log_header "安装 OpenSearch"
 
-    # 1. Opensearch Cluster Operator（包未上架时函数内等待 PackageManifest 超时报错）
-    install_operator_cli opensearch-operator opensearch-system stable Automatic || return 1
+    # 1. Opensearch Cluster Operator（channel 留空则取 PackageManifest 的 defaultChannel）
+    local operator_ns
+    operator_ns=$(_tracing_opensearch_operator_ns)
+    if [ "$operator_ns" != "$TRACING_OPENSEARCH_OPERATOR_NS" ]; then
+        log_info "沿用已存在的 opensearch-operator 命名空间: ${operator_ns}"
+    fi
+    install_operator_cli opensearch-operator "$operator_ns" \
+        "$TRACING_OPENSEARCH_OPERATOR_CHANNEL" Automatic || return 1
 
     # 2. 创建命名空间与 OpenSearchCluster（已存在则跳过）
     kubectl create namespace "$TRACING_OPENSEARCH_NS" 2>/dev/null || true
@@ -524,10 +586,11 @@ EOF
 }
 
 # 通过 Ingress 暴露 OpenSearch Dashboards（幂等，可重复调用）：
-#   1. 对齐 OpenSearchCluster 的 dashboards.basePath（不一致时 patch，operator 会
+#   1. 等待 operator 建出 dashboards Deployment（它晚于 OpenSearchCluster 转 green）
+#   2. 对齐 OpenSearchCluster 的 dashboards.basePath（不一致时 patch，operator 会
 #      滚动重建 dashboards Deployment，不影响 OpenSearch 数据节点）
-#   2. 等待 dashboards Deployment 就绪
-#   3. 创建 Ingress（已存在跳过）并等待地址就绪
+#   3. 等待 dashboards Deployment 就绪
+#   4. 创建 Ingress（已存在跳过）并等待地址就绪
 _tracing_install_dashboards_ingress() {
     log_header "暴露 OpenSearch Dashboards（Ingress）"
 
@@ -543,12 +606,26 @@ _tracing_install_dashboards_ingress() {
         return 1
     fi
 
-    # 1. 对齐 dashboards.basePath（operator 将其写入 <name>-dashboards-config ConfigMap
-    #    的 opensearch_dashboards.yml：server.basePath + server.rewriteBasePath，并通过
-    #    Deployment 的 checksum/dashboards.yml pod 注解触发滚动重建）
     local dashboards_deploy="${TRACING_OPENSEARCH_NAME}-dashboards"
     local dashboards_cm="${TRACING_OPENSEARCH_NAME}-dashboards-config"
     local checksum_jsonpath='{.spec.template.metadata.annotations.checksum/dashboards\.yml}'
+
+    # 1. 等 operator 建出 dashboards Deployment。
+    #    operator 是先把 OpenSearchCluster 置为 RUNNING/green、之后才建 dashboards
+    #    Deployment，两者之间有几十秒到几分钟的空窗；而全新安装时 basePath 在建 CR 时
+    #    就写好了，下面必走「已对齐」分支、不产生任何等待。少了这一步，步骤 3 的
+    #    rollout status 会直接撞上 NotFound（它不等资源出现，查不到就报错返回），
+    #    步骤 2 的 patch 分支也会因为读不到 Deployment 的 checksum 注解而白等到超时。
+    log_info "等待 dashboards Deployment 创建: ${TRACING_OPENSEARCH_NS}/${dashboards_deploy}"
+    if ! retry_command "kubectl -n $TRACING_OPENSEARCH_NS get deployment $dashboards_deploy >/dev/null 2>&1" 30 10; then
+        log_error "dashboards Deployment 未创建: ${TRACING_OPENSEARCH_NS}/${dashboards_deploy}"
+        log_error "请检查 OpenSearchCluster 的 spec.dashboards.enable 与 opensearch-operator 日志"
+        return 1
+    fi
+
+    # 2. 对齐 dashboards.basePath（operator 将其写入 <name>-dashboards-config ConfigMap
+    #    的 opensearch_dashboards.yml：server.basePath + server.rewriteBasePath，并通过
+    #    Deployment 的 checksum/dashboards.yml pod 注解触发滚动重建）
     local current_basepath
     current_basepath=$(kubectl -n "$TRACING_OPENSEARCH_NS" get opensearchcluster "$TRACING_OPENSEARCH_NAME" \
         -o jsonpath='{.spec.dashboards.basePath}' 2>/dev/null)
@@ -586,13 +663,13 @@ _tracing_install_dashboards_ingress() {
         fi
     fi
 
-    # 2. 等待 dashboards Deployment 就绪（basePath 变更会触发滚动重建）
+    # 3. 等待 dashboards Deployment 就绪（basePath 变更会触发滚动重建）
     kubectl -n "$TRACING_OPENSEARCH_NS" rollout status "deployment/$dashboards_deploy" --timeout=300s || {
         log_error "dashboards Deployment 未就绪: ${TRACING_OPENSEARCH_NS}/${dashboards_deploy}"
         return 1
     }
 
-    # 3. 创建 Ingress（已存在则跳过）
+    # 4. 创建 Ingress（已存在则跳过）
     local ingress_name="${TRACING_OPENSEARCH_NAME}-dashboards"
     if kubectl -n "$TRACING_OPENSEARCH_NS" get ingress "$ingress_name" >/dev/null 2>&1; then
         log_info "Ingress $ingress_name 已存在，跳过创建"
@@ -604,7 +681,7 @@ _tracing_install_dashboards_ingress() {
         }
     fi
 
-    # 4. 等待 Ingress 地址就绪（同 installing 文档 Jaeger Ingress 的等待方式）
+    # 5. 等待 Ingress 地址就绪（同 installing 文档 Jaeger Ingress 的等待方式）
     kubectl wait --for=jsonpath='{.status.loadBalancer.ingress}' "ingress/$ingress_name" \
         -n "$TRACING_OPENSEARCH_NS" --timeout=180s || {
         log_error "Ingress 未在预期时间内就绪: ${TRACING_OPENSEARCH_NS}/${ingress_name}"

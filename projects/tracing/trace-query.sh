@@ -17,7 +17,9 @@
 #   - span 从写入到可查询之间隔着 collector 的 batch 与存储的 refresh，第一轮查不到是常态；
 #   - 每轮都重算时间窗口（now-lookback ~ now），窗口跟着重试往前滚，不会停在旧区间；
 #   - 前两步本身会在 Jaeger 侧产生新的自身调用链，正好给下一轮当数据。
-# SPM 不在本验证范围内：spanmetrics 走的是 monitoring 存储，与调用链查询无关。
+# SPM 的 spanmetrics 指标不在验证范围内（走的是 monitoring 存储，与调用链查询无关）；
+# 但 SPM 章节重新部署 telemetrygen 之后调用方会再调一次本函数——那次 patch 重启过
+# Jaeger 并把 OTel Collector 改成按 service 路由，指标正常不代表 span 还写得进存储。
 #
 # 访问路径：走 ACP 的 kube-apiserver Service 代理，不依赖 Jaeger Ingress 与 oauth2-proxy
 # （后者是 OIDC 浏览器流程，脚本里换会话代价高），因此只需要一个 ACP token：

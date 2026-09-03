@@ -16,10 +16,11 @@
 #     本地 ES 存储，dailybuild 环境没有 ES 可用（详见下方「存储后端与 dailybuild」）。
 #   - OpenSearch 链（Case 3）: 默认自动安装 OpenSearch（TRACING_INSTALL_OPENSEARCH=true 且
 #     PKG_ACP_STORAGE_OPERATOR_URL / PKG_TOPOLVM_OPERATOR_URL 齐全时，安装测试的步骤 0 自动
-#     安装 TopoLVM + OpenSearch 并覆盖 TRACING_OPENSEARCH_*，幂等；opensearch-operator 插件包
-#     目前需手动 violet 上架，见 projects/tracing/opensearch.sh 的 TODO）。自动安装条件不满足时
+#     安装 TopoLVM + OpenSearch 并覆盖 TRACING_OPENSEARCH_*，幂等；三个插件包
+#     （acp-storage-operator / topolvm-operator / opensearch-operator）都由步骤 0 按需下载上架，
+#     地址留空即 verify-only，见 projects/tracing/opensearch.sh）。自动安装条件不满足时
 #     降级用手动 TRACING_OPENSEARCH_ENDPOINT / USER / PASS；两者皆缺则 Case 3 自动 SKIPPED。
-#     前提：ACP 离线环境、业务集群至少 3 个节点、各节点有空闲磁盘（默认 /dev/vdb）。
+#     前提：业务集群至少 3 个节点、各节点有空闲磁盘（默认 /dev/vdb）。
 #   - SPM 多副本（高可用）验证（Case 4/5）: 各自复用安装链装好 SPM 后，将 otel/jaeger 扩容到
 #     多副本并校验单写入者（每个 service 只被一个 Jaeger 副本聚合）；OpenSearch 存储后端
 #     不可用时 Case 5 自动 SKIPPED。可选环境变量：SPM_HA_REPLICAS（默认 2）、SPM_HA_SVC_COUNT（默认 6）。

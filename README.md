@@ -138,6 +138,13 @@ export REGISTRY_MIRROR_ADDRESS=docker-mirrors.alauda.cn
 # ── 测试行为开关（mesh，可选）────────────────────────────────
 export IS_DUAL_STACK=false
 export AUTO_GEN_BOOKINFO_TRAFFIC=true
+# Kiali 监控功能验证（默认 false）：开启后 kiali 用例在装完 Kiali 之后额外验证「监控真的能用」——
+# 用平台账号经 dex 换 Kiali 会话，再断言 /api/istio/status 的 istiod / prometheus 为 Healthy
+# （已对接调用链平台时 tracing 也必须 Healthy），以及 /api/namespaces/graph 能算出 bookinfo
+# 命名空间速率大于 0 的边。sidecar 模式看 http 边、ambient 模式看 ztunnel 的 tcp 边，两种模式都支持。
+# 依赖 bookinfo 已部署（Case 3 / Case 5 的编排里 kiali 用例就在 bookinfo 之后），
+# 命名空间可用 KIALI_VERIFY_NAMESPACE 覆盖（默认 bookinfo）。
+export KIALI_VERIFY_MONITORING=false
 # 网关内核兼容（仅内核 < 4.11/CentOS7 需要，默认 false）：开启后网关按 Linux 内核兼容处理——
 # 高端口网关（东西向 / waypoint）走 Scenario 1（去 sysctls），特权端口网关（监听 80 的 ingress/egress）走 Scenario 2（+ NET_BIND_SERVICE + root）
 export ENABLE_GW_LINUX_KERNEL_COMPAT=false
@@ -372,6 +379,9 @@ docker build --build-arg IMAGE_TAG=local-dev -t docs-runme-tests:local-dev .
 `ENABLE_METALLB`、`USE_MESH_V2_TEST_SUITE_PLUGIN=true`、`IS_DUAL_STACK`、`TRACING_ACP_ES_CLUSTER`、
 `ACP_KUBECONFIG_MODE=direct`、`AUTO_GEN_BOOKINFO_TRAFFIC=true`、`ENABLE_GW_LINUX_KERNEL_COMPAT=false`、
 `RESOURCE_PREFIX`。所有 `PKG_*_URL` **不设置**（verify-only，见上文）。
+
+`KIALI_VERIFY_MONITORING` 可选（默认 `false`）：置 `true` 后 mesh Case 3 / Case 5 的 kiali 用例
+会额外验证 Kiali 的监控功能真的可用，需要模板已提供平台账号密码（框架必需项，本就有）。
 
 报告产物：`$TEST_RESULT_DIR/allure-result/` 与 `$TEST_RESULT_DIR/allure-report/`。
 用例粒度为一篇文档的一次执行（DocTest），Case 作为 allure suite 分组。

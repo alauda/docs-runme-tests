@@ -36,6 +36,8 @@
 # 环境变量:
 #   KIALI_VERIFY_MONITORING       默认 false；置 true 才执行本验证
 #   KIALI_VERIFY_NAMESPACE        流量图断言使用的命名空间，默认 bookinfo
+#   KIALI_VERIFY_READY_RETRIES    等待 /api/auth/openid_redirect 就绪的轮次，默认 30
+#   KIALI_VERIFY_READY_INTERVAL   上述探测间隔（秒），默认 5
 #   KIALI_VERIFY_STATUS_RETRIES   /api/istio/status 重试轮次，默认 10
 #   KIALI_VERIFY_STATUS_INTERVAL  上述重试间隔（秒），默认 15
 #   KIALI_VERIFY_GRAPH_RETRIES    流量图重试轮次，默认 15
@@ -95,12 +97,58 @@ _kiali_session_cookie_present() {
         | grep -qvE '^kiali-token-(nonce|pkce-verifier)-'
 }
 
+# 判断 openid_redirect 的跳转地址是否确实是 OIDC authorize 地址
+# 说明: 集群名写错等情况下 ALB 也会回 302，但跳到的是控制台页面——没有 query、
+#       没有 client_id。只判断「有没有跳转」会把这种情况误判成就绪。
+_kiali_is_authorize_url() {
+    case "$1" in
+        *\?*client_id=*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# 等待 Kiali 的 OIDC 跳转真正可用
+# 用法: _kiali_wait_openid_ready
+# 说明: Kiali 被 patch（如下发调用链配置）后会滚动重启，而 Deployment ready 并不等于
+#       这个接口可用。4.3.1 环境实测重启后依次经历：
+#         ~0-3s   ALB 后端未收敛 → 502
+#         ~3-40s  Kiali 首次收到该请求时才向 dex 做 OpenID auto-discovery，
+#                 完成前一直 500（日志里对应 "Using OpenID auto-discovery from provider"）
+#         之后    正常 302
+#       文档测试刚 patch 完 Kiali 就登录，必然撞进这段窗口。这里先等它就绪，
+#       而不是让 _kiali_login 去重试——否则日志里会出现吓人的 ERROR，
+#       但其实是预期内的启动瞬态。
+_kiali_wait_openid_ready() {
+    local retries="${KIALI_VERIFY_READY_RETRIES:-30}"
+    local interval="${KIALI_VERIFY_READY_INTERVAL:-5}"
+    local attempt out code url
+    code=""
+    for attempt in $(seq 1 "$retries"); do
+        # 探测不带 cookie jar：这一步只看接口通不通，不保留会用于真正登录的 nonce/pkce
+        out=$(_kiali_curl -o /dev/null -w '%{http_code}|%{redirect_url}' \
+            "${__KIALI_URL}/api/auth/openid_redirect" 2>/dev/null) || out="000|"
+        code="${out%%|*}"
+        url="${out#*|}"
+        if _kiali_is_authorize_url "$url"; then
+            [ "$attempt" -gt 1 ] && log_info "Kiali OIDC 跳转已就绪（第 ${attempt} 次探测）"
+            return 0
+        fi
+        if [ "$attempt" -eq 1 ]; then
+            log_info "等待 Kiali OIDC 跳转就绪（当前 HTTP ${code}，重启后需先完成 OpenID auto-discovery，实测 20-40s）"
+        fi
+        [ "$attempt" -lt "$retries" ] && sleep "$interval"
+    done
+    log_error "Kiali /api/auth/openid_redirect 在 $(( retries * interval ))s 内未就绪（最后 HTTP ${code}）"
+    log_error "排查方向: auth.strategy 是否为 openid、issuer_uri 指向的 dex 是否可达、Kiali 能否解析平台地址"
+    return 1
+}
+
 # 经 dex 登录 Kiali，会话写入 $__KIALI_JAR
 # 用法: _kiali_login
 # 依赖: __KIALI_URL / PLATFORM_ADDRESS / PLATFORM_USERNAME / PLATFORM_PASSWORD
 _kiali_login() {
     local addr="${PLATFORM_ADDRESS%/}"
-    local tmp_dir authorize_url query req pubkey_resp ts encrypted
+    local tmp_dir out authorize_url query req pubkey_resp ts encrypted
     local connector login_body login_resp redirect_url
 
     tmp_dir=$(mktemp -d) || return 1
@@ -112,23 +160,25 @@ _kiali_login() {
 
     # 1. 让 Kiali 发起 OIDC 跳转：拿到 dex authorize 的完整参数（含 nonce / PKCE challenge），
     #    同时 Kiali 会把 nonce 与 pkce verifier 写进 cookie jar，最后回调时要用同一份。
-    authorize_url=$(_kiali_curl -b "$__KIALI_JAR" -c "$__KIALI_JAR" \
-        -o /dev/null -w '%{redirect_url}' "${__KIALI_URL}/api/auth/openid_redirect" 2>/dev/null) || authorize_url=""
-    case "$authorize_url" in
-        *\?*) query="${authorize_url#*\?}" ;;
-        *)
-            log_error "Kiali /api/auth/openid_redirect 未返回 OIDC 跳转地址（auth.strategy 是否为 openid？）"
-            log_error "返回: ${authorize_url:-<空>}"
-            return 1
-            ;;
-    esac
+    #    这里的失败信息一律用 log_warn：本函数由 retry_command 调用，最终失败与否
+    #    由调用方判定并打 ERROR，中途重试不该在日志里留下 ERROR。
+    out=$(_kiali_curl -b "$__KIALI_JAR" -c "$__KIALI_JAR" \
+        -o /dev/null -w '%{http_code}|%{redirect_url}' \
+        "${__KIALI_URL}/api/auth/openid_redirect" 2>/dev/null) || out="000|"
+    authorize_url="${out#*|}"
+    if _kiali_is_authorize_url "$authorize_url"; then
+        query="${authorize_url#*\?}"
+    else
+        log_warn "Kiali /api/auth/openid_redirect 未返回 OIDC 跳转地址 (HTTP ${out%%|*})"
+        return 1
+    fi
 
     # 2. 用 dex 的 SPA 接口换登录请求 ID
     #    （/dex/auth 与 /console-dex/auth 都被路由到前端页面，拿不到表单，只能走该接口）
     req=$(_kiali_curl -b "$__KIALI_JAR" -c "$__KIALI_JAR" \
         "${addr}/dex/api/v1/authorize?${query}" 2>/dev/null | jq -r '.req // empty' 2>/dev/null) || req=""
     if [ -z "$req" ]; then
-        log_error "未能从 dex 授权响应中取得登录请求 ID (req)"
+        log_warn "未能从 dex 授权响应中取得登录请求 ID (req)"
         return 1
     fi
 
@@ -137,7 +187,7 @@ _kiali_login() {
     ts=$(jq -r '.ts // empty' <<< "$pubkey_resp" 2>/dev/null || echo "")
     jq -r '.pubkey // empty' <<< "$pubkey_resp" > "$tmp_dir/pubkey.pem" 2>/dev/null
     if [ -z "$ts" ] || [ ! -s "$tmp_dir/pubkey.pem" ]; then
-        log_error "dex 密码公钥响应格式异常: $(head -c 300 <<< "$pubkey_resp")"
+        log_warn "dex 密码公钥响应格式异常: $(head -c 300 <<< "$pubkey_resp")"
         return 1
     fi
     # 密码经 $ENV 传给 jq，避免出现在进程命令行参数中；base64 用 openssl 以兼容 macOS
@@ -147,7 +197,7 @@ _kiali_login() {
         | openssl pkeyutl -encrypt -pubin -inkey "$tmp_dir/pubkey.pem" -pkeyopt rsa_padding_mode:pkcs1 2>/dev/null \
         | openssl base64 -A) || encrypted=""
     if [ -z "$encrypted" ]; then
-        log_error "加密平台密码失败（openssl RSA 加密）"
+        log_warn "加密平台密码失败（openssl RSA 加密）"
         return 1
     fi
 
@@ -166,14 +216,14 @@ _kiali_login() {
     # jq -r 会把 JSON 里的 \u0026 还原成 &，redirect_url 可直接当 URL 用
     redirect_url=$(jq -r '.redirect_url // empty' <<< "$login_resp" 2>/dev/null || echo "")
     if [ -z "$redirect_url" ]; then
-        log_error "平台登录失败: $(head -c 300 <<< "$login_resp")"
+        log_warn "平台登录失败: $(head -c 300 <<< "$login_resp")"
         return 1
     fi
 
     # 5. 用同一 cookie jar 回调 Kiali：Kiali 拿 code 换 id_token 并写入会话 cookie
     _kiali_curl -b "$__KIALI_JAR" -c "$__KIALI_JAR" -o /dev/null "$redirect_url" 2>/dev/null || true
     if ! _kiali_session_cookie_present; then
-        log_error "Kiali 回调未写入会话 cookie，登录失败"
+        log_warn "Kiali 回调未写入会话 cookie，登录失败"
         return 1
     fi
     return 0
@@ -297,8 +347,11 @@ _kiali_verify_monitoring_impl() {
 
     # 步骤 1: 登录 Kiali（openid 策略只认会话 cookie）
     log_info "步骤 1/3: 登录 Kiali (${__KIALI_URL})"
+    # 先等接口就绪再登录：Kiali 刚被 patch 重启时该接口会先 502 再 500，
+    # 直接登录必然第一次失败，靠重试兜底会在日志里留下误导性的 ERROR
+    _kiali_wait_openid_ready || return 1
     if ! retry_command "_kiali_login" 3 10; then
-        log_error "Kiali 登录失败，无法验证监控功能"
+        log_error "Kiali 登录失败，无法验证监控功能（上面的 WARN 是每次重试的具体原因）"
         return 1
     fi
     log_success "Kiali 登录成功（账号 ${PLATFORM_USERNAME}）"

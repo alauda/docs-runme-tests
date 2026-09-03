@@ -383,6 +383,11 @@ docker build --build-arg IMAGE_TAG=local-dev -t docs-runme-tests:local-dev .
 `KIALI_VERIFY_MONITORING` 可选（默认 `false`）：置 `true` 后 mesh Case 3 / Case 5 的 kiali 用例
 会额外验证 Kiali 的监控功能真的可用，需要模板已提供平台账号密码（框架必需项，本就有）。
 
+mesh Case 3 / Case 5 里调用链平台的装 / 卸两步走 OpenSearch 链（DocTest 标签 `opensearch`）。
+`docs-mesh` 现有的 `CASE_TYPE` 选不中它，模板不必配任何 OpenSearch 变量；将来要放开，
+被测业务集群得满足 TopoLVM 的前提（至少 3 个节点、各节点有空闲裸盘），
+`TRACING_*` / `PKG_*` 按上文「分布式调用链测试专用」补齐即可（留空即 verify-only）。
+
 报告产物：`$TEST_RESULT_DIR/allure-result/` 与 `$TEST_RESULT_DIR/allure-report/`。
 用例粒度为一篇文档的一次执行（DocTest），Case 作为 allure suite 分组。
 
@@ -415,7 +420,7 @@ docker build --build-arg IMAGE_TAG=local-dev -t docs-runme-tests:local-dev .
 DocTest 级标签有两个：
 
 - `egress`（mesh Case 3 / 5 中的三篇 `routing-egress-traffic-*`）
-- `elasticsearch`（mesh Case 3 中的调用链平台装 / 卸两步）
+- `opensearch`（mesh Case 3 / 5 中的调用链平台装 / 卸两步）
 
 dailybuild 目前开了四个测试项：`docs-mesh` / `docs-otel` / `docs-tracing` 用
 `CASE_TYPE="smoke and not egress and not elasticsearch"`，`docs-mesh-multicluster` 单独用
@@ -429,8 +434,11 @@ dailybuild 目前开了四个测试项：`docs-mesh` / `docs-otel` / `docs-traci
   `log_storage` 声明。这些 Case 都不带 `smoke`、都带 `elasticsearch`，且 `CASE_TYPE` 里
   额外写了 `and not elasticsearch` 双保险。环境支持后：把 `smoke` 加回 otel Case 2 与
   tracing Case 2/4，并去掉 `CASE_TYPE` 里的 `and not elasticsearch`。
-- OpenSearch（tracing Case 3/5/7）：需要业务集群各节点有空闲裸盘（TopoLVM），dailybuild 的
-  `asm-1` 未挂数据盘。环境支持后给 tracing Case 3/5 补 `smoke` 标签即可，表达式不用改。
+- OpenSearch（tracing Case 3/5/7，以及 mesh Case 3/5 里调用链平台的装 / 卸两步）：需要业务集群
+  各节点有空闲裸盘（TopoLVM），dailybuild 的 `asm-1` 未挂数据盘。环境支持后给 tracing Case 3/5
+  补 `smoke` 标签即可，表达式不用改；mesh 那两步是 DocTest 级标签 `opensearch`，`smoke and ...`
+  天然选不中（DocTest 的标签组里没有 `smoke`），要放开得把 `smoke` 一并写进那两处的
+  `doctest_selected`。
 
 因此 `docs-tracing` 测试项当前只会选中 tracing Case 1（环境初始化）——它不碰任何存储后端，
 是这个测试项唯一跑得起来的 Case；没有它该测试项一个用例都不会跑。

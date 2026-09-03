@@ -109,24 +109,26 @@ if case_begin_if "3" "单网格安装与应用测试 (Single Mesh & App + Tracin
         # 调用链集成：先装调用链平台，再配置网格上报，再装含调用链集成的 kiali
         # mesh 场景下由 bookinfo 业务流量产生 trace，无需 telemetrygen 端到端验证
         #
-        # 调用链平台目前只有 Elasticsearch 一条可用的存储链，故装/卸两步受 DocTest 级
-        # 标签 elasticsearch 门控（与下面 egress 同一套机制）：天翼云 openSUSE MicroOS
-        # 根文件系统不可变只读，装不了 hostPath 方式的本地 ES 存储，dailybuild 环境没有
-        # ES 可用。CASE_TYPE 未设置（本地手工全量跑）时照常执行，行为不变。
+        # 存储后端走 OpenSearch 链：安装测试的步骤 0 会按需自动安装 TopoLVM + OpenSearch
+        # （幂等，Case 5 再跑一次直接复用已装好的实例），存储落在被测业务集群自身，
+        # 不再依赖 Global 集群的 ACP 日志存储 Elasticsearch。装/卸两步因此受 DocTest 级
+        # 标签 opensearch 门控（与下面 egress 同一套机制）：TopoLVM 要求业务集群至少 3 个
+        # 节点、每个节点有空闲裸盘（默认 /dev/vdb），dailybuild 的 asm-1 未挂数据盘。
+        # CASE_TYPE 未设置（本地手工全量跑）时照常执行。
         # 中间的 config-with-service-mesh 与 kiali 不受门控：前者步骤 1 检测不到
         # jaeger-system 命名空间就跳过、后者检测不到 jaeger-collector svc 就跳过调用链
-        # 集成部分，二者在没有调用链平台时都能跑完（Case 5 走的就是这条路径）。
-        if doctest_selected elasticsearch; then
-            ./run.sh --project tracing --file installing-distributed-tracing-elasticsearch --skip-telemetrygen
+        # 集成部分，二者在没有调用链平台时都能跑完。
+        if doctest_selected opensearch; then
+            ./run.sh --project tracing --file installing-distributed-tracing-opensearch --skip-telemetrygen
         else
-            log_warn "CASE_TYPE 未选中 elasticsearch，跳过调用链平台安装，网格调用链集成只做配置不校验链路"
+            log_warn "CASE_TYPE 未选中 opensearch，跳过调用链平台安装，网格调用链集成只做配置不校验链路"
         fi
         ./run.sh --project mesh --file config-with-service-mesh --no-cleanup
         ./run.sh --project mesh --file kiali
         # 清理（逆序）：先卸 kiali，再卸网格调用链配置，再卸调用链平台
         ./run.sh --project mesh --file uninstalling-alauda-build-of-kiali
         ./run.sh --project mesh --file config-with-service-mesh --cleanup-only
-        if doctest_selected elasticsearch; then
+        if doctest_selected opensearch; then
             ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds --skip-cluster-plugin
         fi
         # 清理 bookinfo 命名空间的严格 mTLS 配置（在删除 bookinfo 前移除 PeerAuthentication）
@@ -189,10 +191,12 @@ if case_begin_if "5" "Ambient Mode 安装测试" smoke install ambient; then
         ./run.sh --project mesh --file deploying-ambient-bookinfo --no-cleanup
         # 为 bookinfo 命名空间启用严格 mTLS（PeerAuthentication STRICT）
         ./run.sh --project mesh --file mtls --no-cleanup
-        if doctest_selected elasticsearch; then
-            ./run.sh --project tracing --file installing-distributed-tracing-elasticsearch --skip-telemetrygen
+        # 同 Case 3：OpenSearch 链，步骤 0 的 TopoLVM + OpenSearch 自动安装幂等，
+        # Case 3 已装好时直接复用（存储后端属环境级资源，不随调用链卸载回收）
+        if doctest_selected opensearch; then
+            ./run.sh --project tracing --file installing-distributed-tracing-opensearch --skip-telemetrygen
         else
-            log_warn "CASE_TYPE 未选中 elasticsearch，跳过调用链平台安装，网格调用链集成只做配置不校验链路"
+            log_warn "CASE_TYPE 未选中 opensearch，跳过调用链平台安装，网格调用链集成只做配置不校验链路"
         fi
         ./run.sh --project mesh --file config-with-service-mesh --no-cleanup
         ./run.sh --project mesh --file kiali
@@ -206,7 +210,7 @@ if case_begin_if "5" "Ambient Mode 安装测试" smoke install ambient; then
         # 卸载 kiali
         ./run.sh --project mesh --file uninstalling-alauda-build-of-kiali
         # 卸载调用链组件
-        if doctest_selected elasticsearch; then
+        if doctest_selected opensearch; then
             ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds --skip-cluster-plugin
         fi
         # 卸载 ambient 网格

@@ -586,10 +586,11 @@ EOF
 }
 
 # 通过 Ingress 暴露 OpenSearch Dashboards（幂等，可重复调用）：
-#   1. 对齐 OpenSearchCluster 的 dashboards.basePath（不一致时 patch，operator 会
+#   1. 等待 operator 建出 dashboards Deployment（它晚于 OpenSearchCluster 转 green）
+#   2. 对齐 OpenSearchCluster 的 dashboards.basePath（不一致时 patch，operator 会
 #      滚动重建 dashboards Deployment，不影响 OpenSearch 数据节点）
-#   2. 等待 dashboards Deployment 就绪
-#   3. 创建 Ingress（已存在跳过）并等待地址就绪
+#   3. 等待 dashboards Deployment 就绪
+#   4. 创建 Ingress（已存在跳过）并等待地址就绪
 _tracing_install_dashboards_ingress() {
     log_header "暴露 OpenSearch Dashboards（Ingress）"
 
@@ -605,12 +606,26 @@ _tracing_install_dashboards_ingress() {
         return 1
     fi
 
-    # 1. 对齐 dashboards.basePath（operator 将其写入 <name>-dashboards-config ConfigMap
-    #    的 opensearch_dashboards.yml：server.basePath + server.rewriteBasePath，并通过
-    #    Deployment 的 checksum/dashboards.yml pod 注解触发滚动重建）
     local dashboards_deploy="${TRACING_OPENSEARCH_NAME}-dashboards"
     local dashboards_cm="${TRACING_OPENSEARCH_NAME}-dashboards-config"
     local checksum_jsonpath='{.spec.template.metadata.annotations.checksum/dashboards\.yml}'
+
+    # 1. 等 operator 建出 dashboards Deployment。
+    #    operator 是先把 OpenSearchCluster 置为 RUNNING/green、之后才建 dashboards
+    #    Deployment，两者之间有几十秒到几分钟的空窗；而全新安装时 basePath 在建 CR 时
+    #    就写好了，下面必走「已对齐」分支、不产生任何等待。少了这一步，步骤 3 的
+    #    rollout status 会直接撞上 NotFound（它不等资源出现，查不到就报错返回），
+    #    步骤 2 的 patch 分支也会因为读不到 Deployment 的 checksum 注解而白等到超时。
+    log_info "等待 dashboards Deployment 创建: ${TRACING_OPENSEARCH_NS}/${dashboards_deploy}"
+    if ! retry_command "kubectl -n $TRACING_OPENSEARCH_NS get deployment $dashboards_deploy >/dev/null 2>&1" 30 10; then
+        log_error "dashboards Deployment 未创建: ${TRACING_OPENSEARCH_NS}/${dashboards_deploy}"
+        log_error "请检查 OpenSearchCluster 的 spec.dashboards.enable 与 opensearch-operator 日志"
+        return 1
+    fi
+
+    # 2. 对齐 dashboards.basePath（operator 将其写入 <name>-dashboards-config ConfigMap
+    #    的 opensearch_dashboards.yml：server.basePath + server.rewriteBasePath，并通过
+    #    Deployment 的 checksum/dashboards.yml pod 注解触发滚动重建）
     local current_basepath
     current_basepath=$(kubectl -n "$TRACING_OPENSEARCH_NS" get opensearchcluster "$TRACING_OPENSEARCH_NAME" \
         -o jsonpath='{.spec.dashboards.basePath}' 2>/dev/null)
@@ -648,13 +663,13 @@ _tracing_install_dashboards_ingress() {
         fi
     fi
 
-    # 2. 等待 dashboards Deployment 就绪（basePath 变更会触发滚动重建）
+    # 3. 等待 dashboards Deployment 就绪（basePath 变更会触发滚动重建）
     kubectl -n "$TRACING_OPENSEARCH_NS" rollout status "deployment/$dashboards_deploy" --timeout=300s || {
         log_error "dashboards Deployment 未就绪: ${TRACING_OPENSEARCH_NS}/${dashboards_deploy}"
         return 1
     }
 
-    # 3. 创建 Ingress（已存在则跳过）
+    # 4. 创建 Ingress（已存在则跳过）
     local ingress_name="${TRACING_OPENSEARCH_NAME}-dashboards"
     if kubectl -n "$TRACING_OPENSEARCH_NS" get ingress "$ingress_name" >/dev/null 2>&1; then
         log_info "Ingress $ingress_name 已存在，跳过创建"
@@ -666,7 +681,7 @@ _tracing_install_dashboards_ingress() {
         }
     fi
 
-    # 4. 等待 Ingress 地址就绪（同 installing 文档 Jaeger Ingress 的等待方式）
+    # 5. 等待 Ingress 地址就绪（同 installing 文档 Jaeger Ingress 的等待方式）
     kubectl wait --for=jsonpath='{.status.loadBalancer.ingress}' "ingress/$ingress_name" \
         -n "$TRACING_OPENSEARCH_NS" --timeout=180s || {
         log_error "Ingress 未在预期时间内就绪: ${TRACING_OPENSEARCH_NS}/${ingress_name}"

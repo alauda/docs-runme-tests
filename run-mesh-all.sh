@@ -189,6 +189,11 @@ if case_begin_if "5" "Ambient Mode 安装测试" smoke install ambient; then
         ./run.sh --project mesh --file deploying-ambient-bookinfo --no-cleanup
         # 为 bookinfo 命名空间启用严格 mTLS（PeerAuthentication STRICT）
         ./run.sh --project mesh --file mtls --no-cleanup
+        if doctest_selected elasticsearch; then
+            ./run.sh --project tracing --file installing-distributed-tracing-elasticsearch --skip-telemetrygen
+        else
+            log_warn "CASE_TYPE 未选中 elasticsearch，跳过调用链平台安装，网格调用链集成只做配置不校验链路"
+        fi
         ./run.sh --project mesh --file config-with-service-mesh --no-cleanup
         ./run.sh --project mesh --file kiali
         ./run.sh --project mesh --file waypoint-proxies
@@ -200,6 +205,10 @@ if case_begin_if "5" "Ambient Mode 安装测试" smoke install ambient; then
         ./run.sh --project mesh --file mtls --cleanup-only
         # 卸载 kiali
         ./run.sh --project mesh --file uninstalling-alauda-build-of-kiali
+        # 卸载调用链组件
+        if doctest_selected elasticsearch; then
+            ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds --skip-cluster-plugin
+        fi
         # 卸载 ambient 网格
         ./run.sh --project mesh --file uninstalling-alauda-service-mesh-in-ambient-mode
         # 清理 bookinfo

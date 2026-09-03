@@ -8,6 +8,11 @@
 #     install_all_cluster_plugins / install_all_servicemesh_operators / fetch_platform_ca）
 #   - 项目钩子 project_check_env / project_init / project_prepare
 
+# Kiali 监控功能验证模块（verify_kiali_monitoring，供 runme-test_kiali.sh 在
+# 安装与调用链集成之后调用；默认关闭，KIALI_VERIFY_MONITORING=true 时才执行）
+# shellcheck disable=SC1091
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/kiali-monitoring.sh"
+
 # ==============================================================================
 # mesh 测试脚本辅助函数
 # ==============================================================================

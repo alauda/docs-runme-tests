@@ -16,6 +16,11 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/elasticsearch.sh"
 # shellcheck disable=SC1091
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/jaeger-plugin.sh"
 
+# 调用链查询验证模块（两篇安装文档共享，走 ACP Service 代理查 Jaeger v3 Query API，
+# 默认关闭，TRACING_VERIFY_TRACE_QUERY=true 时才执行）
+# shellcheck disable=SC1091
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/trace-query.sh"
+
 # ==============================================================================
 # tracing 测试脚本辅助函数
 # ==============================================================================

@@ -2,5 +2,5 @@ apiVersion: v2
 name: mesh-v2-test-suite
 description: Mesh v2 测试套件，将一组服务网格测试镜像随 ACP 集群插件预置到集群
 type: application
-version: v2.2.0-r0
+version: v2.2.0-r1
 appVersion: "1.0.0"

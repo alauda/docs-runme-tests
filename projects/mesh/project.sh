@@ -119,13 +119,17 @@ maybe_gen_bookinfo_traffic() {
 # 用法: retry_runme_verify <block> <cmp_fn> <expected> [attempts] [interval]
 #   cmp_fn   —— framework/verify.sh 的 __cmp_lines / __cmp_contains，签名 (输出, 期望)
 #   最后一次的输出回填到 RETRY_RUNME_OUTPUT，供调用方打印失败详情
-# 背景:
-#   文档验证块普遍形如
-#     kubectl exec "$(kubectl get pod -l app=ratings -n bookinfo -o jsonpath='{.items[0].metadata.name}')" ...
-#   取的是第一个匹配 Pod、不筛 phase。bookinfo 刚经历滚动重启、或上一 Case 有残留 Pod 时，
-#   可能选中正在终止的 Pod，exec 报 `container not found ("ratings")`；数据面配置下发也有短延迟。
-#   一次性执行没有容错，2026-09-05 g1 实测在 ARM 与 x86 上都失败过。
-#   重跑整块会连带重新解析 Pod 名，故按块重试即可同时覆盖这两种瞬时态。
+# 背景（2026-09-05 g1 实测定位）:
+#   ambient 文档的验证块普遍经 bookinfo 的 ratings pod exec 发起请求。命名空间纳入
+#   ambient 网格后，kubelet 对该 pod 的存活探针会间歇超时：
+#     Liveness probe failed: Get "http://[...]:9080/ratings/555": context deadline exceeded
+#     Killing: Container ratings failed liveness probe, will be restarted
+#   bookinfo 样例自带的探针是 failureThreshold=1 / timeoutSeconds=5，超时一次即杀容器，
+#   于是 容器被杀 → 重启 → CrashLoopBackOff，退避期内容器不存在，exec 直接报
+#   `container not found ("ratings")`。实测退避从 20s 涨到 1m20s。
+#   根因在产品侧（ambient 纳管后探针超时），本函数只是让文档测试不被其放大——
+#   重试窗口需覆盖退避期，故调用方统一取 24 次 × 5s = 120s。
+#   另：数据面配置下发本身也有短延迟，重跑整块会连带重新解析 Pod 名，一并覆盖。
 retry_runme_verify() {
     local block="$1" cmp_fn="$2" expected="$3"
     local attempts="${4:-12}" interval="${5:-5}"

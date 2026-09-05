@@ -115,6 +115,37 @@ maybe_gen_bookinfo_traffic() {
     return 0
 }
 
+# 重试执行 runme 块并断言其输出（用于经 bookinfo pod exec 的验证块）
+# 用法: retry_runme_verify <block> <cmp_fn> <expected> [attempts] [interval]
+#   cmp_fn   —— framework/verify.sh 的 __cmp_lines / __cmp_contains，签名 (输出, 期望)
+#   最后一次的输出回填到 RETRY_RUNME_OUTPUT，供调用方打印失败详情
+# 背景:
+#   文档验证块普遍形如
+#     kubectl exec "$(kubectl get pod -l app=ratings -n bookinfo -o jsonpath='{.items[0].metadata.name}')" ...
+#   取的是第一个匹配 Pod、不筛 phase。bookinfo 刚经历滚动重启、或上一 Case 有残留 Pod 时，
+#   可能选中正在终止的 Pod，exec 报 `container not found ("ratings")`；数据面配置下发也有短延迟。
+#   一次性执行没有容错，2026-09-05 g1 实测在 ARM 与 x86 上都失败过。
+#   重跑整块会连带重新解析 Pod 名，故按块重试即可同时覆盖这两种瞬时态。
+retry_runme_verify() {
+    local block="$1" cmp_fn="$2" expected="$3"
+    local attempts="${4:-12}" interval="${5:-5}"
+    local output="" attempt
+
+    for ((attempt = 1; attempt <= attempts; attempt++)); do
+        if output=$(runme run "$block" 2>&1) && "$cmp_fn" "$output" "$expected"; then
+            RETRY_RUNME_OUTPUT="$output"
+            return 0
+        fi
+        if [ "$attempt" -lt "$attempts" ]; then
+            log_warn "$block 验证未通过，等待 ${interval} 秒后重试 ($((attempt + 1))/$attempts)..."
+            sleep "$interval"
+        fi
+    done
+
+    RETRY_RUNME_OUTPUT="$output"
+    return 1
+}
+
 # ==============================================================================
 # 网关安装 / Linux 内核兼容 公共函数
 # ------------------------------------------------------------------------------

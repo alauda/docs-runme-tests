@@ -115,21 +115,21 @@ maybe_gen_bookinfo_traffic() {
     return 0
 }
 
-# 重试执行 runme 块并断言其输出（用于经 bookinfo pod exec 的验证块）
+# 重试执行 runme 块并断言其输出
 # 用法: retry_runme_verify <block> <cmp_fn> <expected> [attempts] [interval]
 #   cmp_fn   —— framework/verify.sh 的 __cmp_lines / __cmp_contains，签名 (输出, 期望)
 #   最后一次的输出回填到 RETRY_RUNME_OUTPUT，供调用方打印失败详情
-# 背景（2026-09-05 g1 实测定位）:
-#   ambient 文档的验证块普遍经 bookinfo 的 ratings pod exec 发起请求。命名空间纳入
-#   ambient 网格后，kubelet 对该 pod 的存活探针会间歇超时：
-#     Liveness probe failed: Get "http://[...]:9080/ratings/555": context deadline exceeded
-#     Killing: Container ratings failed liveness probe, will be restarted
-#   bookinfo 样例自带的探针是 failureThreshold=1 / timeoutSeconds=5，超时一次即杀容器，
-#   于是 容器被杀 → 重启 → CrashLoopBackOff，退避期内容器不存在，exec 直接报
-#   `container not found ("ratings")`。实测退避从 20s 涨到 1m20s。
-#   根因在产品侧（ambient 纳管后探针超时），本函数只是让文档测试不被其放大——
-#   重试窗口需覆盖退避期，故调用方统一取 24 次 × 5s = 120s。
-#   另：数据面配置下发本身也有短延迟，重跑整块会连带重新解析 Pod 名，一并覆盖。
+#
+# 适用边界（重要）:
+#   仅用于「被断言的状态本身是异步收敛的」——即产品行为正确，只是达成终态需要时间，
+#   一次性断言会踩到中间窗口。典型例子：IstioRevision 已消失但其 istiod Pod 还在
+#   优雅终止、等待 GC 回收，两者异步。
+#
+#   不得用于掩盖产品缺陷。若某个场景是产品不支持或存在 bug，用例就应当如实失败，
+#   由测试暴露问题，而不是靠加长重试窗口把它熬过去——那样只会让缺陷在验收中隐身。
+#   参考反例：ambient 模式在 kube-ovn underlay 组网下健康检查探针 100% 超时，
+#   应用必然 CrashLoopBackOff（详见 my-foam/area/istio/ambient-mode/）。该场景下
+#   相关用例应当失败，此前为其添加的重试已移除。
 retry_runme_verify() {
     local block="$1" cmp_fn="$2" expected="$3"
     local attempts="${4:-12}" interval="${5:-5}"

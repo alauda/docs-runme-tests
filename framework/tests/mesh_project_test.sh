@@ -158,10 +158,60 @@ test_retry_runme_verify() {
     rm -f "$calls_file"
 }
 
+test_retry_cmd_verify() {
+    printf '\n== retry_cmd_verify ==\n'
+
+    local calls_file
+    calls_file="$(mktemp)"
+
+    # 桩命令：前 N 次以非 0 退出（模拟 curl (7) 连不上），之后成功
+    stub_cmd() {
+        printf 'x\n' >> "$calls_file"
+        local n
+        n=$(wc -l < "$calls_file" | tr -d ' ')
+        if [ "$n" -le "${STUB_FAIL_TIMES:-0}" ]; then
+            echo "curl: (7) Failed to connect"
+            return 1
+        fi
+        echo "HTTP/1.1 200 OK"
+        return 0
+    }
+    sleep() { :; }   # 免等待
+
+    # 1) 首次即成功 —— 只调用一次
+    : > "$calls_file"; RETRY_CMD_OUTPUT=
+    STUB_FAIL_TIMES=0 retry_cmd_verify stub_cmd __cmp_contains "HTTP/1.1 200 OK" 5 1 >/dev/null 2>&1
+    check_eq "首次成功只执行一次" "$(wc -l < "$calls_file" | tr -d ' ')" "1"
+    check_eq "输出回填 RETRY_CMD_OUTPUT" "$RETRY_CMD_OUTPUT" "HTTP/1.1 200 OK"
+
+    # 2) 前两次连不上 —— 第三次成功，返回 0（对应 LoadBalancer 数据面尚未就绪的窗口）
+    : > "$calls_file"
+    STUB_FAIL_TIMES=2 retry_cmd_verify stub_cmd __cmp_contains "HTTP/1.1 200 OK" 5 1 >/dev/null 2>&1
+    check_eq "瞬时失败后重试成功" "$?" "0"
+    check_eq "共执行三次" "$(wc -l < "$calls_file" | tr -d ' ')" "3"
+
+    # 3) 命令成功但输出不匹配 —— 耗尽重试后返回 1（真实缺陷仍如实失败，不被重试掩盖）
+    : > "$calls_file"
+    STUB_FAIL_TIMES=0 retry_cmd_verify stub_cmd __cmp_contains "never-match" 3 1 >/dev/null 2>&1
+    check_eq "断言始终不过则返回 1" "$?" "1"
+    check_eq "按 attempts 次数耗尽" "$(wc -l < "$calls_file" | tr -d ' ')" "3"
+
+    # 4) 始终连不上 —— 耗尽重试后返回 1，且最后一次输出可供排障
+    : > "$calls_file"; RETRY_CMD_OUTPUT=
+    STUB_FAIL_TIMES=99 retry_cmd_verify stub_cmd __cmp_contains "HTTP/1.1 200 OK" 2 1 >/dev/null 2>&1
+    check_eq "始终失败则返回 1" "$?" "1"
+    check_contains "失败时回填最后一次输出" "$RETRY_CMD_OUTPUT" "curl: (7) Failed to connect"
+
+    unset -f stub_cmd sleep
+    unset STUB_FAIL_TIMES
+    rm -f "$calls_file"
+}
+
 main() {
     test_fetch_platform_ca_fallback_stdout_is_pure
     test_relax_psa_for_root_gateway
     test_retry_runme_verify
+    test_retry_cmd_verify
     printf '\n==================================\n'
     printf '通过: %d  失败: %d\n' "$T_PASS" "$T_FAIL"
     [ "$T_FAIL" -eq 0 ]

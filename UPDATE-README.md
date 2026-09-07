@@ -27,9 +27,9 @@ for t in framework/tests/*_test.sh; do bash "$t" >/dev/null || echo "FAIL: $t"; 
 
 `check-runtime-shell` 查的是**运行环境**而不是代码：runme 用 `$SHELL` 决定拿什么解释器
 执行 mdx 里的 ```bash 代码块，`$SHELL` 为空就退回 dash，`column -t -s $'\t'` 这类写法
-当场失效；`column` 本身也不在 `ubuntu:22.04` 基础镜像里。本机跑它基本恒过（登录 shell
-自带 `SHELL=/bin/bash`），真正的价值在构建期——它拦的是「镜像里 runme 不用 bash」。
-前四条扫 `*.sh`，看不到 mdx 代码块，所以这条得单列。
+当场失效；`column`本身也不在`ubuntu:22.04`基础镜像里。本机跑它基本恒过（登录 shell
+自带`SHELL=/bin/bash`），真正的价值在构建期——它拦的是「镜像里 runme 不用 bash」。
+前四条扫 `\*.sh`，看不到 mdx 代码块，所以这条得单列。
 
 ---
 
@@ -79,12 +79,12 @@ fi
 
 标签怎么选：
 
-| 想要的效果 | 加什么标签 |
-| --- | --- |
-| 每次都跑（环境初始化这类前置） | `always`（保留标签，恒被选中，不参与表达式求值） |
-| 进首批 dailybuild | 必须带 `smoke`（首批表达式是 `smoke and not egress and not elasticsearch`） |
-| 只在多集群测试项里跑 | `multicluster` |
-| 暂不纳入，先攒着 | 只给功能标签（如 `opensearch`、`elasticsearch`），不给 `smoke` |
+| 想要的效果                     | 加什么标签                                                                  |
+| ------------------------------ | --------------------------------------------------------------------------- |
+| 每次都跑（环境初始化这类前置） | `always`（保留标签，恒被选中，不参与表达式求值）                            |
+| 进首批 dailybuild              | 必须带 `smoke`（首批表达式是 `smoke and not egress and not elasticsearch`） |
+| 只在多集群测试项里跑           | `multicluster`                                                              |
+| 暂不纳入，先攒着               | 只给功能标签（如 `opensearch`、`elasticsearch`），不给 `smoke`              |
 
 DocTest 级别的细粒度开关用 `doctest_selected <tag>` 包住单篇文档，现在有两处：
 `egress`（mesh Case 3/5 的三篇 `routing-egress-traffic-*`）与 `opensearch`
@@ -104,12 +104,12 @@ DocTest 级别的细粒度开关用 `doctest_selected <tag>` 包住单篇文档�
 `apt-test/release-config/tests/<版本>/dailybuild/dailybuild_mircos_g1.yaml` 里
 `spec.template.spec.tests` 现有四项：
 
-| 测试项 | order | CASE_TYPE |
-| --- | --- | --- |
-| `docs-mesh` | 0 | `smoke and not egress and not elasticsearch` |
-| `docs-otel` | 1 | `smoke and not egress and not elasticsearch` |
-| `docs-tracing` | 2 | `smoke and not egress and not elasticsearch` |
-| `docs-mesh-multicluster` | 3 | `multicluster and not egress` |
+| 测试项                   | order | CASE_TYPE                                    |
+| ------------------------ | ----- | -------------------------------------------- |
+| `docs-mesh`              | 0     | `smoke and not egress and not elasticsearch` |
+| `docs-otel`              | 1     | `smoke and not egress and not elasticsearch` |
+| `docs-tracing`           | 2     | `smoke and not egress and not elasticsearch` |
+| `docs-mesh-multicluster` | 3     | `multicluster and not egress`                |
 
 `not elasticsearch` 是天翼云 openSUSE MicroOS 环境的临时限制（根文件系统不可变只读，
 装不了 hostPath 方式的本地 ES 存储），只作用于 otel Case 2 与 tracing Case 2/4/6。相关 Case
@@ -137,11 +137,11 @@ _case_type_matches "smoke and not egress and not elasticsearch" smoke install si
 
 ### 1.6 文档脚本内部主动跳过：分清两种语义
 
-| 函数 | 语义 | allure 分类 |
-| --- | --- | --- |
-| `skip_test_env "原因"` | 环境不支持（缺集群 / 缺存储 / 单栈环境跑双栈） | `[env]` |
-| `skip_test_expected "原因"` | 预期就不测（本轮有意不覆盖） | `[expected]` |
-| `skip_test "原因"` | `skip_test_expected` 的别名，**新代码不要用** | `[expected]` |
+| 函数                        | 语义                                           | allure 分类  |
+| --------------------------- | ---------------------------------------------- | ------------ |
+| `skip_test_env "原因"`      | 环境不支持（缺集群 / 缺存储 / 单栈环境跑双栈） | `[env]`      |
+| `skip_test_expected "原因"` | 预期就不测（本轮有意不覆盖）                   | `[expected]` |
+| `skip_test "原因"`          | `skip_test_expected` 的别名，**新代码不要用**  | `[expected]` |
 
 分类会进 allure 的 `categories.json`，看板上是两栏。写错了会让"环境没配好"混进"本来就不测"，
 排查时直接被忽略过去。
@@ -188,13 +188,13 @@ dailybuild 环境访问不了公网。mesh 文档里有 46 处 `-f <外部 URL>`
 
 ## 3. 工具版本升级
 
-| 工具 | 改哪儿 | 备注 |
-| --- | --- | --- |
-| `runme` | `Dockerfile` 的 `ARG RUNME_VERSION` | 同时是 `run.sh check_env` 的必需项，构建期会写进 `.image-info` 并被入口回填 |
-| `allure` | `Dockerfile` 的 `ARG ALLURE_VERSION` | 建议与 ares 基础镜像保持同版本 |
-| `kubectl` | `Dockerfile` 的 `ARG KUBECTL_VERSION` | |
-| `istioctl` | **不用改** | 版本从 mesh 文档的 `multi-primary-multi-network:set-istio-version` 代码块推导，与 `install_istioctl` 的校验一致。文档改了版本，重建镜像即可自动跟上 |
-| `buildah` | `.tekton/image-build.yaml` 的 `builder-image` 参数 | 使用 Edge 内置 Buildah 镜像；平台升级镜像版本时只改这一处 |
+| 工具       | 改哪儿                                             | 备注                                                                                                                                                |
+| ---------- | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `runme`    | `Dockerfile` 的 `ARG RUNME_VERSION`                | 同时是 `run.sh check_env` 的必需项，构建期会写进 `.image-info` 并被入口回填                                                                         |
+| `allure`   | `Dockerfile` 的 `ARG ALLURE_VERSION`               | 建议与 ares 基础镜像保持同版本                                                                                                                      |
+| `kubectl`  | `Dockerfile` 的 `ARG KUBECTL_VERSION`              |                                                                                                                                                     |
+| `istioctl` | **不用改**                                         | 版本从 mesh 文档的 `multi-primary-multi-network:set-istio-version` 代码块推导，与 `install_istioctl` 的校验一致。文档改了版本，重建镜像即可自动跟上 |
+| `buildah`  | `.tekton/image-build.yaml` 的 `builder-image` 参数 | 使用 Edge 内置 Buildah 镜像；平台升级镜像版本时只改这一处                                                                                           |
 
 改完 `Dockerfile` 的版本 ARG 后要重建镜像验证——构建期每个工具都有 `--version | grep` 断言，
 版本号写错会在构建阶段直接失败，不会带病出镜像。
@@ -203,11 +203,11 @@ dailybuild 环境访问不了公网。mesh 文档里有 46 处 `-f <外部 URL>`
 
 ## 4. 插件包地址更新
 
-| 场景 | 改哪儿 |
-| --- | --- |
-| 本地手工跑 | `export PKG_*_URL=...`（见 `README.md`「环境变量」） |
-| dailybuild 的 L5 插件（servicemesh-operator2 / kiali-operator / opentelemetry-operator2 / jaeger-cluster-plugin / mesh-v2-test-suite） | `apt-test/release-config/releases/<版本>/<release>.yaml` 里 `spec.test_plans[].release.initial.l5_plugin_packages` |
-| dailybuild 的 L4 平台插件（multus / metallb / metallb-operator） | **不用写**。这类插件由当日构建产物（`product-acp-plugin-nonkernel`，`plugins: ALL`）自动上架，release-config 里从来不手写；`plugin_packages: []` 是所有 ctyunp 环境模板的固定样板，不要往里塞条目（塞了反而有覆盖自动上架全集的风险） |
+| 场景                                                                                                                                   | 改哪儿                                                                                                                                                                                                                                |
+| -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 本地手工跑                                                                                                                             | `export PKG_*_URL=...`（见 `README.md`「环境变量」）                                                                                                                                                                                  |
+| dailybuild 的 L5 插件（servicemesh-operator2 / kiali-operator / opentelemetry-operator2 / jaeger-cluster-plugin / mesh-v2-test-suite） | `apt-test/release-config/releases/<版本>/<release>.yaml` 里 `spec.test_plans[].release.initial.l5_plugin_packages`                                                                                                                    |
+| dailybuild 的 L4 平台插件（multus / metallb / metallb-operator）                                                                       | **不用写**。这类插件由当日构建产物（`product-acp-plugin-nonkernel`，`plugins: ALL`）自动上架，release-config 里从来不手写；`plugin_packages: []` 是所有 ctyunp 环境模板的固定样板，不要往里塞条目（塞了反而有覆盖自动上架全集的风险） |
 
 lynx 上跑时**所有 `PKG_*_URL` 都不设置**，框架进 verify-only 模式：只校验平台是否已上架，
 不下载不上架。真没上架时会精确报错，指明该去 release-config 补哪个包。
@@ -303,7 +303,7 @@ commit SHA，镜像内也可以直接 `cat /app/docs-runme-tests/.image-info`。
 1. `repos.conf` 加一行 `<project>:../<repo>`
 2. 新建 `projects/<project>/project.sh`，实现 `project_check_env` / `project_init` / `project_prepare`
 3. 新建 `run-<project>-all.sh`（照抄 `run-otel-all.sh` 的骨架：`report_init` + `trap report_finalize EXIT`
-   + `export RUNME_TEST_ORCHESTRATED=1`）
+   - `export RUNME_TEST_ORCHESTRATED=1`）
 4. `lynx/case-ids.tsv` 起一个新的编号前缀，并在 `lynx/check-case-ids.sh` 的编号正则里加上它
 5. `lynx/docs-refs.tsv` 加一行 ref，并在 `lynx/check-docs-refs.sh` 的键名正则里加上它
 6. `Dockerfile` 加一段 `git clone`，并把新仓库的 SHA 写进 `.image-info`
@@ -314,15 +314,15 @@ commit SHA，镜像内也可以直接 `cat /app/docs-runme-tests/.image-info`。
 
 ## 9. 速查：我改了 X，还要动谁
 
-| 改动 | 必须同步 | 自检 |
-| --- | --- | --- |
-| 新增 `runme-test_*.sh` | `case-ids.tsv`、`run-*-all.sh`、README 两张表 | `check-case-ids.sh` |
-| 给 Case 加/改标签 | release-config 的 `CASE_TYPE`、README 标签表 | `case-filter.sh` 手工验算 |
-| 文档里新增/修改外部 URL | `assets-manifest.tsv`、重建镜像 | `check-manifest.sh` |
-| 文档块改用 `runme_run_with_assets` | `lynx/docs-refs.tsv` 指到文档特性分支 | `/image-build` 出镜像真跑 |
-| 升级 runme/allure/kubectl | `Dockerfile` 的 ARG、重建镜像 | 构建期版本断言 |
-| 升级 istio | 只改文档、重建镜像 | 构建期 istioctl 版本断言 |
-| 新增发版分支 | 本节发版版本矩阵；`.tekton` 分支正则（命名形状变化时） | `compute_tags_test.sh` |
-| 新增 L5 插件包 | release-config 的 `l5_plugin_packages` | verify-only 的未上架报错 |
-| 改任何 `.sh` | —— | `check-shell-compat.sh` + 全量单测 |
-| 改 `Dockerfile` 的 `ENV` / 装包列表 | —— | `check-runtime-shell.sh`（构建期自动跑） |
+| 改动                                | 必须同步                                               | 自检                                     |
+| ----------------------------------- | ------------------------------------------------------ | ---------------------------------------- |
+| 新增 `runme-test_*.sh`              | `case-ids.tsv`、`run-*-all.sh`、README 两张表          | `check-case-ids.sh`                      |
+| 给 Case 加/改标签                   | release-config 的 `CASE_TYPE`、README 标签表           | `case-filter.sh` 手工验算                |
+| 文档里新增/修改外部 URL             | `assets-manifest.tsv`、重建镜像                        | `check-manifest.sh`                      |
+| 文档块改用 `runme_run_with_assets`  | `lynx/docs-refs.tsv` 指到文档特性分支                  | `/image-build` 出镜像真跑                |
+| 升级 runme/allure/kubectl           | `Dockerfile` 的 ARG、重建镜像                          | 构建期版本断言                           |
+| 升级 istio                          | 只改文档、重建镜像                                     | 构建期 istioctl 版本断言                 |
+| 新增发版分支                        | 本节发版版本矩阵；`.tekton` 分支正则（命名形状变化时） | `compute_tags_test.sh`                   |
+| 新增 L5 插件包                      | release-config 的 `l5_plugin_packages`                 | verify-only 的未上架报错                 |
+| 改任何 `.sh`                        | ——                                                     | `check-shell-compat.sh` + 全量单测       |
+| 改 `Dockerfile` 的 `ENV` / 装包列表 | ——                                                     | `check-runtime-shell.sh`（构建期自动跑） |

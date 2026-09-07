@@ -63,11 +63,11 @@ Harbor 账号对目标项目/仓库的 push 权限，不要另建同名但内容
 
 ## 3. tag 规则与文档 ref
 
-| 分支 | 产出的 tag |
-| --- | --- |
-| `main` | `latest`、`main-<短 commit>` |
-| `release-mesh-x.y` | `release-mesh-x.y-<短 commit>` |
-| 其余特性分支 | 只有 `<净化后的分支名>-<短 commit>`，无浮动 tag |
+| 分支               | 产出的 tag                                      |
+| ------------------ | ----------------------------------------------- |
+| `main`             | `latest`、`main-<短 commit>`                    |
+| `release-mesh-x.y` | `release-mesh-x.y-<短 commit>`                  |
+| 其余特性分支       | 只有 `<净化后的分支名>-<短 commit>`，无浮动 tag |
 
 分支名净化：非 `[A-Za-z0-9_.-]` 换成 `-`，去掉开头的 `.` 与 `-`，截断到 120 字符。
 `feat/xxx` 里的斜杠必须换掉，否则会被当成镜像仓库路径分隔符。
@@ -129,6 +129,7 @@ Repository 和 PipelineRun 的权限。
    `connector.namespace` 已弃用；多 Connector 或同命名空间 Connector 都统一按
    Edge/Connector 文档使用 `connectors` 属性；同命名空间时填写 Connector 名称，跨命名空间
    的格式以管理员在当前 Edge 版本确认的文档为准。
+
 2. **确认构建期网络**：`Dockerfile` 的 Ubuntu 22.04 基础镜像从公司 Harbor 的
    `build-harbor.alauda.cn/ops/ubuntu:22.04` 拉取；后续仍需访问 GitHub 和公司 Minio
    下载文档仓库及工具。若 `business-build` 禁止这些公网地址，请让平台提供内网镜像/代理；

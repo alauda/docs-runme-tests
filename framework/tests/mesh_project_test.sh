@@ -9,6 +9,7 @@ export FRAMEWORK_ROOT
 
 # shellcheck disable=SC1090,SC1091
 source "$FRAMEWORK_ROOT/framework/common.sh"
+source "$FRAMEWORK_ROOT/framework/verify.sh"
 source "$FRAMEWORK_ROOT/projects/mesh/project.sh"
 
 T_PASS=0
@@ -114,9 +115,53 @@ test_relax_psa_for_root_gateway() {
     rm -f "$calls_file"
 }
 
+test_retry_runme_verify() {
+    printf '\n== retry_runme_verify ==\n'
+
+    local calls_file
+    calls_file="$(mktemp)"
+
+    # 桩：前 N 次失败，之后成功；调用次数记到 calls_file
+    runme() {
+        printf 'x\n' >> "$calls_file"
+        local n
+        n=$(wc -l < "$calls_file" | tr -d ' ')
+        if [ "$n" -le "${STUB_FAIL_TIMES:-0}" ]; then
+            echo "container not found"
+            return 1
+        fi
+        echo "ok-output"
+        return 0
+    }
+    sleep() { :; }   # 免等待
+
+    # 1) 首次即成功 —— 只调用一次
+    : > "$calls_file"; RETRY_RUNME_OUTPUT=
+    STUB_FAIL_TIMES=0 retry_runme_verify blk __cmp_contains "ok-output" 5 1 >/dev/null 2>&1
+    check_eq "首次成功只执行一次" "$(wc -l < "$calls_file" | tr -d ' ')" "1"
+    check_eq "输出回填 RETRY_RUNME_OUTPUT" "$RETRY_RUNME_OUTPUT" "ok-output"
+
+    # 2) 前两次 exec 失败 —— 第三次成功，返回 0
+    : > "$calls_file"
+    STUB_FAIL_TIMES=2 retry_runme_verify blk __cmp_contains "ok-output" 5 1 >/dev/null 2>&1
+    check_eq "瞬时失败后重试成功" "$?" "0"
+    check_eq "共执行三次" "$(wc -l < "$calls_file" | tr -d ' ')" "3"
+
+    # 3) 块本身成功但输出不匹配 —— 耗尽重试后返回 1
+    : > "$calls_file"
+    STUB_FAIL_TIMES=0 retry_runme_verify blk __cmp_contains "never-match" 3 1 >/dev/null 2>&1
+    check_eq "断言始终不过则返回 1" "$?" "1"
+    check_eq "按 attempts 次数耗尽" "$(wc -l < "$calls_file" | tr -d ' ')" "3"
+
+    unset -f runme sleep
+    unset STUB_FAIL_TIMES
+    rm -f "$calls_file"
+}
+
 main() {
     test_fetch_platform_ca_fallback_stdout_is_pure
     test_relax_psa_for_root_gateway
+    test_retry_runme_verify
     printf '\n==================================\n'
     printf '通过: %d  失败: %d\n' "$T_PASS" "$T_FAIL"
     [ "$T_FAIL" -eq 0 ]

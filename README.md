@@ -244,11 +244,11 @@ export TRACING_VERIFY_TRACE_QUERY=false
 
 **项目专属变量**（各项目 `project_check_env` 校验）：
 
-| 项目 | 必需 | 条件必需 / 软依赖 |
-| --- | --- | --- |
-| mesh | 无（`PKG_*_URL` 全部可选，留空即 verify-only） | 提供地址时按原逻辑下载上架；`ENABLE_METALLB=true` 时若也未预上架 metallb / metallb-operator，安装会报错 |
-| otel | 无（同上） | `USE_MESH_V2_TEST_SUITE_PLUGIN=true` 时需 `PKG_MESH_V2_TEST_SUITE_URL` 或平台已预上架 |
-| tracing | 无（同上） | ES / OpenSearch 存储后端配置同原表；Jaeger v2 集群插件需 `PKG_JAEGER_CLUSTER_PLUGIN_URL` 或平台已预上架 |
+| 项目    | 必需                                           | 条件必需 / 软依赖                                                                                       |
+| ------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| mesh    | 无（`PKG_*_URL` 全部可选，留空即 verify-only） | 提供地址时按原逻辑下载上架；`ENABLE_METALLB=true` 时若也未预上架 metallb / metallb-operator，安装会报错 |
+| otel    | 无（同上）                                     | `USE_MESH_V2_TEST_SUITE_PLUGIN=true` 时需 `PKG_MESH_V2_TEST_SUITE_URL` 或平台已预上架                   |
+| tracing | 无（同上）                                     | ES / OpenSearch 存储后端配置同原表；Jaeger v2 集群插件需 `PKG_JAEGER_CLUSTER_PLUGIN_URL` 或平台已预上架 |
 
 > 注：`METALLB_EXTERNAL_ADDRESSES_JSON`（外部 IP 地址池地址，JSON 数组）在 `ENABLE_METALLB=true` 时由 `setup_external_ip_pools` 创建地址池时校验（不在 `project_check_env`）：多集群 Case 6/7 需含 `cluster=$EAST_CLUSTER_NAME`/`$WEST_CLUSTER_NAME` 条目；单集群入口网关 LoadBalancer 测试（Case 3/5 的 exposing-\* 文档）需含 `cluster=$SINGLE_CLUSTER_NAME` 条目。`ENABLE_METALLB != true` 时这两组测试由 `run-mesh-all.sh` 直接跳过，不会走到这里。
 >
@@ -273,12 +273,12 @@ export TRACING_VERIFY_TRACE_QUERY=false
 
 可选环境变量：
 
-| 变量                     | 默认                | 说明                                             |
-| ------------------------ | ------------------- | ------------------------------------------------ |
-| `ACP_AUTH_CACHE_DIR`     | `<仓库根>/.acp-auth` | token 缓存目录（600 权限，已 gitignore）         |
-| `ACP_AUTH_NO_CACHE`      | `false`             | `true` 时不读写缓存，每次重新登录                 |
-| `ACP_AUTH_EXPIRY_MARGIN` | `1800`              | 缓存剩余有效期低于该秒数时视为过期                |
-| `ACP_AUTH_DEX_CLIENT_ID` | `alauda-auth`       | dex client id                                    |
+| 变量                     | 默认                     | 说明                                             |
+| ------------------------ | ------------------------ | ------------------------------------------------ |
+| `ACP_AUTH_CACHE_DIR`     | `<仓库根>/.acp-auth`     | token 缓存目录（600 权限，已 gitignore）         |
+| `ACP_AUTH_NO_CACHE`      | `false`                  | `true` 时不读写缓存，每次重新登录                |
+| `ACP_AUTH_EXPIRY_MARGIN` | `1800`                   | 缓存剩余有效期低于该秒数时视为过期               |
+| `ACP_AUTH_DEX_CLIENT_ID` | `alauda-auth`            | dex client id                                    |
 | `ACP_AUTH_DEX_CONNECTOR` | 自动探测（通常 `local`） | dex connector，接对接外部 IdP 的环境时可显式指定 |
 
 账号触发验证码 / 二次验证 / 首次登录改密码时无法自动登录，此时改为手工配置 `ACP_API_TOKEN`。
@@ -374,15 +374,15 @@ docker build --build-arg IMAGE_TAG=local-dev -t docs-runme-tests:local-dev .
 镜像 `build-harbor.alauda.cn/asm/docs-runme-tests:<tag>`，入口 `command: docs-test`，
 参数 `args: [init|mesh|otel|tracing]`。
 
-| lynx 内置变量 | 映射到框架变量 | 备注 |
-| --- | --- | --- |
-| `$API_URL` | `PLATFORM_ADDRESS` | |
-| `$USERNAME` / `$PASSWORD` | `PLATFORM_USERNAME` / `PLATFORM_PASSWORD` | |
-| `$REGION_NAME` | `SINGLE_CLUSTER_NAME` | 被测集群 |
-| `$GLOBAL_EXTERNAL_IPPOOL` | `METALLB_EXTERNAL_ADDRESSES_JSON` | 按 region 取值，`init` 用它建地址池 |
-| `TEST_RESULT_DIR` | 报告根目录 | 未注入时缺省 `/app/report` |
-| `CASE_TYPE` | Case / DocTest 过滤表达式 | 仅支持 `and` / `not` 合取式 |
-| `$TOKEN` | **忽略** | lynx 不替换它，框架用账号密码经 dex 换 token |
+| lynx 内置变量             | 映射到框架变量                            | 备注                                         |
+| ------------------------- | ----------------------------------------- | -------------------------------------------- |
+| `$API_URL`                | `PLATFORM_ADDRESS`                        |                                              |
+| `$USERNAME` / `$PASSWORD` | `PLATFORM_USERNAME` / `PLATFORM_PASSWORD` |                                              |
+| `$REGION_NAME`            | `SINGLE_CLUSTER_NAME`                     | 被测集群                                     |
+| `$GLOBAL_EXTERNAL_IPPOOL` | `METALLB_EXTERNAL_ADDRESSES_JSON`         | 按 region 取值，`init` 用它建地址池          |
+| `TEST_RESULT_DIR`         | 报告根目录                                | 未注入时缺省 `/app/report`                   |
+| `CASE_TYPE`               | Case / DocTest 过滤表达式                 | 仅支持 `and` / `not` 合取式                  |
+| `$TOKEN`                  | **忽略**                                  | lynx 不替换它，框架用账号密码经 dex 换 token |
 
 模板里需要写死的变量：`EAST_CLUSTER_NAME`、`WEST_CLUSTER_NAME`、`GLOBAL_CLUSTER_NAME=global`、
 `ENABLE_METALLB`、`USE_MESH_V2_TEST_SUITE_PLUGIN=true`、`IS_DUAL_STACK`、`TRACING_ACP_ES_CLUSTER`、
@@ -410,25 +410,25 @@ mesh Case 3 / Case 5 里调用链平台的装 / 卸两步走 OpenSearch 链（Do
 保留标签 `always` 恒被选中，用于环境初始化这类必须先跑的前置 Case。
 `CASE_TYPE` 未设置时全部选中——本地手工跑行为不变。
 
-| 项目 | Case | 标签 |
-| --- | --- | --- |
-| mesh | 1 环境初始化 | `always install` |
-| mesh | 2 双栈网格安装 | `dualstack install` |
-| mesh | 3 单网格安装与应用（含调用链） | `smoke install sidecar` |
-| mesh | 4 Istio HA 配置 | `ha install` |
-| mesh | 5 Ambient Mode 安装 | `smoke install ambient` |
-| mesh | 6 / 7 多集群 | `multicluster` |
-| mesh | 8 / 9 / 10 更新策略 | `update` |
-| mesh | 11 Ambient 更新 | `update ambient` |
-| otel | 1 安装与卸载 | `smoke install` |
-| otel | 2 Java 自动注入示例 | `install java elasticsearch` |
-| tracing | 1 环境初始化 | `smoke install` |
-| tracing | 2 安装与卸载（ES） | `install elasticsearch` |
-| tracing | 3 安装与卸载（OpenSearch） | `install opensearch` |
-| tracing | 4 SPM 多副本（ES） | `ha elasticsearch` |
-| tracing | 5 SPM 多副本（OpenSearch） | `ha opensearch` |
-| tracing | 6 v2.0→v2.1 升级（ES） | `upgrade elasticsearch` |
-| tracing | 7 v2.0→v2.1 升级（OpenSearch） | `upgrade opensearch` |
+| 项目    | Case                           | 标签                         |
+| ------- | ------------------------------ | ---------------------------- |
+| mesh    | 1 环境初始化                   | `always install`             |
+| mesh    | 2 双栈网格安装                 | `dualstack install`          |
+| mesh    | 3 单网格安装与应用（含调用链） | `smoke install sidecar`      |
+| mesh    | 4 Istio HA 配置                | `ha install`                 |
+| mesh    | 5 Ambient Mode 安装            | `smoke install ambient`      |
+| mesh    | 6 / 7 多集群                   | `multicluster`               |
+| mesh    | 8 / 9 / 10 更新策略            | `update`                     |
+| mesh    | 11 Ambient 更新                | `update ambient`             |
+| otel    | 1 安装与卸载                   | `smoke install`              |
+| otel    | 2 Java 自动注入示例            | `install java elasticsearch` |
+| tracing | 1 环境初始化                   | `smoke install`              |
+| tracing | 2 安装与卸载（ES）             | `install elasticsearch`      |
+| tracing | 3 安装与卸载（OpenSearch）     | `install opensearch`         |
+| tracing | 4 SPM 多副本（ES）             | `ha elasticsearch`           |
+| tracing | 5 SPM 多副本（OpenSearch）     | `ha opensearch`              |
+| tracing | 6 v2.0→v2.1 升级（ES）         | `upgrade elasticsearch`      |
+| tracing | 7 v2.0→v2.1 升级（OpenSearch） | `upgrade opensearch`         |
 
 DocTest 级标签有两个：
 
@@ -512,13 +512,13 @@ mesh Case 3/5 的三篇 `exposing-*` 入口网关文档、mesh Case 6/7 多集�
 
 ### otel（opentelemetry-docs）
 
-| 文档名称                 | 执行命令                                                                               |
-| ------------------------ | -------------------------------------------------------------------------------------- |
-| 自动创建 RBAC 资源       | `./run.sh --project otel --file rbac-resources`                                        |
-| OpenTelemetry v2 安装    | `./run.sh --project otel --file install-opentelemetry`                                 |
-| 无 Sidecar 发送遥测数据  | `./run.sh --project otel --file without-sidecar`                                       |
-| OpenTelemetry v2 卸载    | `./run.sh --project otel --file uninstalling-opentelemetry [--skip-operator-and-crds]` |
-| Java 自动注入示例        | `./run.sh --project otel --file java-instrumentation`                                  |
+| 文档名称                | 执行命令                                                                               |
+| ----------------------- | -------------------------------------------------------------------------------------- |
+| 自动创建 RBAC 资源      | `./run.sh --project otel --file rbac-resources`                                        |
+| OpenTelemetry v2 安装   | `./run.sh --project otel --file install-opentelemetry`                                 |
+| 无 Sidecar 发送遥测数据 | `./run.sh --project otel --file without-sidecar`                                       |
+| OpenTelemetry v2 卸载   | `./run.sh --project otel --file uninstalling-opentelemetry [--skip-operator-and-crds]` |
+| Java 自动注入示例       | `./run.sh --project otel --file java-instrumentation`                                  |
 
 > 安装覆盖 `install-opentelemetry.mdx` 的「Installing the Operator」与「Deploying the OpenTelemetry Collector」CLI 章节；卸载覆盖 `uninstalling-opentelemetry.mdx` 的「Uninstalling via the CLI」与「Deleting custom resource definitions」章节。`--skip-operator-and-crds` 保留 Operator subscription 与 CRDs，便于跨 suite 场景复用。
 >
@@ -530,13 +530,13 @@ mesh Case 3/5 的三篇 `exposing-*` 入口网关文档、mesh Case 6/7 多集�
 
 ### tracing（distributed-tracing-docs）
 
-| 文档名称                          | 执行命令                                                                         |
-| --------------------------------- | -------------------------------------------------------------------------------- |
-| 分布式调用链安装（Elasticsearch） | `./run.sh --project tracing --file installing-distributed-tracing-elasticsearch` |
-| 分布式调用链安装（OpenSearch）    | `./run.sh --project tracing --file installing-distributed-tracing-opensearch`    |
-| 分布式调用链卸载                  | `./run.sh --project tracing --file uninstalling-distributed-tracing [--skip-operator-and-crds] [--skip-cluster-plugin]` |
-| 分布式调用链 v2.0→v2.1 升级（Elasticsearch） | `./run.sh --project tracing --file upgrading-distributed-tracing-elasticsearch` |
-| 分布式调用链 v2.0→v2.1 升级（OpenSearch）    | `./run.sh --project tracing --file upgrading-distributed-tracing-opensearch`    |
+| 文档名称                                     | 执行命令                                                                                                                |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| 分布式调用链安装（Elasticsearch）            | `./run.sh --project tracing --file installing-distributed-tracing-elasticsearch`                                        |
+| 分布式调用链安装（OpenSearch）               | `./run.sh --project tracing --file installing-distributed-tracing-opensearch`                                           |
+| 分布式调用链卸载                             | `./run.sh --project tracing --file uninstalling-distributed-tracing [--skip-operator-and-crds] [--skip-cluster-plugin]` |
+| 分布式调用链 v2.0→v2.1 升级（Elasticsearch） | `./run.sh --project tracing --file upgrading-distributed-tracing-elasticsearch`                                         |
+| 分布式调用链 v2.0→v2.1 升级（OpenSearch）    | `./run.sh --project tracing --file upgrading-distributed-tracing-opensearch`                                            |
 
 > Elasticsearch 安装测试默认从 `TRACING_ACP_ES_CLUSTER` 指定的 ACP 集群（默认 `global`）读取 log-center Elasticsearch 配置；将其设为空时改用 `TRACING_ES_*` 手动配置（该加载逻辑位于 Elasticsearch 安装测试脚本，不再由 `project_prepare` 全局执行）。`TRACING_INSTALL_ES=true` 且 `PKG_LOG_CENTER_URL` 非空时，步骤 0 会先把 logcenter 集群插件（Single Node 模式）自动安装到该集群——对应集群已安装过则跳过（安装逻辑见 `projects/tracing/elasticsearch.sh`）。OpenSearch 安装测试默认自动安装存储后端：`TRACING_INSTALL_OPENSEARCH=true`（默认）且 `PKG_ACP_STORAGE_OPERATOR_URL` / `PKG_TOPOLVM_OPERATOR_URL` 齐全时，步骤 0 自动安装 TopoLVM + OpenSearch（幂等）并用实际结果覆盖 `TRACING_OPENSEARCH_*`——安装用到的三个插件包（`acp-storage-operator` / `topolvm-operator` / `opensearch-operator`）都由步骤 0 先查 `ArtifactVersion` 再决定是否下载上架，已上架的跳过（`opensearch-operator` 的包 3GB 级别，重复下载代价高），地址留空即 verify-only、未预上架则报错退出——OpenSearch 的 HTTP API 与 Dashboards 各由一条 Ingress 以 `/clusters/<集群名>/opensearch[-dashboards]` 子路径暴露，`TRACING_OPENSEARCH_ENDPOINT` 取前者（平台地址 + 子路径，集群内外都可访问，不再是集群内 svc 域名）；条件不满足时降级用手动 `TRACING_OPENSEARCH_ENDPOINT/USER/PASS`，两者皆缺则该测试 SKIPPED（安装逻辑见 `projects/tracing/opensearch.sh`）。卸载测试存储无关，按 Jaeger 命名空间是否存在判定是否执行；OpenSearch/TopoLVM 作为环境级存储后端不随卸载清理。卸载测试覆盖 `uninstalling-distributed-tracing.mdx` 的「Uninstalling via the CLI」全部章节，最后一步按「(Optional) Uninstall the Alauda Build of Jaeger v2 Cluster Plugin」在 Global 集群按 label 删除该插件的 `ModuleInfo`（平台会把它重命名为 `<cluster>-<hash>`，只能按 label 定位），再回目标集群确认镜像清单 ConfigMap 已回收；`--skip-cluster-plugin` 保留该插件，`--skip-operator-and-crds` 保留 OTel Operator subscription 与 CRDs——编排脚本里的调用两个都带，供后续 case 复用。两个安装测试的步骤 1 会先按文档「Installing the Alauda Build of Jaeger v2 Cluster Plugin」CLI 章节安装 Jaeger v2 集群插件：`PKG_JAEGER_CLUSTER_PLUGIN_URL` 非空时若未上架会自动下载并 violet push 到 Global；留空则进入 verify-only 模式，要求该插件已在 Global 集群预上架，否则报错退出并提示确认 release-config 是否已声明该包；已安装则两种模式都幂等复用（两篇文档该章节内容一致，安装逻辑抽象为按 runme 前缀参数化的共享函数，见 `projects/tracing/jaeger-plugin.sh`），步骤 2 自动安装前置依赖 OpenTelemetry v2 Operator（其代码块位于 `opentelemetry-docs`）。两篇升级测试（v2.0 → v2.1）要求环境上**先有一套 v2.0 部署**（Jaeger 2.16.0 + Alauda Build of OpenTelemetry v2 Operator 0.147.0），本框架不负责搭建：脚本开头按「Jaeger 命名空间与实例存在 / 存储后端与本篇匹配 / 配置里带 v2.0 特征字段（ES 看 `use_aliases`、`use_ilm`，OpenSearch 看 `indices.spans.date_layout`）」三条做门槛，任一不满足即 `skip_test_env` 退出，不会误伤 Case 2-5 装出来的 v2.1 环境；升级完成后重复执行同样会因门槛而 SKIPPED。两篇文档 23 / 29 个代码块中有 16 个逐字节相同（集群插件安装、Operator 升级、otel Collector 配置迁移、两段 SPM patch、收尾验证），已按 runme 前缀参数化抽到 `distributed-tracing-docs/docs/en/upgrading/_upgrade-common.sh`（落点与同仓 `_spm-ha-common.sh` 一致）；差异只剩存储侧中段与两次 patch 的先后顺序——**Elasticsearch 篇先换 oauth2-proxy 镜像再打配置 patch，OpenSearch 篇必须反过来**，否则那次重启会让 v2.16 用默认的 `create_mappings=true` 覆盖掉 `jaeger-es-rollover init` 刚写的索引模板。ISM policy 的两个辅助函数（清理遗留 policy、等待 ISM 接管写索引）由 OpenSearch 安装测试与升级测试共用，位于 `projects/tracing/opensearch.sh`。两段 (Optional) SPM 章节按当前部署是否配了 spanmetrics connector 自动决定跑不跑，`TRACING_TEST_SPM=false` 可强制跳过。两个安装测试在 telemetrygen 之后、SPM 章节之前还有一步可选的调用链查询验证（`TRACING_VERIFY_TRACE_QUERY=true` 才执行，默认关闭）：走 ACP 的 kube-apiserver Service 代理（`.../services/<Jaeger 实例名>-collector-extension:16686/proxy<JAEGER_BASEPATH>/api/v3/...`，不经 Jaeger Ingress 与 oauth2-proxy，只用引擎已备好的 ACP token）依次查 `/services`、`/operations`、`/trace-summaries`，断言时间窗口内至少查到 2 条调用链（门槛取 2 而不是 1：只有 1 条时无法区分「链路真的通了」和「刚好撞上一条孤立记录」，可用 `TRACING_VERIFY_TRACE_MIN_COUNT` 调整）——span 从写入到可查询隔着 collector 的 batch 与存储的 refresh，所以三步在同一轮里按序执行、任一步不通就整轮重试并重算时间窗口，逻辑两篇共用（见 `projects/tracing/trace-query.sh`，单测 `framework/tests/tracing_trace_query_test.sh`）。它按两个服务名各查一次：先是 `jaeger`（Jaeger 自身的调用链，`--skip-telemetrygen` 的编排场景下也一定有），真跑过 telemetrygen 时再按 `telemetrygen` 查一次——后者走的是业务侧 span 经 OTel Collector → Jaeger → 存储的完整通路，正是文档 Verification 里「在 Service 下拉框选 telemetrygen 再 Find Traces」那一步的自动化。SPM 章节重新部署 telemetrygen 之后（步骤 27.1）还会再验一次：那段 patch 重启过 Jaeger、又把 OTel Collector 改成 `load_balancing` 按 service 路由，两处都可能把 span 的写入通路弄坏，而 spanmetrics 指标走的是 monitoring 存储，指标正常并不能说明调用链还写得进存储、查得出来。它验证的是 `jaeger_storage` 的存储地址 / 索引前缀 / 凭据、`jaeger_query` 的 `base_path`，以及 rollover（ES）/ ISM（OpenSearch）建出来的读别名——这些配错时 Deployment 照样 Ready，只有真查一次 Query API 才暴露；SPM 不在其验证范围内。
 
@@ -644,14 +644,14 @@ for t in framework/tests/*_test.sh; do bash "$t" >/dev/null || echo "FAIL: $t"; 
 
 ## 故障排除
 
-| 问题                      | 排查                                                                       |
-| ------------------------- | -------------------------------------------------------------------------- |
-| 找不到 runme / violet     | 执行 `./run.sh --project <项目> --init-only` 重新安装工具                  |
-| kubeconfig 获取失败 / 401 | 检查 `PLATFORM_ADDRESS` 是否可达、集群名是否正确；token 过期会自动重新获取，可 `rm -rf .acp-auth` 强制刷新 |
+| 问题                        | 排查                                                                                                             |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| 找不到 runme / violet       | 执行 `./run.sh --project <项目> --init-only` 重新安装工具                                                        |
+| kubeconfig 获取失败 / 401   | 检查 `PLATFORM_ADDRESS` 是否可达、集群名是否正确；token 过期会自动重新获取，可 `rm -rf .acp-auth` 强制刷新       |
 | 自动获取 ACP API Token 失败 | 核对 `PLATFORM_USERNAME` / `PLATFORM_PASSWORD`；账号触发验证码、二次验证或需改密码时改为手工配置 `ACP_API_TOKEN` |
-| 未找到测试脚本            | 确认 `repos.conf` 中对应仓库存在；脚本名为 `runme-test_<file>.sh`          |
-| 测试脚本在多个项目重名    | 用 `--project` 显式指定                                                    |
-| 测试执行失败              | `cd` 到对应文档仓库手动执行失败的 `runme run <block>` 调试                 |
+| 未找到测试脚本              | 确认 `repos.conf` 中对应仓库存在；脚本名为 `runme-test_<file>.sh`                                                |
+| 测试脚本在多个项目重名      | 用 `--project` 显式指定                                                                                          |
+| 测试执行失败                | `cd` 到对应文档仓库手动执行失败的 `runme run <block>` 调试                                                       |
 
 ## 参考资料
 

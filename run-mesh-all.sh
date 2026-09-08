@@ -133,6 +133,10 @@ if (
     ./run.sh --project mesh --file deploying-ambient-bookinfo --no-cleanup
     # 为 bookinfo 命名空间启用严格 mTLS（PeerAuthentication STRICT）
     ./run.sh --project mesh --file mtls --no-cleanup
+    # 调用链集成：config-with-service-mesh 需要 jaeger-system 存在（要给它打服务发现标签），
+    # 而 Case 3 结尾已把调用链卸掉，故此处需先装回来——同 Case 3 的顺序：先装调用链平台，
+    # 再配置网格上报，再装含调用链集成的 kiali。
+    ./run.sh --project tracing --file installing-distributed-tracing-elasticsearch --skip-telemetrygen
     ./run.sh --project mesh --file config-with-service-mesh --no-cleanup
     ./run.sh --project mesh --file kiali
     ./run.sh --project mesh --file waypoint-proxies
@@ -149,6 +153,9 @@ if (
     ./run.sh --project mesh --file mtls --cleanup-only
     # 卸载 kiali
     ./run.sh --project mesh --file uninstalling-alauda-build-of-kiali
+    # 卸载网格调用链配置与调用链平台（逆序，同 Case 3）
+    ./run.sh --project mesh --file config-with-service-mesh --cleanup-only
+    ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds
     # 卸载 ambient 网格
     ./run.sh --project mesh --file uninstalling-alauda-service-mesh-in-ambient-mode
     # 清理 bookinfo

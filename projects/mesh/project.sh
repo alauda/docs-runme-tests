@@ -105,6 +105,79 @@ maybe_gen_bookinfo_traffic() {
     return 0
 }
 
+# 重试执行 runme 块并断言其输出
+# 用法: retry_runme_verify <block> <cmp_fn> <expected> [attempts] [interval]
+#   cmp_fn   —— framework/verify.sh 的 __cmp_lines / __cmp_contains，签名 (输出, 期望)
+#   最后一次的输出回填到 RETRY_RUNME_OUTPUT，供调用方打印失败详情
+#
+# 适用边界（重要）:
+#   仅用于「被断言的状态本身是异步收敛的」——即产品行为正确，只是达成终态需要时间，
+#   一次性断言会踩到中间窗口。典型例子：IstioRevision 已消失但其 istiod Pod 还在
+#   优雅终止、等待 GC 回收，两者异步。
+#
+#   不得用于掩盖产品缺陷。若某个场景是产品不支持或存在 bug，用例就应当如实失败，
+#   由测试暴露问题，而不是靠加长重试窗口把它熬过去——那样只会让缺陷在验收中隐身。
+#   参考反例：ambient 模式在 kube-ovn underlay 组网下健康检查探针 100% 超时，
+#   应用必然 CrashLoopBackOff（详见 my-foam/area/istio/ambient-mode/）。该场景下
+#   相关用例应当失败，此前为其添加的重试已移除。
+retry_runme_verify() {
+    local block="$1" cmp_fn="$2" expected="$3"
+    local attempts="${4:-12}" interval="${5:-5}"
+    local output="" attempt
+
+    for ((attempt = 1; attempt <= attempts; attempt++)); do
+        if output=$(runme run "$block" 2>&1) && "$cmp_fn" "$output" "$expected"; then
+            RETRY_RUNME_OUTPUT="$output"
+            return 0
+        fi
+        if [ "$attempt" -lt "$attempts" ]; then
+            log_warn "$block 验证未通过，等待 ${interval} 秒后重试 ($((attempt + 1))/$attempts)..."
+            sleep "$interval"
+        fi
+    done
+
+    RETRY_RUNME_OUTPUT="$output"
+    return 1
+}
+
+# 重试执行命令并断言其输出（retry_runme_verify 的命令版）
+# 用法: retry_cmd_verify <cmd> <cmp_fn> <expected> [attempts] [interval]
+#   cmd      —— 完整命令串，内部 eval 执行；适用于不是直接 `runme run` 的场景，
+#               典型如「渲染出 runme 块后经 curl pod 发起」的外部访问验证
+#   cmp_fn   —— framework/verify.sh 的 __cmp_lines / __cmp_contains / __cmp_elided
+#   最后一次的输出回填到 RETRY_CMD_OUTPUT，供调用方打印失败详情
+#
+# 适用边界（重要）: 与 retry_runme_verify 完全一致——仅用于「被断言的状态本身是异步
+# 收敛的」，不得用于掩盖产品缺陷。
+#
+#   本函数新增时的典型场景：LoadBalancer 的**数据面**就绪晚于控制面。
+#   `.status.loadBalancer.ingress` 由 LB controller 回填，而真正让流量可达的是数据面
+#   （MetalLB L2 模式下是 speaker 的 announce + GARP；云厂商 LB 则是后端注册与健康检查），
+#   两者异步且 controller 先完成，因此 `_wait_for_ingress_lb` 返回时数据面未必已就绪。
+#   2026-09-07 g5(KubeOS on DCS) 实测：集群内**第一个** LoadBalancer 上二者相差约 2 秒
+#   （curl 起于 12:40:41，speaker 首次 serviceAnnounced 在 12:40:43），单次断言踩中这个
+#   窗口直接失败；而同一 VIP 的后续用例（Gateway API sidecar / ambient、多集群东西向
+#   网关）全部通过——路径已预热。这属于「产品行为正确、终态需要时间」，用重试等待收敛。
+retry_cmd_verify() {
+    local cmd="$1" cmp_fn="$2" expected="$3"
+    local attempts="${4:-12}" interval="${5:-5}"
+    local output="" attempt
+
+    for ((attempt = 1; attempt <= attempts; attempt++)); do
+        if output=$(eval "$cmd" 2>&1) && "$cmp_fn" "$output" "$expected"; then
+            RETRY_CMD_OUTPUT="$output"
+            return 0
+        fi
+        if [ "$attempt" -lt "$attempts" ]; then
+            log_warn "命令验证未通过，等待 ${interval} 秒后重试 ($((attempt + 1))/$attempts)..."
+            sleep "$interval"
+        fi
+    done
+
+    RETRY_CMD_OUTPUT="$output"
+    return 1
+}
+
 # ==============================================================================
 # 网关安装 / Linux 内核兼容 公共函数
 # ------------------------------------------------------------------------------

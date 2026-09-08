@@ -39,14 +39,15 @@ log_header "开始执行 otel 项目所有测试任务"
 # ------------------------------------------------------------------
 if case_begin_if "1" "OpenTelemetry v2 安装与卸载测试" smoke install; then
     if (
-        set -e
-        ./run.sh --project otel --file rbac-resources --force-init --no-cleanup
-        ./run.sh --project otel --file install-opentelemetry --force-init
-        ./run.sh --project otel --file without-sidecar --no-cleanup
+        __case_rc=0
+        case_step ./run.sh --project otel --file rbac-resources --force-init --no-cleanup
+        case_step ./run.sh --project otel --file install-opentelemetry --force-init
+        case_step ./run.sh --project otel --file without-sidecar --no-cleanup
         # 清理
-        ./run.sh --project otel --file without-sidecar --cleanup-only
-        ./run.sh --project otel --file uninstalling-opentelemetry
-        ./run.sh --project otel --file rbac-resources --cleanup-only
+        case_step ./run.sh --project otel --file without-sidecar --cleanup-only
+        case_step ./run.sh --project otel --file uninstalling-opentelemetry
+        case_step ./run.sh --project otel --file rbac-resources --cleanup-only
+        exit "$__case_rc"
     ); then
         case_end 0
     else
@@ -69,12 +70,13 @@ fi
 # ------------------------------------------------------------------
 if case_begin_if "2" "Java 自动注入示例服务 + 分布式调用链 (Java Instrumentation Demo)" install java elasticsearch; then
     if (
-        set -e
-        ./run.sh --project tracing --file installing-distributed-tracing-elasticsearch --skip-telemetrygen --force-init
-        ./run.sh --project otel --file java-instrumentation --no-cleanup
+        __case_rc=0
+        case_step ./run.sh --project tracing --file installing-distributed-tracing-elasticsearch --skip-telemetrygen --force-init
+        case_step ./run.sh --project otel --file java-instrumentation --no-cleanup
         # 清理
-        ./run.sh --project otel --file java-instrumentation --cleanup-only
-        ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds --skip-cluster-plugin
+        case_step ./run.sh --project otel --file java-instrumentation --cleanup-only
+        case_step ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds --skip-cluster-plugin
+        exit "$__case_rc"
     ); then
         case_end 0
     else

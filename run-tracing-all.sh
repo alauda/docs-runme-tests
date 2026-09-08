@@ -68,8 +68,9 @@ log_header "开始执行 tracing 项目所有测试任务"
 # ------------------------------------------------------------------
 if case_begin_if "1" "环境初始化（默认 SINGLE_CLUSTER_NAME）" smoke install; then
     if (
-        set -e
-        ./run.sh --project tracing --init-only
+        __case_rc=0
+        case_step ./run.sh --project tracing --init-only
+        exit "$__case_rc"
     ); then
         case_end 0
     else
@@ -86,10 +87,11 @@ fi
 # ------------------------------------------------------------------
 if case_begin_if "2" "分布式调用链安装与卸载测试 (Elasticsearch)" install elasticsearch; then
     if (
-        set -e
-        ./run.sh --project tracing --file installing-distributed-tracing-elasticsearch --force-init
+        __case_rc=0
+        case_step ./run.sh --project tracing --file installing-distributed-tracing-elasticsearch --force-init
         # 清理
-        ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds --skip-cluster-plugin
+        case_step ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds --skip-cluster-plugin
+        exit "$__case_rc"
     ); then
         case_end 0
     else
@@ -108,10 +110,11 @@ fi
 # ------------------------------------------------------------------
 if case_begin_if "3" "分布式调用链安装与卸载测试 (OpenSearch)" install opensearch; then
     if (
-        set -e
-        ./run.sh --project tracing --file installing-distributed-tracing-opensearch
+        __case_rc=0
+        case_step ./run.sh --project tracing --file installing-distributed-tracing-opensearch
         # 清理
-        ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds --skip-cluster-plugin
+        case_step ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds --skip-cluster-plugin
+        exit "$__case_rc"
     ); then
         case_end 0
     else
@@ -128,12 +131,13 @@ fi
 # ------------------------------------------------------------------
 if case_begin_if "4" "SPM 多副本（高可用）验证 (Elasticsearch)" ha elasticsearch; then
     if (
-        set -e
-        ./run.sh --project tracing --file installing-distributed-tracing-elasticsearch --skip-telemetrygen
-        ./run.sh --project tracing --file spm-ha-elasticsearch --no-cleanup
-        ./run.sh --project tracing --file spm-ha-elasticsearch --cleanup-only
+        __case_rc=0
+        case_step ./run.sh --project tracing --file installing-distributed-tracing-elasticsearch --skip-telemetrygen
+        case_step ./run.sh --project tracing --file spm-ha-elasticsearch --no-cleanup
+        case_step ./run.sh --project tracing --file spm-ha-elasticsearch --cleanup-only
         # 清理
-        ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds --skip-cluster-plugin
+        case_step ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds --skip-cluster-plugin
+        exit "$__case_rc"
     ); then
         case_end 0
     else
@@ -149,12 +153,13 @@ fi
 # ------------------------------------------------------------------
 if case_begin_if "5" "SPM 多副本（高可用）验证 (OpenSearch)" ha opensearch; then
     if (
-        set -e
-        ./run.sh --project tracing --file installing-distributed-tracing-opensearch --skip-telemetrygen
-        ./run.sh --project tracing --file spm-ha-opensearch --no-cleanup
-        ./run.sh --project tracing --file spm-ha-opensearch --cleanup-only
+        __case_rc=0
+        case_step ./run.sh --project tracing --file installing-distributed-tracing-opensearch --skip-telemetrygen
+        case_step ./run.sh --project tracing --file spm-ha-opensearch --no-cleanup
+        case_step ./run.sh --project tracing --file spm-ha-opensearch --cleanup-only
         # 清理
-        ./run.sh --project tracing --file uninstalling-distributed-tracing
+        case_step ./run.sh --project tracing --file uninstalling-distributed-tracing
+        exit "$__case_rc"
     ); then
         case_end 0
     else
@@ -170,10 +175,11 @@ fi
 # ------------------------------------------------------------------
 if case_begin_if "6" "分布式调用链 v2.0→v2.1 升级测试 (Elasticsearch)" upgrade elasticsearch; then
     if (
-        set -e
-        ./run.sh --project tracing --file upgrading-distributed-tracing-elasticsearch
+        __case_rc=0
+        case_step ./run.sh --project tracing --file upgrading-distributed-tracing-elasticsearch
         # 清理
-        ./run.sh --project tracing --file uninstalling-distributed-tracing
+        case_step ./run.sh --project tracing --file uninstalling-distributed-tracing
+        exit "$__case_rc"
     ); then
         case_end 0
     else
@@ -188,10 +194,11 @@ fi
 # ------------------------------------------------------------------
 if case_begin_if "7" "分布式调用链 v2.0→v2.1 升级测试 (OpenSearch)" upgrade opensearch; then
     if (
-        set -e
-        ./run.sh --project tracing --file upgrading-distributed-tracing-opensearch
+        __case_rc=0
+        case_step ./run.sh --project tracing --file upgrading-distributed-tracing-opensearch
         # 清理
-        ./run.sh --project tracing --file uninstalling-distributed-tracing
+        case_step ./run.sh --project tracing --file uninstalling-distributed-tracing
+        exit "$__case_rc"
     ); then
         case_end 0
     else

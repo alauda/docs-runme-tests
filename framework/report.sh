@@ -121,6 +121,27 @@ report_record_doctest() {
         '{type:$type,project:$project,file:$file,script:$script,case_id:$case_id,case_name:$case_name,phase:$phase,status:$status,skip_reason:$skip_reason,fail_reason:$fail_reason,start_ts:$start_ts,end_ts:$end_ts,duration_s:$duration_s}')"
 }
 
+# ── case_step <cmd...>：执行 Case 体内的一步，失败只记录不中断 ──
+# 用法：Case 体子 shell 内首行 `__case_rc=0`，每步写 `case_step ./run.sh ...`，
+#       体尾 `exit "$__case_rc"`。
+#
+# 为什么不靠 `set -e` 中断：Case 的清理步骤都排在体尾（--cleanup-only /
+# uninstalling-*），中途中断会跳过清理，把脏环境留给后续 Case，代价比多跑几条大。
+#
+# 为什么不能只写 `set -e` 了事：编排里的子 shell 处在 `if (...)` 的**条件位置**，
+# bash 对条件位置的复合命令禁用 errexit，且该抑制会传递进子 shell —— `set -e`
+# 根本不生效（ERR trap 同样被抑制，实测）。于是子 shell 的退出码只等于**最后一条
+# 命令**的退出码，中途失败全被吞掉，Case 被误判为通过。
+#
+# 十行可复现（bash 5.2 实测）：
+#   step() { echo "  执行 $1"; return "$2"; }
+#   if ( set -e; step a 1; step b 0 ); then echo 通过; else echo 失败; fi
+#   #   执行 a / 执行 b / 通过        ← a 已失败仍判通过
+# 故改为显式累积：每一步都跑，任一失败即置 __case_rc=1。
+case_step() {
+    "$@" || __case_rc=1
+}
+
 # ── case_begin <case_id> <case_name> [tags] ──
 case_begin() {
     RUNME_TEST_CASE_ID="$1"
@@ -146,17 +167,18 @@ _case_record() {
 
 # ── 内部：本 Case 内是否有已记录为 failed 的文档测试 ──
 #
-# 为什么 case_end 不能只信传进来的 rc：run-*-all.sh 里每个 Case 写成
+# 历史背景：run-*-all.sh 里每个 Case 曾写成
 #     if ( set -e; cmd1; cmd2; ... ); then case_end 0; else case_end 1; fi
 # 而 bash 对「处于 if / while / && / || 条件语境的命令」会屏蔽 errexit——
-# 连子 shell 内部显式写的 set -e 也一并失效。实测后果有两条：
-#   1. cmd1 失败后 cmd2..cmdN 照跑，不是注释里说的「原子 case」；
-#   2. 子 shell 的退出码只等于**最后一条命令**的退出码，中途失败全被吞掉。
-# 于是「Case 5 ✓12 ✗3 却判 PASS」这种事就会发生（4.3.1 环境实测）。
-# 这里回头查一遍 results.jsonl 里本 Case 的 doctest 结果兜底。
+# 连子 shell 内部显式写的 set -e 也一并失效，于是子 shell 的退出码只等于
+# **最后一条命令**的退出码，中途失败全被吞掉，「Case 5 ✓12 ✗3 却判 PASS」
+# 就是这么来的（4.3.1 环境实测）。本函数即为此加的兜底。
 #
-# 之所以不改成真·fail-fast（把子 shell 挪出 if 语境）：Case 里的清理步骤都排在
-# 末尾，中途一失败就跳过清理，会把脏环境留给后面的 Case，代价比多跑几条大。
+# 现在根因已由 case_step 修掉（每步显式累积 __case_rc，见其函数注释），
+# 本兜底保留为第二道防线，覆盖 case_step 之外的漏网：
+#   - 某步失败却未产生 doctest 记录（如 --init-only 本身不产生 doctest）；
+#   - 将来有人把用例块改回旧写法（framework/tests/orchestration_test.sh 有护栏，
+#     但护栏只在跑单测时生效）。
 _case_has_failed_doctest() {
     local case_id="${RUNME_TEST_CASE_ID:-}" results n
     [ -n "$case_id" ] || return 1

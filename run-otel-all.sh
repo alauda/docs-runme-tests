@@ -30,10 +30,11 @@ log_header "开始执行 otel 项目所有测试任务"
 case_begin "1" "OpenTelemetry v2 安装与卸载测试"
 
 if (
-    set -e
-    ./run.sh --project otel --file install-opentelemetry --force-init
+    __case_rc=0
+    case_step ./run.sh --project otel --file install-opentelemetry --force-init
     # 清理
-    ./run.sh --project otel --file uninstalling-opentelemetry
+    case_step ./run.sh --project otel --file uninstalling-opentelemetry
+    exit "$__case_rc"
 ); then
     case_end 0
 else
@@ -51,12 +52,13 @@ fi
 case_begin "2" "Java 自动注入示例服务 + 分布式调用链 (Java Instrumentation Demo)"
 
 if (
-    set -e
-    ./run.sh --project tracing --file installing-distributed-tracing-elasticsearch --skip-telemetrygen --force-init
-    ./run.sh --project otel --file java-instrumentation --no-cleanup
+    __case_rc=0
+    case_step ./run.sh --project tracing --file installing-distributed-tracing-elasticsearch --skip-telemetrygen --force-init
+    case_step ./run.sh --project otel --file java-instrumentation --no-cleanup
     # 清理
-    ./run.sh --project otel --file java-instrumentation --cleanup-only
-    ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds
+    case_step ./run.sh --project otel --file java-instrumentation --cleanup-only
+    case_step ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds
+    exit "$__case_rc"
 ); then
     case_end 0
 else

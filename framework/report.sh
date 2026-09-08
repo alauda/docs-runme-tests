@@ -74,6 +74,27 @@ report_record_doctest() {
         '{type:$type,project:$project,file:$file,script:$script,case_id:$case_id,case_name:$case_name,phase:$phase,status:$status,skip_reason:$skip_reason,fail_reason:$fail_reason,start_ts:$start_ts,end_ts:$end_ts,duration_s:$duration_s}')"
 }
 
+# ── case_step <cmd...>：执行 Case 体内的一步，失败只记录不中断 ──
+# 用法：Case 体子 shell 内首行 `__case_rc=0`，每步写 `case_step ./run.sh ...`，
+#       体尾 `exit "$__case_rc"`。
+#
+# 为什么不靠 `set -e` 中断：Case 的清理步骤都排在体尾（--cleanup-only /
+# uninstalling-*），中途中断会跳过清理，把脏环境留给后续 Case，代价比多跑几条大。
+#
+# 为什么不能只写 `set -e` 了事：编排里的子 shell 处在 `if (...)` 的**条件位置**，
+# bash 对条件位置的复合命令禁用 errexit，且该抑制会传递进子 shell —— `set -e`
+# 根本不生效（ERR trap 同样被抑制，实测）。于是子 shell 的退出码只等于**最后一条
+# 命令**的退出码，中途失败全被吞掉，Case 被误判为通过。
+#
+# 十行可复现（bash 5.2 实测）：
+#   step() { echo "  执行 $1"; return "$2"; }
+#   if ( set -e; step a 1; step b 0 ); then echo 通过; else echo 失败; fi
+#   #   执行 a / 执行 b / 通过        ← a 已失败仍判通过
+# 故改为显式累积：每一步都跑，任一失败即置 __case_rc=1。
+case_step() {
+    "$@" || __case_rc=1
+}
+
 # ── case_begin <case_id> <case_name> ──
 case_begin() {
     RUNME_TEST_CASE_ID="$1"
@@ -95,9 +116,36 @@ _case_record() {
         '{type:$type,case_id:$case_id,case_name:$case_name,status:$status,duration_s:$duration_s}')"
 }
 
+# ── 内部：本 Case 是否已有失败的 doctest ──
+# 兜底：case_step 已保证中途失败会反映到子 shell 退出码，但仍有一类漏网——
+# 若某步失败却未产生 doctest 记录（如 --init-only 无 doctest），或将来有人改回
+# 旧写法，这里回头查一遍 results.jsonl 再兜一层。与 release-mesh-2.2 保持一致。
+_case_has_failed_doctest() {
+    local case_id="${RUNME_TEST_CASE_ID:-}" results n
+    [ -n "$case_id" ] || return 1
+    results="${RUNME_TEST_RUN_DIR:-}/results.jsonl"
+    [ -n "${RUNME_TEST_RUN_DIR:-}" ] && [ -f "$results" ] || return 1
+    n="$(jq -s --arg c "$case_id" \
+        '[.[] | select(.type == "doctest" and .case_id == $c and .status == "failed")] | length' \
+        "$results" 2>/dev/null)" || return 1
+    [ "${n:-0}" -gt 0 ]
+}
+
+# ── 内部：修正 Case 退出码，结果写入 __CASE_RC ──
+# 用全局变量而不是命令替换回传：log_warn 写的是 stdout，$(...) 会把告警文字
+# 一起吃进返回值，后面的 [ "$rc" -eq 0 ] 直接变成语法错误。
+_case_effective_rc() {
+    __CASE_RC="$1"
+    if [ "$__CASE_RC" -eq 0 ] && _case_has_failed_doctest; then
+        log_warn "Case ${RUNME_TEST_CASE_ID:-?}: 子 shell 返回 0，但本 Case 内有文档测试失败，按失败判定"
+        __CASE_RC=1
+    fi
+}
+
 # ── case_end <rc>：普通 Case，失败仅记录、不退出 ──
 case_end() {
-    if [ "$1" -eq 0 ]; then
+    _case_effective_rc "$1"
+    if [ "$__CASE_RC" -eq 0 ]; then
         _case_record "passed"
         log_success "Case ${RUNME_TEST_CASE_ID:-?}: ${RUNME_TEST_CASE_NAME:-} 通过"
     else
@@ -110,7 +158,8 @@ case_end() {
 
 # ── case_end_fatal <rc>：致命前置 Case，失败则 finalize + exit ──
 case_end_fatal() {
-    if [ "$1" -eq 0 ]; then
+    _case_effective_rc "$1"
+    if [ "$__CASE_RC" -eq 0 ]; then
         _case_record "passed"
         log_success "Case ${RUNME_TEST_CASE_ID:-?}: ${RUNME_TEST_CASE_NAME:-} 通过"
         unset RUNME_TEST_CASE_ID RUNME_TEST_CASE_NAME

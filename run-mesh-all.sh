@@ -29,8 +29,9 @@ log_header "开始执行 mesh 项目所有测试任务"
 case_begin "1" "环境初始化（默认 SINGLE_CLUSTER_NAME）"
 
 if (
-    set -e
-    ./run.sh --project mesh --init-only
+    __case_rc=0
+    case_step ./run.sh --project mesh --init-only
+    exit "$__case_rc"
 ); then
     case_end 0
 else
@@ -43,9 +44,10 @@ fi
 if [ "${IS_DUAL_STACK:-false}" == "true" ]; then
     case_begin "2" "双栈网格安装测试 (Dual Stack)"
     if (
-        set -e
-        ./run.sh --project mesh --file install-mesh-in-dual-stack-mode --no-cleanup
-        ./run.sh --project mesh --file install-mesh-in-dual-stack-mode --cleanup-only
+        __case_rc=0
+        case_step ./run.sh --project mesh --file install-mesh-in-dual-stack-mode --no-cleanup
+        case_step ./run.sh --project mesh --file install-mesh-in-dual-stack-mode --cleanup-only
+        exit "$__case_rc"
     ); then
         case_end 0
     else
@@ -65,36 +67,37 @@ case_begin "3" "单网格安装与应用测试 (Single Mesh & App + Tracing)"
 # 使用子 shell ( cmds ) 将多个命令组合为一个原子 case
 # 任何一个命令失败都会导致整个 block 返回非 0 状态
 if (
-    set -e
+    __case_rc=0
     # 安装网格和应用
-    ./run.sh --project mesh --file install-mesh
+    case_step ./run.sh --project mesh --file install-mesh
     # 入口网关 (sidecar 模式) 测试：复用 sidecar 控制面（含 IstioCNI），各自带清理
-    ./run.sh --project mesh --file exposing-a-service-via-istio-gateway --no-cleanup
-    ./run.sh --project mesh --file exposing-a-service-via-istio-gateway --cleanup-only
-    ./run.sh --project mesh --file exposing-a-service-via-k8s-gateway-api-in-sidecar-mode --no-cleanup
-    ./run.sh --project mesh --file exposing-a-service-via-k8s-gateway-api-in-sidecar-mode --cleanup-only
+    case_step ./run.sh --project mesh --file exposing-a-service-via-istio-gateway --no-cleanup
+    case_step ./run.sh --project mesh --file exposing-a-service-via-istio-gateway --cleanup-only
+    case_step ./run.sh --project mesh --file exposing-a-service-via-k8s-gateway-api-in-sidecar-mode --no-cleanup
+    case_step ./run.sh --project mesh --file exposing-a-service-via-k8s-gateway-api-in-sidecar-mode --cleanup-only
     # 出口网关 (sidecar 模式) 测试：复用 sidecar 控制面（含 IstioCNI），各自带清理
-    ./run.sh --project mesh --file routing-egress-traffic-via-istio-apis --no-cleanup
-    ./run.sh --project mesh --file routing-egress-traffic-via-istio-apis --cleanup-only
-    ./run.sh --project mesh --file routing-egress-traffic-via-k8s-gateway-api-in-sidecar-mode --no-cleanup
-    ./run.sh --project mesh --file routing-egress-traffic-via-k8s-gateway-api-in-sidecar-mode --cleanup-only
-    ./run.sh --project mesh --file metrics-and-mesh
-    ./run.sh --project mesh --file deploying-the-bookinfo-application --no-cleanup
+    case_step ./run.sh --project mesh --file routing-egress-traffic-via-istio-apis --no-cleanup
+    case_step ./run.sh --project mesh --file routing-egress-traffic-via-istio-apis --cleanup-only
+    case_step ./run.sh --project mesh --file routing-egress-traffic-via-k8s-gateway-api-in-sidecar-mode --no-cleanup
+    case_step ./run.sh --project mesh --file routing-egress-traffic-via-k8s-gateway-api-in-sidecar-mode --cleanup-only
+    case_step ./run.sh --project mesh --file metrics-and-mesh
+    case_step ./run.sh --project mesh --file deploying-the-bookinfo-application --no-cleanup
     # 为 bookinfo 命名空间启用严格 mTLS（PeerAuthentication STRICT）
-    ./run.sh --project mesh --file mtls --no-cleanup
+    case_step ./run.sh --project mesh --file mtls --no-cleanup
     # 调用链集成：先装调用链平台，再配置网格上报，再装含调用链集成的 kiali
     # mesh 场景下由 bookinfo 业务流量产生 trace，无需 telemetrygen 端到端验证
-    ./run.sh --project tracing --file installing-distributed-tracing-elasticsearch --skip-telemetrygen
-    ./run.sh --project mesh --file config-with-service-mesh --no-cleanup
-    ./run.sh --project mesh --file kiali
+    case_step ./run.sh --project tracing --file installing-distributed-tracing-elasticsearch --skip-telemetrygen
+    case_step ./run.sh --project mesh --file config-with-service-mesh --no-cleanup
+    case_step ./run.sh --project mesh --file kiali
     # 清理（逆序）：先卸 kiali，再卸网格调用链配置，再卸调用链平台
-    ./run.sh --project mesh --file uninstalling-alauda-build-of-kiali
-    ./run.sh --project mesh --file config-with-service-mesh --cleanup-only
-    ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds
+    case_step ./run.sh --project mesh --file uninstalling-alauda-build-of-kiali
+    case_step ./run.sh --project mesh --file config-with-service-mesh --cleanup-only
+    case_step ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds
     # 清理 bookinfo 命名空间的严格 mTLS 配置（在删除 bookinfo 前移除 PeerAuthentication）
-    ./run.sh --project mesh --file mtls --cleanup-only
-    ./run.sh --project mesh --file deploying-the-bookinfo-application --cleanup-only
-    ./run.sh --project mesh --file uninstalling-alauda-service-mesh
+    case_step ./run.sh --project mesh --file mtls --cleanup-only
+    case_step ./run.sh --project mesh --file deploying-the-bookinfo-application --cleanup-only
+    case_step ./run.sh --project mesh --file uninstalling-alauda-service-mesh
+    exit "$__case_rc"
 ); then
     case_end 0
 else
@@ -107,13 +110,14 @@ fi
 case_begin "4" "Istio HA 配置测试"
 
 if (
-    set -e
-    ./run.sh --project mesh --file install-mesh --force-init
-    ./run.sh --project mesh --file configuring-istio-ha-by-using-autoscaling
-    ./run.sh --project mesh --file uninstalling-alauda-service-mesh --skip-operator-and-crds
-    ./run.sh --project mesh --file install-mesh
-    ./run.sh --project mesh --file configuring-istio-ha-by-using-replica-count
-    ./run.sh --project mesh --file uninstalling-alauda-service-mesh --skip-operator-and-crds
+    __case_rc=0
+    case_step ./run.sh --project mesh --file install-mesh --force-init
+    case_step ./run.sh --project mesh --file configuring-istio-ha-by-using-autoscaling
+    case_step ./run.sh --project mesh --file uninstalling-alauda-service-mesh --skip-operator-and-crds
+    case_step ./run.sh --project mesh --file install-mesh
+    case_step ./run.sh --project mesh --file configuring-istio-ha-by-using-replica-count
+    case_step ./run.sh --project mesh --file uninstalling-alauda-service-mesh --skip-operator-and-crds
+    exit "$__case_rc"
 ); then
     case_end 0
 else
@@ -126,40 +130,41 @@ fi
 case_begin "5" "Ambient Mode 安装测试"
 
 if (
-    set -e
+    __case_rc=0
     # 安装 ambient 网格和应用（operator 可能已经被删除，所以要 --force-init）
-    ./run.sh --project mesh --file installing-ambient-mode --force-init
-    ./run.sh --project mesh --file metrics-and-mesh
-    ./run.sh --project mesh --file deploying-ambient-bookinfo --no-cleanup
+    case_step ./run.sh --project mesh --file installing-ambient-mode --force-init
+    case_step ./run.sh --project mesh --file metrics-and-mesh
+    case_step ./run.sh --project mesh --file deploying-ambient-bookinfo --no-cleanup
     # 为 bookinfo 命名空间启用严格 mTLS（PeerAuthentication STRICT）
-    ./run.sh --project mesh --file mtls --no-cleanup
+    case_step ./run.sh --project mesh --file mtls --no-cleanup
     # 调用链集成：config-with-service-mesh 需要 jaeger-system 存在（要给它打服务发现标签），
     # 而 Case 3 结尾已把调用链卸掉，故此处需先装回来——同 Case 3 的顺序：先装调用链平台，
     # 再配置网格上报，再装含调用链集成的 kiali。
-    ./run.sh --project tracing --file installing-distributed-tracing-elasticsearch --skip-telemetrygen
-    ./run.sh --project mesh --file config-with-service-mesh --no-cleanup
-    ./run.sh --project mesh --file kiali
-    ./run.sh --project mesh --file waypoint-proxies
+    case_step ./run.sh --project tracing --file installing-distributed-tracing-elasticsearch --skip-telemetrygen
+    case_step ./run.sh --project mesh --file config-with-service-mesh --no-cleanup
+    case_step ./run.sh --project mesh --file kiali
+    case_step ./run.sh --project mesh --file waypoint-proxies
     # L7 特性测试（独立测试，包含清理步骤）
-    ./run.sh --project mesh --file ambient-l7-features --no-cleanup
-    ./run.sh --project mesh --file ambient-l7-features --cleanup-only
+    case_step ./run.sh --project mesh --file ambient-l7-features --no-cleanup
+    case_step ./run.sh --project mesh --file ambient-l7-features --cleanup-only
     # 入口网关 K8S Gateway API 测试（集群需要支持 `LoadBalancer`）
-    ./run.sh --project mesh --file exposing-a-service-via-k8s-gateway-api-in-ambient-mode --no-cleanup
-    ./run.sh --project mesh --file exposing-a-service-via-k8s-gateway-api-in-ambient-mode --cleanup-only
+    case_step ./run.sh --project mesh --file exposing-a-service-via-k8s-gateway-api-in-ambient-mode --no-cleanup
+    case_step ./run.sh --project mesh --file exposing-a-service-via-k8s-gateway-api-in-ambient-mode --cleanup-only
     # 出口网关 (Egress Gateway) 测试
-    ./run.sh --project mesh --file routing-egress-traffic-via-k8s-gateway-api-in-ambient-mode --no-cleanup
-    ./run.sh --project mesh --file routing-egress-traffic-via-k8s-gateway-api-in-ambient-mode --cleanup-only
+    case_step ./run.sh --project mesh --file routing-egress-traffic-via-k8s-gateway-api-in-ambient-mode --no-cleanup
+    case_step ./run.sh --project mesh --file routing-egress-traffic-via-k8s-gateway-api-in-ambient-mode --cleanup-only
     # 清理 bookinfo 命名空间的严格 mTLS 配置（在卸载网格前移除 PeerAuthentication）
-    ./run.sh --project mesh --file mtls --cleanup-only
+    case_step ./run.sh --project mesh --file mtls --cleanup-only
     # 卸载 kiali
-    ./run.sh --project mesh --file uninstalling-alauda-build-of-kiali
+    case_step ./run.sh --project mesh --file uninstalling-alauda-build-of-kiali
     # 卸载网格调用链配置与调用链平台（逆序，同 Case 3）
-    ./run.sh --project mesh --file config-with-service-mesh --cleanup-only
-    ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds
+    case_step ./run.sh --project mesh --file config-with-service-mesh --cleanup-only
+    case_step ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds
     # 卸载 ambient 网格
-    ./run.sh --project mesh --file uninstalling-alauda-service-mesh-in-ambient-mode
+    case_step ./run.sh --project mesh --file uninstalling-alauda-service-mesh-in-ambient-mode
     # 清理 bookinfo
-    ./run.sh --project mesh --file deploying-ambient-bookinfo --cleanup-only
+    case_step ./run.sh --project mesh --file deploying-ambient-bookinfo --cleanup-only
+    exit "$__case_rc"
 ); then
     case_end 0
 else
@@ -177,14 +182,15 @@ else
     case_begin "6" "多集群 - 多主多网络拓扑 (Multi-Primary Multi-Network)"
 
     if (
-        set -e
+        __case_rc=0
         # 切到双集群 kubeconfig
-        ./run.sh --project mesh --init-only --cluster "$EAST_CLUSTER_NAME" --cluster "$WEST_CLUSTER_NAME"
+        case_step ./run.sh --project mesh --init-only --cluster "$EAST_CLUSTER_NAME" --cluster "$WEST_CLUSTER_NAME"
         # 公共前置: 生成 CA 证书并下发 cacerts 到两个集群
-        ./run.sh --project mesh --file configuration-overview
+        case_step ./run.sh --project mesh --file configuration-overview
         # 多主多网络安装 + 验证 + 卸载
-        ./run.sh --project mesh --file install-multi-primary-multi-network --no-cleanup
-        ./run.sh --project mesh --file install-multi-primary-multi-network --cleanup-only
+        case_step ./run.sh --project mesh --file install-multi-primary-multi-network --no-cleanup
+        case_step ./run.sh --project mesh --file install-multi-primary-multi-network --cleanup-only
+        exit "$__case_rc"
     ); then
         case_end 0
     else
@@ -197,14 +203,15 @@ else
     case_begin "7" "多集群 - 主-远多网络拓扑 (Primary-Remote Multi-Network)"
 
     if (
-        set -e
+        __case_rc=0
         # 重新初始化双集群 kubeconfig (Case 7 卸载后保险一步,确保上下文干净)
-        ./run.sh --project mesh --init-only --cluster "$EAST_CLUSTER_NAME" --cluster "$WEST_CLUSTER_NAME"
+        case_step ./run.sh --project mesh --init-only --cluster "$EAST_CLUSTER_NAME" --cluster "$WEST_CLUSTER_NAME"
         # 重新下发 cacerts (Case 7 cleanup 已删除 istio-system,需要重建)
-        ./run.sh --project mesh --file configuration-overview
+        case_step ./run.sh --project mesh --file configuration-overview
         # 主-远多网络安装 + 验证 + 卸载
-        ./run.sh --project mesh --file install-primary-remote-multi-network --no-cleanup
-        ./run.sh --project mesh --file install-primary-remote-multi-network --cleanup-only
+        case_step ./run.sh --project mesh --file install-primary-remote-multi-network --no-cleanup
+        case_step ./run.sh --project mesh --file install-primary-remote-multi-network --cleanup-only
+        exit "$__case_rc"
     ); then
         case_end 0
     else
@@ -221,9 +228,10 @@ fi
 case_begin "8" "InPlace 更新策略测试（含 Istio CNI 升级）(Update InPlace + Istio CNI)"
 
 if (
-    set -e
-    ./run.sh --project mesh --file update-inplace --no-cleanup --force-init
-    ./run.sh --project mesh --file update-inplace --cleanup-only
+    __case_rc=0
+    case_step ./run.sh --project mesh --file update-inplace --no-cleanup --force-init
+    case_step ./run.sh --project mesh --file update-inplace --cleanup-only
+    exit "$__case_rc"
 ); then
     case_end 0
 else
@@ -238,9 +246,10 @@ fi
 case_begin "9" "RevisionBased 更新策略测试 (Update RevisionBased)"
 
 if (
-    set -e
-    ./run.sh --project mesh --file update-revisionbased --no-cleanup --force-init
-    ./run.sh --project mesh --file update-revisionbased --cleanup-only
+    __case_rc=0
+    case_step ./run.sh --project mesh --file update-revisionbased --no-cleanup --force-init
+    case_step ./run.sh --project mesh --file update-revisionbased --cleanup-only
+    exit "$__case_rc"
 ); then
     case_end 0
 else
@@ -255,9 +264,10 @@ fi
 case_begin "10" "RevisionBased + IstioRevisionTag 更新策略测试 (Update RevisionBased + IstioRevisionTag)"
 
 if (
-    set -e
-    ./run.sh --project mesh --file update-revisionbased-and-istiorevisiontag --no-cleanup --force-init
-    ./run.sh --project mesh --file update-revisionbased-and-istiorevisiontag --cleanup-only
+    __case_rc=0
+    case_step ./run.sh --project mesh --file update-revisionbased-and-istiorevisiontag --no-cleanup --force-init
+    case_step ./run.sh --project mesh --file update-revisionbased-and-istiorevisiontag --cleanup-only
+    exit "$__case_rc"
 ); then
     case_end 0
 else
@@ -274,12 +284,13 @@ fi
 case_begin "11" "Ambient 模式更新测试 (Update Ambient Mode)"
 
 if (
-    set -e
-    ./run.sh --project mesh --file updating-ambient-components --no-cleanup --force-init
-    ./run.sh --project mesh --file waypoint-proxies
-    ./run.sh --project mesh --file updating-waypoint-proxies --no-cleanup
-    ./run.sh --project mesh --file updating-waypoint-proxies --cleanup-only
-    ./run.sh --project mesh --file updating-ambient-components --cleanup-only
+    __case_rc=0
+    case_step ./run.sh --project mesh --file updating-ambient-components --no-cleanup --force-init
+    case_step ./run.sh --project mesh --file waypoint-proxies
+    case_step ./run.sh --project mesh --file updating-waypoint-proxies --no-cleanup
+    case_step ./run.sh --project mesh --file updating-waypoint-proxies --cleanup-only
+    case_step ./run.sh --project mesh --file updating-ambient-components --cleanup-only
+    exit "$__case_rc"
 ); then
     case_end 0
 else

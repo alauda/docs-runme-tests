@@ -2,6 +2,7 @@
 bin/
 package/
 .kubeconfig/
+.acp-auth/
 *.tar.gz
 tmp/
 *.tgz

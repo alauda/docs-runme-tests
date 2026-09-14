@@ -437,40 +437,42 @@ DocTest 级标签有两个：
 - `egress`（mesh Case 3 / 5 中的三篇 `routing-egress-traffic-*`）
 - `opensearch`（mesh Case 3 / 5 中的调用链平台装 / 卸两步）
 
-dailybuild 目前开了四个测试项：`docs-mesh` / `docs-otel` / `docs-tracing` 用
-`CASE_TYPE="smoke and not egress and not elasticsearch"`，`docs-mesh-multicluster` 单独用
-`CASE_TYPE="multicluster and not egress"`。多集群必须单开一项，因为表达式不支持 `or`，
-`smoke` 那三项选不到只带 `multicluster` 标签的 Case 6/7。
+dailybuild 目前开了四个测试项：`docs-mesh` / `docs-otel` / `docs-tracing` 用全否定式
+`CASE_TYPE="not dualstack and not egress and not elasticsearch and not opensearch and not multicluster"`
+——「除环境不支持的以外全选」；`docs-mesh-multicluster` 单独用
+`CASE_TYPE="multicluster and not egress"`。多集群必须单开一项：表达式不支持 `or`，且
+Case 6/7 会把 kubeconfig 切成双集群、在第二个集群上装网格，混进前三项会互相干扰。
+
+实际选中：mesh Case 1/3/4/5/8/9/10/11、otel Case 1/2、tracing Case 1，多集群项另跑
+mesh Case 6/7。
 
 **存储后端两条链目前都不在 dailybuild 的选择范围内**，原因不同：
 
 - Elasticsearch（tracing Case 2/4/6）：天翼云 openSUSE MicroOS 的根文件系统不可变只读，
   装不了 hostPath 方式的本地 ES 存储，dailybuild 环境的 `asm-1` 集群已去掉 `log_storage`
-  声明。这些 Case 都不带 `smoke`、都带 `elasticsearch`，且 `CASE_TYPE` 里额外写了
-  `and not elasticsearch` 双保险。环境支持后：把 `smoke` 加回 tracing Case 2/4，
-  并去掉 `CASE_TYPE` 里的 `and not elasticsearch`。
+  声明。这些 Case 都带 `elasticsearch`，由 `CASE_TYPE` 里的 `not elasticsearch` 排除。
+  环境支持后：给 `asm-1` 补回 `log_storage`，并去掉表达式里的 `and not elasticsearch`。
 - OpenSearch（otel Case 3、tracing Case 3/5/7，以及 mesh Case 3/5 里调用链平台的装 / 卸两步）：
-  需要业务集群各节点有空闲裸盘（TopoLVM），dailybuild 的 `asm-1` 未挂数据盘。环境支持后给
-  otel Case 3 与 tracing Case 3/5 补 `smoke` 标签即可，表达式不用改；mesh 那两步是 DocTest 级
-  标签 `opensearch`，`smoke and ...` 天然选不中（DocTest 的标签组里没有 `smoke`），要放开得把
-  `smoke` 一并写进那两处的 `doctest_selected`。
+  需要业务集群各节点有空闲裸盘（TopoLVM），dailybuild 的 `asm-1` / `asm-2` 未挂数据盘。
+  环境支持后：给两个集群挂上数据盘，并去掉表达式里的 `and not opensearch`——Case 级与
+  DocTest 级两处同一个标签，一并放开，脚本不用改。
 
 otel Case 2（Java 自动注入示例）不碰存储后端：它自己装一遍 Operator + Collector，只验
-「Operator 自动注入 Java agent」，因此带 `smoke` 进 dailybuild；需要调用链平台的完整上报
-链路拆在 otel Case 3。
+「Operator 自动注入 Java agent」，因此照常进 dailybuild；需要调用链平台的完整上报链路
+拆在 otel Case 3。
 
 因此 `docs-tracing` 测试项当前只会选中 tracing Case 1（环境初始化）——它不碰任何存储后端，
 是这个测试项唯一跑得起来的 Case；没有它该测试项一个用例都不会跑。
 
-tracing Case 6/7（升级）只带 `upgrade`，四个现有测试项都选不中它们——这是有意的：升级测试
-要求环境上先有一套 v2.0 部署，dailybuild 的环境是全新安装出来的 v2.1，跑了也只会 SKIPPED。
-将来要纳入，得按多集群那样单开一个 `CASE_TYPE="upgrade"` 的 lynx 测试项，并让该测试项的
-环境停在 v2.0。
+tracing Case 6/7（升级）除 `upgrade` 外还各带一个存储标签，四个现有测试项都选不中——
+这是有意的：升级测试要求环境上先有一套 v2.0 部署，dailybuild 的环境是全新安装出来的
+v2.1，跑了也只会 SKIPPED。将来要纳入，得按多集群那样单开一个 `CASE_TYPE="upgrade"` 的
+lynx 测试项，并让该测试项的环境停在 v2.0。
 
 `ENABLE_METALLB=false` 时另有两处按环境跳过（与 `CASE_TYPE` 无关，见上文该变量说明）：
 mesh Case 3/5 的三篇 `exposing-*` 入口网关文档、mesh Case 6/7 多集群网格。天翼云 MicroOS
-暂不支持 `other_vips` 机制、给 MetalLB 自动配 VIP，dailybuild 四个测试项已全部置 false，
-`docs-mesh-multicluster` 因此暂时只会跑环境初始化、两个多集群 Case 均按 `[env]` 跳过。
+现已支持 `other_vips`，dailybuild 的 `asm-1` / `asm-2` 各申请 1 个 ipv4 VIP、四个测试项
+已全部置 `true`，这两处恢复执行，`docs-mesh-multicluster` 也不再只跑环境初始化。
 
 新增或修改标签时要同步 release-config 的 `CASE_TYPE`，
 详见 [UPDATE-README.md 第 1.4 节](UPDATE-README.md#14-需要新标签时同步-release-config)。

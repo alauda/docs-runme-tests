@@ -4,7 +4,7 @@ description: >
   Use this skill whenever the user wants to create, update, debug, or manage automated test scripts
   for MDX documentation files. This includes: generating runme-test_*.sh scripts for docs/en/ MDX files,
   adding or checking {name=prefix:action} attributes on MDX code blocks, updating the docs-runme-tests
-  README.md test table, registering case_ids in lynx/case-ids.tsv, registering external URLs in
+  docs/test-catalog.md test table, registering case_ids in lynx/case-ids.tsv, registering external URLs in
   lynx/assets-manifest.tsv for offline runs, choosing Case tags for CASE_TYPE filtering, modifying
   run-<project>-all.sh orchestration scripts (including --no-cleanup/--cleanup-only
   split execution), or troubleshooting failing runme test scripts. Trigger this skill when the user
@@ -28,7 +28,7 @@ description: >
 > 3. **Case 必须用 `case_begin_if` 带标签**（第六步）—— 否则要么在 lynx 上无条件执行，
 >    要么永远选不中
 >
-> 完整的"改了 X 还要同步改哪儿"见 `docs-runme-tests/UPDATE-README.md`。
+> 完整的"改了 X 还要同步改哪儿"见 `docs-runme-tests/docs/maintenance.md`。
 
 ## 工作流程
 
@@ -530,9 +530,9 @@ mesh	install-mesh	ASM-DOC-002
   换编号等于历史断链
 - 自检：`bash lynx/check-case-ids.sh`
 
-#### 5.2 更新 README 测试清单表
+#### 5.2 更新测试清单表
 
-编辑 `docs-runme-tests/README.md`，在对应项目的测试文档表格中添加新条目：
+编辑 `docs-runme-tests/docs/test-catalog.md`，在对应项目的测试文档表格中添加新条目：
 
 ```markdown
 | <文档名称> | [runme-test\_<文档名>.sh](相对路径) | `./run.sh --project <项目> --file <文档名>` |
@@ -638,7 +638,7 @@ fi
 >   "本来就不测"，排查时被直接忽略过去。
 >
 > 退出时 `report_finalize` 自动产出美化终端摘要 + `tmp/runs/<run-id>/{summary.json,junit.xml}`，
-> 在 lynx 上额外产出 `$TEST_RESULT_DIR/{allure-result,allure-report}`。详见仓库 README「测试结果统计」章节。
+> 在 lynx 上额外产出 `$TEST_RESULT_DIR/{allure-result,allure-report}`。详见 `docs-runme-tests/docs/architecture.md`「测试结果统计」章节。
 
 ### 第七步：设置可执行权限
 
@@ -727,8 +727,8 @@ eval "$(runme print <prefix>:<yaml-block>)"
 
 如需更详细的信息，请参阅：
 
-- `docs-runme-tests/README.md` - 测试框架完整说明（**怎么用**）
-- `docs-runme-tests/UPDATE-README.md` - 变更操作手册（**改了 X 还要同步改哪儿**）
+- `docs-runme-tests/README.md` - 项目概览与文档导航
+- `docs-runme-tests/docs/maintenance.md` - 变更操作手册（**改了 X 还要同步改哪儿**）
 - `docs-runme-tests/framework/common.sh` - 公共工具函数源码
 - `docs-runme-tests/framework/verify.sh` - 验证函数源码
 - `docs-runme-tests/framework/assets.sh` - 离线资产（`runme_run_with_assets` 等）

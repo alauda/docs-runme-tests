@@ -6,6 +6,6 @@ tmp
 assets
 bin
 .superpowers
-docs/superpowers
+docs
 *.tgz
 *.tar.gz

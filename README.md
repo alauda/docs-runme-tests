@@ -396,10 +396,11 @@ docker build --build-arg IMAGE_TAG=local-dev -t docs-runme-tests:local-dev .
 验证调用链真能查到。它用的 ACP token 由引擎按平台账号密码自动换取（框架必需项，本就有），
 不需要模板再配任何东西。
 
-mesh Case 3 / Case 5 里调用链平台的装 / 卸两步走 OpenSearch 链（DocTest 标签 `opensearch`）。
-`docs-mesh` 现有的 `CASE_TYPE` 选不中它，模板不必配任何 OpenSearch 变量；将来要放开，
-被测业务集群得满足 TopoLVM 的前提（至少 3 个节点、各节点有空闲裸盘），
-`TRACING_*` / `PKG_*` 按上文「分布式调用链测试专用」补齐即可（留空即 verify-only）。
+mesh Case 3 / Case 5 里调用链平台的装 / 卸两步（DocTest 标签 `opensearch`）与 otel Case 3
+都走 OpenSearch 链。`docs-mesh` / `docs-otel` 现有的 `CASE_TYPE` 都选不中它们，模板不必配
+任何 OpenSearch 变量；将来要放开，被测业务集群得满足 TopoLVM 的前提（至少 3 个节点、
+各节点有空闲裸盘），`TRACING_*` / `PKG_*` 按上文「分布式调用链测试专用」补齐即可
+（留空即 verify-only）。
 
 报告产物：`$TEST_RESULT_DIR/allure-result/` 与 `$TEST_RESULT_DIR/allure-report/`。
 用例粒度为一篇文档的一次执行（DocTest），Case 作为 allure suite 分组。
@@ -410,25 +411,26 @@ mesh Case 3 / Case 5 里调用链平台的装 / 卸两步走 OpenSearch 链（Do
 保留标签 `always` 恒被选中，用于环境初始化这类必须先跑的前置 Case。
 `CASE_TYPE` 未设置时全部选中——本地手工跑行为不变。
 
-| 项目    | Case                           | 标签                         |
-| ------- | ------------------------------ | ---------------------------- |
-| mesh    | 1 环境初始化                   | `always install`             |
-| mesh    | 2 双栈网格安装                 | `dualstack install`          |
-| mesh    | 3 单网格安装与应用（含调用链） | `smoke install sidecar`      |
-| mesh    | 4 Istio HA 配置                | `ha install`                 |
-| mesh    | 5 Ambient Mode 安装            | `smoke install ambient`      |
-| mesh    | 6 / 7 多集群                   | `multicluster`               |
-| mesh    | 8 / 9 / 10 更新策略            | `update`                     |
-| mesh    | 11 Ambient 更新                | `update ambient`             |
-| otel    | 1 安装与卸载                   | `smoke install`              |
-| otel    | 2 Java 自动注入示例            | `install java elasticsearch` |
-| tracing | 1 环境初始化                   | `smoke install`              |
-| tracing | 2 安装与卸载（ES）             | `install elasticsearch`      |
-| tracing | 3 安装与卸载（OpenSearch）     | `install opensearch`         |
-| tracing | 4 SPM 多副本（ES）             | `ha elasticsearch`           |
-| tracing | 5 SPM 多副本（OpenSearch）     | `ha opensearch`              |
-| tracing | 6 v2.0→v2.1 升级（ES）         | `upgrade elasticsearch`      |
-| tracing | 7 v2.0→v2.1 升级（OpenSearch） | `upgrade opensearch`         |
+| 项目    | Case                           | 标签                      |
+| ------- | ------------------------------ | ------------------------- |
+| mesh    | 1 环境初始化                   | `always install`          |
+| mesh    | 2 双栈网格安装                 | `dualstack install`       |
+| mesh    | 3 单网格安装与应用（含调用链） | `smoke install sidecar`   |
+| mesh    | 4 Istio HA 配置                | `ha install`              |
+| mesh    | 5 Ambient Mode 安装            | `smoke install ambient`   |
+| mesh    | 6 / 7 多集群                   | `multicluster`            |
+| mesh    | 8 / 9 / 10 更新策略            | `update`                  |
+| mesh    | 11 Ambient 更新                | `update ambient`          |
+| otel    | 1 安装与卸载                   | `smoke install`           |
+| otel    | 2 Java 自动注入示例            | `smoke install java`      |
+| otel    | 3 Java 自动注入 + 调用链       | `install java opensearch` |
+| tracing | 1 环境初始化                   | `smoke install`           |
+| tracing | 2 安装与卸载（ES）             | `install elasticsearch`   |
+| tracing | 3 安装与卸载（OpenSearch）     | `install opensearch`      |
+| tracing | 4 SPM 多副本（ES）             | `ha elasticsearch`        |
+| tracing | 5 SPM 多副本（OpenSearch）     | `ha opensearch`           |
+| tracing | 6 v2.0→v2.1 升级（ES）         | `upgrade elasticsearch`   |
+| tracing | 7 v2.0→v2.1 升级（OpenSearch） | `upgrade opensearch`      |
 
 DocTest 级标签有两个：
 
@@ -442,16 +444,20 @@ dailybuild 目前开了四个测试项：`docs-mesh` / `docs-otel` / `docs-traci
 
 **存储后端两条链目前都不在 dailybuild 的选择范围内**，原因不同：
 
-- Elasticsearch（otel Case 2、tracing Case 2/4/6）：天翼云 openSUSE MicroOS 的根文件系统
-  不可变只读，装不了 hostPath 方式的本地 ES 存储，dailybuild 环境的 `asm-1` 集群已去掉
-  `log_storage` 声明。这些 Case 都不带 `smoke`、都带 `elasticsearch`，且 `CASE_TYPE` 里
-  额外写了 `and not elasticsearch` 双保险。环境支持后：把 `smoke` 加回 otel Case 2 与
-  tracing Case 2/4，并去掉 `CASE_TYPE` 里的 `and not elasticsearch`。
-- OpenSearch（tracing Case 3/5/7，以及 mesh Case 3/5 里调用链平台的装 / 卸两步）：需要业务集群
-  各节点有空闲裸盘（TopoLVM），dailybuild 的 `asm-1` 未挂数据盘。环境支持后给 tracing Case 3/5
-  补 `smoke` 标签即可，表达式不用改；mesh 那两步是 DocTest 级标签 `opensearch`，`smoke and ...`
-  天然选不中（DocTest 的标签组里没有 `smoke`），要放开得把 `smoke` 一并写进那两处的
-  `doctest_selected`。
+- Elasticsearch（tracing Case 2/4/6）：天翼云 openSUSE MicroOS 的根文件系统不可变只读，
+  装不了 hostPath 方式的本地 ES 存储，dailybuild 环境的 `asm-1` 集群已去掉 `log_storage`
+  声明。这些 Case 都不带 `smoke`、都带 `elasticsearch`，且 `CASE_TYPE` 里额外写了
+  `and not elasticsearch` 双保险。环境支持后：把 `smoke` 加回 tracing Case 2/4，
+  并去掉 `CASE_TYPE` 里的 `and not elasticsearch`。
+- OpenSearch（otel Case 3、tracing Case 3/5/7，以及 mesh Case 3/5 里调用链平台的装 / 卸两步）：
+  需要业务集群各节点有空闲裸盘（TopoLVM），dailybuild 的 `asm-1` 未挂数据盘。环境支持后给
+  otel Case 3 与 tracing Case 3/5 补 `smoke` 标签即可，表达式不用改；mesh 那两步是 DocTest 级
+  标签 `opensearch`，`smoke and ...` 天然选不中（DocTest 的标签组里没有 `smoke`），要放开得把
+  `smoke` 一并写进那两处的 `doctest_selected`。
+
+otel Case 2（Java 自动注入示例）不碰存储后端：它自己装一遍 Operator + Collector，只验
+「Operator 自动注入 Java agent」，因此带 `smoke` 进 dailybuild；需要调用链平台的完整上报
+链路拆在 otel Case 3。
 
 因此 `docs-tracing` 测试项当前只会选中 tracing Case 1（环境初始化）——它不碰任何存储后端，
 是这个测试项唯一跑得起来的 Case；没有它该测试项一个用例都不会跑。

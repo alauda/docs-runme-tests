@@ -112,14 +112,16 @@ DocTest 级别的细粒度开关用 `doctest_selected <tag>` 包住单篇文档�
 | `docs-mesh-multicluster` | 3     | `multicluster and not egress`                |
 
 `not elasticsearch` 是天翼云 openSUSE MicroOS 环境的临时限制（根文件系统不可变只读，
-装不了 hostPath 方式的本地 ES 存储），只作用于 otel Case 2 与 tracing Case 2/4/6。相关 Case
+装不了 hostPath 方式的本地 ES 存储），只作用于 tracing Case 2/4/6。相关 Case
 本身已经不带 `smoke`，表达式里这条是双保险；环境支持 ES 后两处一起改回来，详见
 [README「Case 标签与 CASE_TYPE」](README.md#case-标签与-case_type)。
 
-mesh Case 3/5 里调用链平台的装 / 卸两步已改走 OpenSearch 链（DocTest 标签 `opensearch`），
-不再受 `not elasticsearch` 影响；但 DocTest 的标签组里没有 `smoke`，四个测试项的表达式
-依然一个都选不中它——要放开得把 `smoke` 一并写进那两处的 `doctest_selected`，
-并确认业务集群满足 TopoLVM 的空闲裸盘前提。
+mesh Case 3/5 里调用链平台的装 / 卸两步（DocTest 标签 `opensearch`）与 otel Case 3 都已改走
+OpenSearch 链，不再受 `not elasticsearch` 影响；但前者的 DocTest 标签组里没有 `smoke`、
+后者的 Case 标签组里也没有，四个测试项的表达式依然一个都选不中——要放开得把 `smoke` 一并
+写进那两处的 `doctest_selected` 与 otel Case 3 的标签，并确认业务集群满足 TopoLVM 的
+空闲裸盘前提。otel Case 2（Java 自动注入示例）已从调用链链路里拆出来、不依赖存储后端，
+带 `smoke`，`docs-otel` 测试项会选中它。
 
 新加的 Case 如果不在这几个表达式的选择范围内，它在 dailybuild 上就是**不会跑**的，
 而且不会有任何报错——只会在 allure 里显示成 `[expected] 未被 CASE_TYPE 选中` 的跳过。

@@ -79,12 +79,12 @@ fi
 
 标签怎么选：
 
-| 想要的效果                     | 加什么标签                                                                  |
-| ------------------------------ | --------------------------------------------------------------------------- |
-| 每次都跑（环境初始化这类前置） | `always`（保留标签，恒被选中，不参与表达式求值）                            |
-| 进首批 dailybuild              | 必须带 `smoke`（首批表达式是 `smoke and not egress and not elasticsearch`） |
-| 只在多集群测试项里跑           | `multicluster`                                                              |
-| 暂不纳入，先攒着               | 只给功能标签（如 `opensearch`、`elasticsearch`），不给 `smoke`              |
+| 想要的效果                     | 加什么标签                                                                    |
+| ------------------------------ | ----------------------------------------------------------------------------- |
+| 每次都跑（环境初始化这类前置） | `always`（保留标签，恒被选中，不参与表达式求值）                              |
+| 进 dailybuild                  | 默认就进——表达式是全否定式，不带被排除的标签即可                              |
+| 只在多集群测试项里跑           | `multicluster`                                                                |
+| 暂不纳入，先攒着               | 带上已被排除的标签（`opensearch` / `elasticsearch` / `egress` / `dualstack`） |
 
 DocTest 级别的细粒度开关用 `doctest_selected <tag>` 包住单篇文档，现在有两处：
 `egress`（mesh Case 3/5 的三篇 `routing-egress-traffic-*`）与 `opensearch`
@@ -104,24 +104,30 @@ DocTest 级别的细粒度开关用 `doctest_selected <tag>` 包住单篇文档�
 `apt-test/release-config/tests/<版本>/dailybuild/dailybuild_mircos_g1.yaml` 里
 `spec.template.spec.tests` 现有四项：
 
-| 测试项                   | order | CASE_TYPE                                    |
-| ------------------------ | ----- | -------------------------------------------- |
-| `docs-mesh`              | 0     | `smoke and not egress and not elasticsearch` |
-| `docs-otel`              | 1     | `smoke and not egress and not elasticsearch` |
-| `docs-tracing`           | 2     | `smoke and not egress and not elasticsearch` |
-| `docs-mesh-multicluster` | 3     | `multicluster and not egress`                |
+| 测试项                   | order | CASE_TYPE                     |
+| ------------------------ | ----- | ----------------------------- |
+| `docs-mesh`              | 0     | 见下方全否定式                |
+| `docs-otel`              | 1     | 同上（三项逐字节相同）        |
+| `docs-tracing`           | 2     | 同上（三项逐字节相同）        |
+| `docs-mesh-multicluster` | 3     | `multicluster and not egress` |
 
-`not elasticsearch` 是天翼云 openSUSE MicroOS 环境的临时限制（根文件系统不可变只读，
-装不了 hostPath 方式的本地 ES 存储），只作用于 tracing Case 2/4/6。相关 Case
-本身已经不带 `smoke`，表达式里这条是双保险；环境支持 ES 后两处一起改回来，详见
+前三项的表达式是「除环境不支持的以外全选」：
+
+```
+not dualstack and not egress and not elasticsearch and not opensearch and not multicluster
+```
+
+四个 `not` 各对应一条环境限制，环境具备条件后删掉对应的那条即可：`dualstack`（集群只有
+ipv4）、`egress`（不通外网）、`elasticsearch`（MicroOS 根文件系统不可变只读，装不了
+hostPath 的本地 ES，`asm-1` 无 `log_storage`）、`opensearch`（TopoLVM 要求每节点有空闲
+裸盘，`asm-1` / `asm-2` 的 `data_disks` 为空）。`not multicluster` 不是环境限制，是为了
+把 Case 6/7 留给 `docs-mesh-multicluster` 单跑。逐条理由与恢复动作详见
 [README「Case 标签与 CASE_TYPE」](README.md#case-标签与-case_type)。
 
-mesh Case 3/5 里调用链平台的装 / 卸两步（DocTest 标签 `opensearch`）与 otel Case 3 都已改走
-OpenSearch 链，不再受 `not elasticsearch` 影响；但前者的 DocTest 标签组里没有 `smoke`、
-后者的 Case 标签组里也没有，四个测试项的表达式依然一个都选不中——要放开得把 `smoke` 一并
-写进那两处的 `doctest_selected` 与 otel Case 3 的标签，并确认业务集群满足 TopoLVM 的
-空闲裸盘前提。otel Case 2（Java 自动注入示例）已从调用链链路里拆出来、不依赖存储后端，
-带 `smoke`，`docs-otel` 测试项会选中它。
+`opensearch` 是 Case 级与 DocTest 级共用的同一个标签（otel Case 3、tracing Case 3/5/7，
+以及 mesh Case 3/5 里调用链平台的装 / 卸两步），去掉 `and not opensearch` 时四处一并放开，
+脚本不用改。tracing Case 6/7（`upgrade`）另有前提：升级测试要求环境先有一套 v2.0 部署，
+dailybuild 装出来的是全新 v2.1，选中也只会 SKIPPED，要纳入得按多集群那样单开测试项。
 
 新加的 Case 如果不在这几个表达式的选择范围内，它在 dailybuild 上就是**不会跑**的，
 而且不会有任何报错——只会在 allure 里显示成 `[expected] 未被 CASE_TYPE 选中` 的跳过。
@@ -129,7 +135,7 @@ OpenSearch 链，不再受 `not elasticsearch` 影响；但前者的 DocTest 标
 
 ```bash
 source lynx/case-filter.sh
-_case_type_matches "smoke and not egress and not elasticsearch" smoke install sidecar && echo 选中 || echo 未选中
+_case_type_matches "not dualstack and not egress and not elasticsearch and not opensearch and not multicluster" smoke install sidecar && echo 选中 || echo 未选中
 ```
 
 ### 1.5 同步 README 的两张表

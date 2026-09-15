@@ -102,8 +102,7 @@ if case_begin_if "3" "单网格安装与应用测试 (Single Mesh & App + Tracin
             ./run.sh --project mesh --file routing-egress-traffic-via-k8s-gateway-api-in-sidecar-mode --no-cleanup
             ./run.sh --project mesh --file routing-egress-traffic-via-k8s-gateway-api-in-sidecar-mode --cleanup-only
         fi
-        # metrics-and-mesh 带 cleanup（删 ServiceMonitor / PodMonitor / Telemetry），
-        # 必须 --no-cleanup，否则监控对接刚建好就被删，后面 kiali 的监控验证必然查不到指标
+        # metrics-and-mesh 带 cleanup（删 ServiceMonitor / PodMonitor / Telemetry）
         ./run.sh --project mesh --file metrics-and-mesh --no-cleanup
         ./run.sh --project mesh --file deploying-the-bookinfo-application --no-cleanup
         # 为 bookinfo 命名空间启用严格 mTLS（PeerAuthentication STRICT）
@@ -191,7 +190,6 @@ if case_begin_if "5" "Ambient Mode 安装测试" smoke install ambient; then
             ./run.sh --project mesh --file routing-egress-traffic-via-k8s-gateway-api-in-ambient-mode --no-cleanup
             ./run.sh --project mesh --file routing-egress-traffic-via-k8s-gateway-api-in-ambient-mode --cleanup-only
         fi
-        # 同 Case 3: metrics-and-mesh 带 cleanup，安装阶段必须 --no-cleanup
         ./run.sh --project mesh --file metrics-and-mesh --no-cleanup
         ./run.sh --project mesh --file deploying-ambient-bookinfo --no-cleanup
         # 为 bookinfo 命名空间启用严格 mTLS（PeerAuthentication STRICT）

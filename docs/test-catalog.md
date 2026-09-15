@@ -9,7 +9,7 @@
 | Pod Security Admission（网关类） | `./run.sh --project mesh --file pod-security-admission` |
 | Istio HA - 自动伸缩 | `./run.sh --project mesh --file configuring-istio-ha-by-using-autoscaling` |
 | Istio HA - 固定副本数 | `./run.sh --project mesh --file configuring-istio-ha-by-using-replica-count` |
-| 指标与服务网格集成 | `./run.sh --project mesh --file metrics-and-mesh` |
+| 指标与服务网格集成 | `./run.sh --project mesh --file metrics-and-mesh [--cluster <name>]` |
 | 网格调用链集成配置 | `./run.sh --project mesh --file config-with-service-mesh` |
 | Kiali 安装与配置 | `./run.sh --project mesh --file kiali` |
 | Bookinfo 应用部署（含网关） | `./run.sh --project mesh --file deploying-the-bookinfo-application` |
@@ -36,8 +36,24 @@
 | 多集群 - 配置概述（CA 证书） | `./run.sh --project mesh --file configuration-overview` |
 | 多集群 - 多主多网络 | `./run.sh --project mesh --file install-multi-primary-multi-network` |
 | 多集群 - 主-远多网络 | `./run.sh --project mesh --file install-primary-remote-multi-network` |
+| 多集群 - Kiali 接入 | `./run.sh --project mesh --file install-kiali-in-multi-cluster-mesh` |
 
 > 多集群测试需 `EAST_CLUSTER_NAME` / `WEST_CLUSTER_NAME` 双集群环境，并需先用双集群 `--init-only` 与 `configuration-overview` 完成 cacerts 下发。
+
+**多集群 - Kiali 接入**：跑在任一多集群拓扑的 `--no-cleanup` 之上，要求两个集群都做过监控对接、East 已装好 Kiali server：
+
+```bash
+./run.sh --project mesh --file metrics-and-mesh --cluster "$EAST_CLUSTER_NAME" --no-cleanup
+./run.sh --project mesh --file metrics-and-mesh --cluster "$WEST_CLUSTER_NAME" --no-cleanup
+KIALI_VERIFY_NAMESPACE=sample ./run.sh --project mesh --file kiali --cluster "$EAST_CLUSTER_NAME"
+./run.sh --project mesh --file install-kiali-in-multi-cluster-mesh --no-cleanup
+./run.sh --project mesh --file install-kiali-in-multi-cluster-mesh --cleanup-only
+```
+
+- `--cluster` 在 `--file` 模式下指定测试执行的目标集群（切换 kubeconfig 的默认 context）。监控是按集群分别抓取的，`metrics-and-mesh` 必须在两个集群各跑一遍；主-远拓扑的远端集群没有控制面，该用例会自行跳过 `Telemetry`（apply 会被 `validation.istio.io` webhook 拒）。
+- West 集群的 `kiali-operator` 由本用例自行补齐（文档前提要求每个集群都装 Operator，而 `--file kiali` 只作用于 East）。
+- 流量图断言用 `sample` 命名空间：多集群的示例应用是 `sleep` + `helloworld`，没有 bookinfo。两个集群的 `sleep` 后台流量由 `maybe_gen_sample_traffic` 在多集群安装用例里启动。
+- `--cleanup-only` 覆盖文档的「Removing a cluster from Kiali」与「Cleaning up Kiali」两节，会删掉 East 的 `Kiali` CR；随后的 `uninstalling-alauda-build-of-kiali` 只卸 Operator 与 CRDs。
 
 ## otel（opentelemetry-docs）
 

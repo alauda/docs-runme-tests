@@ -115,6 +115,63 @@ maybe_gen_bookinfo_traffic() {
     return 0
 }
 
+# 按需带 --context 调 kubectl（ctx 为空则用当前 context）
+# 用法: _kubectl_ctx <ctx> <args>...
+_kubectl_ctx() {
+    local ctx="$1"; shift
+    if [ -n "$ctx" ]; then
+        kubectl --context "$ctx" "$@"
+    else
+        kubectl "$@"
+    fi
+}
+
+# (可选) 在 sample 命名空间的 sleep pod 中后台生成 helloworld 请求流量
+# 用法: maybe_gen_sample_traffic [namespace] [context]...   # namespace 默认 sample
+# 说明:
+#   - 多集群网格的示例应用是 sample 命名空间里的 sleep + helloworld（v1 在 East、
+#     v2 在 West），与 bookinfo 场景对应的自动打流量机制就是本函数。
+#   - 开关 AUTO_GEN_SAMPLE_TRAFFIC；未设置时继承 AUTO_GEN_BOOKINFO_TRAFFIC
+#     （dailybuild 模板已置 true），所以无需再给多集群测试项加环境变量。
+#   - 两个集群各有一个 sleep，两边都要打：Kiali 的跨集群边要求双向都有速率，
+#     只打一边时 Traffic Graph 只画得出一半。
+#   - sleep 镜像是 alpine 系，没有 bash，循环用 sh。
+#   - 承载循环的 sleep pod 被重启后循环随之消失，需在重启就绪后再次调用。
+maybe_gen_sample_traffic() {
+    local enabled="${AUTO_GEN_SAMPLE_TRAFFIC:-${AUTO_GEN_BOOKINFO_TRAFFIC:-false}}"
+    [ "$enabled" = "true" ] || return 0
+
+    local ns="sample"
+    if [ $# -gt 0 ]; then
+        ns="$1"
+        shift
+    fi
+    local contexts=("$@")
+    if [ ${#contexts[@]} -eq 0 ]; then
+        contexts=("")
+    fi
+
+    log_info "生成 sample 请求流量 (namespace=${ns}, 集群数=${#contexts[@]})"
+
+    local ctx pod
+    for ctx in "${contexts[@]}"; do
+        pod=$(_kubectl_ctx "$ctx" get pod -l app=sleep -n "$ns" \
+            -o jsonpath='{.items[0].metadata.name}' 2>/dev/null) || pod=""
+        if [ -z "$pod" ]; then
+            log_warn "集群 ${ctx:-当前} 的命名空间 ${ns} 中未找到 sleep pod, 跳过流量生成"
+            continue
+        fi
+        _kubectl_ctx "$ctx" exec "$pod" -c sleep -n "$ns" -- \
+            sh -c "(while true; do curl -sS -o /dev/null http://helloworld.${ns}:5000/hello || true; sleep 9.9; done) >/dev/null 2>&1 &" \
+            || {
+            log_warn "集群 ${ctx:-当前} 启动 sleep 流量循环失败"
+            continue
+        }
+        log_success "集群 ${ctx:-当前} 的 sleep 流量生成已启动 (pod=${pod})"
+    done
+    return 0
+}
+
 # 重试执行 runme 块并断言其输出
 # 用法: retry_runme_verify <block> <cmp_fn> <expected> [attempts] [interval]
 #   cmp_fn   —— framework/verify.sh 的 __cmp_lines / __cmp_contains，签名 (输出, 期望)

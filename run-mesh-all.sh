@@ -102,7 +102,9 @@ if case_begin_if "3" "单网格安装与应用测试 (Single Mesh & App + Tracin
             ./run.sh --project mesh --file routing-egress-traffic-via-k8s-gateway-api-in-sidecar-mode --no-cleanup
             ./run.sh --project mesh --file routing-egress-traffic-via-k8s-gateway-api-in-sidecar-mode --cleanup-only
         fi
-        ./run.sh --project mesh --file metrics-and-mesh
+        # metrics-and-mesh 带 cleanup（删 ServiceMonitor / PodMonitor / Telemetry），
+        # 必须 --no-cleanup，否则监控对接刚建好就被删，后面 kiali 的监控验证必然查不到指标
+        ./run.sh --project mesh --file metrics-and-mesh --no-cleanup
         ./run.sh --project mesh --file deploying-the-bookinfo-application --no-cleanup
         # 为 bookinfo 命名空间启用严格 mTLS（PeerAuthentication STRICT）
         ./run.sh --project mesh --file mtls --no-cleanup
@@ -134,6 +136,8 @@ if case_begin_if "3" "单网格安装与应用测试 (Single Mesh & App + Tracin
         # 清理 bookinfo 命名空间的严格 mTLS 配置（在删除 bookinfo 前移除 PeerAuthentication）
         ./run.sh --project mesh --file mtls --cleanup-only
         ./run.sh --project mesh --file deploying-the-bookinfo-application --cleanup-only
+        # 回收监控对接对象（须在卸载网格前，Telemetry 的 CRD 还在）
+        ./run.sh --project mesh --file metrics-and-mesh --cleanup-only
         ./run.sh --project mesh --file uninstalling-alauda-service-mesh
     ); then
         case_end 0
@@ -187,7 +191,8 @@ if case_begin_if "5" "Ambient Mode 安装测试" smoke install ambient; then
             ./run.sh --project mesh --file routing-egress-traffic-via-k8s-gateway-api-in-ambient-mode --no-cleanup
             ./run.sh --project mesh --file routing-egress-traffic-via-k8s-gateway-api-in-ambient-mode --cleanup-only
         fi
-        ./run.sh --project mesh --file metrics-and-mesh
+        # 同 Case 3: metrics-and-mesh 带 cleanup，安装阶段必须 --no-cleanup
+        ./run.sh --project mesh --file metrics-and-mesh --no-cleanup
         ./run.sh --project mesh --file deploying-ambient-bookinfo --no-cleanup
         # 为 bookinfo 命名空间启用严格 mTLS（PeerAuthentication STRICT）
         ./run.sh --project mesh --file mtls --no-cleanup
@@ -213,6 +218,8 @@ if case_begin_if "5" "Ambient Mode 安装测试" smoke install ambient; then
         if doctest_selected opensearch; then
             ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds --skip-cluster-plugin
         fi
+        # 回收监控对接对象（须在卸载网格前，Telemetry 的 CRD 还在）
+        ./run.sh --project mesh --file metrics-and-mesh --cleanup-only
         # 卸载 ambient 网格
         ./run.sh --project mesh --file uninstalling-alauda-service-mesh-in-ambient-mode
         # 清理 bookinfo
@@ -245,8 +252,28 @@ else
             ./run.sh --project mesh --init-only --cluster "$EAST_CLUSTER_NAME" --cluster "$WEST_CLUSTER_NAME"
             # 公共前置: 生成 CA 证书并下发 cacerts 到两个集群
             ./run.sh --project mesh --file configuration-overview
-            # 多主多网络安装 + 验证 + 卸载
+            # 多主多网络安装 + 验证（环境保留给 Kiali 多集群用例，卸载排在最后）
             ./run.sh --project mesh --file install-multi-primary-multi-network --no-cleanup
+            # ── Kiali 多集群（install-kiali-in-multi-cluster-mesh）──
+            # 监控对接要在每个集群各做一遍：监控是按集群分别抓取的，PodMonitor /
+            # ServiceMonitor 缺一个集群，Kiali 就看不到那个集群的指标。Telemetry 只在
+            # 跑控制面的集群生效，远端集群由 metrics-and-mesh 自行跳过（apply 会被
+            # validation.istio.io webhook 拒）。
+            ./run.sh --project mesh --file metrics-and-mesh --cluster "$EAST_CLUSTER_NAME" --no-cleanup
+            ./run.sh --project mesh --file metrics-and-mesh --cluster "$WEST_CLUSTER_NAME" --no-cleanup
+            # East 装 Kiali server（install_operator 顺带装上 East 的 kiali-operator）；
+            # West 的 kiali-operator 由 install-kiali-in-multi-cluster-mesh 用例补齐。
+            # 流量图断言改用 sample 命名空间——多集群的示例应用是 sleep + helloworld，
+            # 没有 bookinfo；两个集群的 sleep 后台流量由 maybe_gen_sample_traffic 打。
+            KIALI_VERIFY_NAMESPACE=sample \
+                ./run.sh --project mesh --file kiali --cluster "$EAST_CLUSTER_NAME"
+            ./run.sh --project mesh --file install-kiali-in-multi-cluster-mesh --no-cleanup
+            # cleanup-only 覆盖文档的「Removing a cluster from Kiali」与「Cleaning up Kiali」
+            # 两节，East 的 Kiali CR 在此删除，之后只剩 Operator 与 CRDs 要卸
+            ./run.sh --project mesh --file install-kiali-in-multi-cluster-mesh --cleanup-only
+            ./run.sh --project mesh --file uninstalling-alauda-build-of-kiali --cluster "$EAST_CLUSTER_NAME"
+            ./run.sh --project mesh --file metrics-and-mesh --cluster "$WEST_CLUSTER_NAME" --cleanup-only
+            ./run.sh --project mesh --file metrics-and-mesh --cluster "$EAST_CLUSTER_NAME" --cleanup-only
             ./run.sh --project mesh --file install-multi-primary-multi-network --cleanup-only
         ); then
             case_end 0
@@ -265,8 +292,28 @@ else
             ./run.sh --project mesh --init-only --cluster "$EAST_CLUSTER_NAME" --cluster "$WEST_CLUSTER_NAME"
             # 重新下发 cacerts (Case 7 cleanup 已删除 istio-system,需要重建)
             ./run.sh --project mesh --file configuration-overview
-            # 主-远多网络安装 + 验证 + 卸载
+            # 主-远多网络安装 + 验证（环境保留给 Kiali 多集群用例，卸载排在最后）
             ./run.sh --project mesh --file install-primary-remote-multi-network --no-cleanup
+            # ── Kiali 多集群（install-kiali-in-multi-cluster-mesh）──
+            # 监控对接要在每个集群各做一遍：监控是按集群分别抓取的，PodMonitor /
+            # ServiceMonitor 缺一个集群，Kiali 就看不到那个集群的指标。Telemetry 只在
+            # 跑控制面的集群生效，远端集群由 metrics-and-mesh 自行跳过（apply 会被
+            # validation.istio.io webhook 拒）。
+            ./run.sh --project mesh --file metrics-and-mesh --cluster "$EAST_CLUSTER_NAME" --no-cleanup
+            ./run.sh --project mesh --file metrics-and-mesh --cluster "$WEST_CLUSTER_NAME" --no-cleanup
+            # East 装 Kiali server（install_operator 顺带装上 East 的 kiali-operator）；
+            # West 的 kiali-operator 由 install-kiali-in-multi-cluster-mesh 用例补齐。
+            # 流量图断言改用 sample 命名空间——多集群的示例应用是 sleep + helloworld，
+            # 没有 bookinfo；两个集群的 sleep 后台流量由 maybe_gen_sample_traffic 打。
+            KIALI_VERIFY_NAMESPACE=sample \
+                ./run.sh --project mesh --file kiali --cluster "$EAST_CLUSTER_NAME"
+            ./run.sh --project mesh --file install-kiali-in-multi-cluster-mesh --no-cleanup
+            # cleanup-only 覆盖文档的「Removing a cluster from Kiali」与「Cleaning up Kiali」
+            # 两节，East 的 Kiali CR 在此删除，之后只剩 Operator 与 CRDs 要卸
+            ./run.sh --project mesh --file install-kiali-in-multi-cluster-mesh --cleanup-only
+            ./run.sh --project mesh --file uninstalling-alauda-build-of-kiali --cluster "$EAST_CLUSTER_NAME"
+            ./run.sh --project mesh --file metrics-and-mesh --cluster "$WEST_CLUSTER_NAME" --cleanup-only
+            ./run.sh --project mesh --file metrics-and-mesh --cluster "$EAST_CLUSTER_NAME" --cleanup-only
             ./run.sh --project mesh --file install-primary-remote-multi-network --cleanup-only
         ); then
             case_end 0

@@ -79,8 +79,8 @@ KIALI_VERIFY_NAMESPACE=sample ./run.sh --project mesh --file kiali --cluster "$E
 
 | 文档名称 | 执行命令 |
 | --- | --- |
-| 分布式调用链安装（Elasticsearch） | `./run.sh --project tracing --file installing-distributed-tracing-elasticsearch` |
-| 分布式调用链安装（OpenSearch） | `./run.sh --project tracing --file installing-distributed-tracing-opensearch` |
+| 分布式调用链安装（Elasticsearch） | `./run.sh --project tracing --file installing-distributed-tracing-elasticsearch [--cluster <name>]` |
+| 分布式调用链安装（OpenSearch） | `./run.sh --project tracing --file installing-distributed-tracing-opensearch [--cluster <name>]` |
 | 分布式调用链卸载 | `./run.sh --project tracing --file uninstalling-distributed-tracing [--skip-operator-and-crds] [--skip-cluster-plugin]` |
 | 分布式调用链 v2.0→v2.1 升级（Elasticsearch） | `./run.sh --project tracing --file upgrading-distributed-tracing-elasticsearch` |
 | 分布式调用链 v2.0→v2.1 升级（OpenSearch） | `./run.sh --project tracing --file upgrading-distributed-tracing-opensearch` |
@@ -91,6 +91,7 @@ KIALI_VERIFY_NAMESPACE=sample ./run.sh --project mesh --file kiali --cluster "$E
 - **步骤 2** 自动安装前置依赖 OpenTelemetry v2 Operator（其代码块位于 `opentelemetry-docs`）。
 - **存储后端**：ES 篇与 OpenSearch 篇的自动安装 / 手动降级规则见 [configuration.md 第 7 节](configuration.md#7-分布式调用链tracing专用)。两者皆缺时该测试 SKIPPED。
 - 两段 (Optional) SPM 章节按当前部署是否配了 spanmetrics connector 自动决定跑不跑，`TRACING_TEST_SPM=false` 可强制跳过。
+- **多集群网格**：`--cluster <name>` 指定安装目标集群，多集群网格的每个集群都要装一套调用链（Jaeger + OTel Collector 都是集群内组件）。调用链索引则要共用一套，否则同一条跨集群链路会被拆进各集群自己的索引里——用 `TRACING_JAEGER_ES_INDEX_PREFIX` 覆盖文档默认的 `acp-<集群名>`，详见 [configuration.md 第 7 节](configuration.md#7-分布式调用链tracing专用)。
 - `TRACING_VERIFY_TRACE_QUERY=true` 时会在 telemetrygen 之后、SPM 章节之前插入调用链查询验证，SPM 章节重新部署 telemetrygen 之后还会再验一次（那段 patch 重启过 Jaeger 又改了 Collector 路由，两处都可能弄坏 span 写入通路，而 spanmetrics 指标走 monitoring 存储，指标正常并不能说明调用链还查得出来）。
 
 ### 卸载测试

@@ -14,7 +14,7 @@
 #   - setup_kubeconfig         <cluster>...           强制拉取多集群 kubeconfig，合并并 export KUBECONFIG
 #   - ensure_kubeconfig        <cluster>...           按 fingerprint 比对，必要时重新拉取
 #   - load_kubeconfig                                 仅复用已存在的合并 kubeconfig，找不到则报错
-#   - select_test_context      <cluster>              把默认 context 切到指定集群（不改原文件）
+#   - select_test_context      <cluster>              把默认 context 切到指定集群（不改原文件），并导出 TEST_TARGET_CLUSTER
 #   - _run_runme_block_isolated <block> <kc>          隔离子进程执行 runme 块并返回纯净输出
 
 # 防止重复 source
@@ -350,6 +350,7 @@ load_kubeconfig() {
 #     merged.yaml 的 current-context 是 setup_kubeconfig 的产物（第一个集群），
 #     被某次单篇测试改掉会影响后续所有不带 --cluster 的测试
 #   - 全部 context 都保留，因此多集群文档里的 `kubectl --context` 仍然可用
+#   - 一并 export TEST_TARGET_CLUSTER=<cluster>，供项目钩子取用（见下方说明）
 select_test_context() {
     local cluster="$1"
     if [ -z "$cluster" ]; then
@@ -388,6 +389,10 @@ select_test_context() {
     chmod 600 "$out"
 
     export KUBECONFIG="$out"
+    # 走平台 API 的操作（集群插件上架、ModuleInfo 落到哪个集群）要的是 ACP 集群名，
+    # 不是 kubeconfig context；只切 context 的话这类逻辑仍会落在 $SINGLE_CLUSTER_NAME 上。
+    # 故把本次运行的目标集群名一并导出，供项目钩子取用（如 tracing 的 Jaeger 集群插件安装）。
+    export TEST_TARGET_CLUSTER="$cluster"
     log_info "测试目标集群: $cluster (默认 context 已切换)"
     return 0
 }

@@ -154,6 +154,8 @@ export TRACING_TELEMETRYGEN_TEST_DURATION_1=30s    # 覆盖文档默认 150s，�
 export TRACING_TELEMETRYGEN_TEST_DURATION_2=130s
 export TRACING_TEST_SPM=true                       # 测 SPM 章节，需 ACP monitoring
 export TRACING_VERIFY_TRACE_QUERY=false            # 调用链查询验证
+# 覆盖两篇安装测试的调用链索引前缀（留空/不设 = 文档默认的 acp-<集群名>）
+export TRACING_JAEGER_ES_INDEX_PREFIX=acp-mesh
 ```
 
 **Elasticsearch 自动安装**：`TRACING_INSTALL_ES=true` 且 `PKG_LOG_CENTER_URL` 非空时，安装测试步骤 0 把 logcenter 集群插件（Single Node 模式）装到 `TRACING_ACP_ES_CLUSTER` 指定集群；已装过则跳过（幂等）。安装逻辑见 `projects/tracing/elasticsearch.sh`。
@@ -170,6 +172,16 @@ export TRACING_VERIFY_TRACE_QUERY=false            # 调用链查询验证
 | `TRACING_OPENSEARCH_OPERATOR_CHANNEL` | 包的 `defaultChannel` | |
 | `TRACING_OPENSEARCH_BASEPATH` | `/clusters/<集群名>/opensearch` | HTTP API Ingress 路径；自动安装时 endpoint = 平台地址 + 该路径 |
 | `TRACING_OPENSEARCH_DASHBOARDS_BASEPATH` | `/clusters/<集群名>/opensearch-dashboards` | Dashboards Ingress 路径 |
+
+**多集群网格的调用链**：两篇安装测试都支持 `--cluster <name>`，多集群网格的每个集群都要装一套调用链（Jaeger 与 OTel Collector 都是集群内组件）；`--cluster` 除切换 kubeconfig 默认 context 外，还决定 Jaeger v2 集群插件落到哪个集群（引擎导出 `TEST_TARGET_CLUSTER`，见 [architecture.md](architecture.md)）。调用链索引反过来要共用一套，否则同一条跨集群链路会被拆进各集群自己的索引：
+
+```bash
+export TRACING_JAEGER_ES_INDEX_PREFIX=acp-mesh    # 两个集群共用
+./run.sh --project tracing --file installing-distributed-tracing-elasticsearch --cluster "$EAST_CLUSTER_NAME"
+./run.sh --project tracing --file installing-distributed-tracing-elasticsearch --cluster "$WEST_CLUSTER_NAME"
+```
+
+第二个集群的安装对已有索引是空操作：`jaeger-es-rollover init` 建索引/别名前先查存在性，模板 PUT 本身幂等。Elasticsearch 篇默认就共用 Global 的 ACP ES（`TRACING_ACP_ES_CLUSTER=global`），前缀一改即生效；OpenSearch 篇的自动安装是**每个集群各建一套实例**，要共用索引须改为 `TRACING_INSTALL_OPENSEARCH=false` + 手动 `TRACING_OPENSEARCH_*` 指向同一实例（第二个集群会重建同名 ISM policy，内容相同，幂等）。
 
 **调用链查询验证**（`TRACING_VERIFY_TRACE_QUERY=true`）：两篇安装测试在 telemetrygen 之后，走 ACP 的 Service 代理（不经 Jaeger Ingress 与 oauth2-proxy）依次查 Jaeger v3 Query API 的 `/services`、`/operations`、`/trace-summaries`，断言窗口内至少有 `TRACING_VERIFY_TRACE_MIN_COUNT`（默认 2）条调用链，不够就整轮重试。用 `TRACING_VERIFY_TRACE_SERVICE` 覆盖默认服务名；重试与窗口见 `projects/tracing/trace-query.sh`。
 

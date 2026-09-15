@@ -13,6 +13,9 @@ cd docs-runme-tests
 # 多集群初始化（仅 mesh 的 multi-cluster 文档）
 ./run.sh --project mesh --init-only --cluster "$EAST_CLUSTER_NAME" --cluster "$WEST_CLUSTER_NAME"
 
+# 多集群环境里指定某篇单集群文档的执行目标（切换 kubeconfig 默认 context，不做初始化）
+./run.sh --project mesh --file metrics-and-mesh --cluster "$WEST_CLUSTER_NAME"
+
 # 测试指定文档（自动查找所属项目，默认不初始化）
 ./run.sh --file install-mesh
 

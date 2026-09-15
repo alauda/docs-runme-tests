@@ -69,7 +69,9 @@ export METALLB_EXTERNAL_ADDRESSES_JSON='[{"cluster":"business-1","ipv4Addresses"
 | --- | --- | --- |
 | `IS_DUAL_STACK` | `false` | 集群是否双栈，决定 Case 2 是否可跑 |
 | `AUTO_GEN_BOOKINFO_TRAFFIC` | `true` | 部署 bookinfo 后自动打流量 |
+| `AUTO_GEN_SAMPLE_TRAFFIC` | 继承 `AUTO_GEN_BOOKINFO_TRAFFIC` | 多集群 `sample` 命名空间部署完成后，在两个集群的 `sleep` pod 里各起一个后台循环访问 `helloworld`，供 Kiali 多集群用例观测跨集群流量 |
 | `KIALI_VERIFY_MONITORING` | `false` | 装完 Kiali 后额外验证监控可用：断言 `istiod` / `prometheus`（已对接调用链时含 `tracing`）为 Healthy，且 bookinfo 命名空间能算出速率大于 0 的边。sidecar 看 http 边、ambient 看 ztunnel tcp 边。依赖 bookinfo 已部署；命名空间用 `KIALI_VERIFY_NAMESPACE` 覆盖 |
+| `KIALI_VERIFY_NAMESPACE` | `bookinfo` | 流量图断言使用的命名空间。打流量的客户端按该命名空间里实际部署的示例应用选：`bookinfo` 用 `ratings` → `productpage`，多集群的 `sample` 用 `sleep` → `helloworld`（Case 6/7 即以 `sample` 运行 `--file kiali`） |
 | `ENABLE_GW_LINUX_KERNEL_COMPAT` | `false` | 仅内核 < 4.11（CentOS 7）需要。开启后高端口网关走 Scenario 1（去 sysctls），特权端口网关走 Scenario 2（+ NET_BIND_SERVICE + root），详见 [architecture.md](architecture.md#5-mesh-网关与内核兼容公共函数) |
 | `ENABLE_METALLB` | `false` | 是否安装 MetalLB 集群插件。多集群网格与入口网关 LoadBalancer 场景需要 |
 

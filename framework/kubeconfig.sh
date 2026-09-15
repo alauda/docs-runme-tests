@@ -14,6 +14,7 @@
 #   - setup_kubeconfig         <cluster>...           强制拉取多集群 kubeconfig，合并并 export KUBECONFIG
 #   - ensure_kubeconfig        <cluster>...           按 fingerprint 比对，必要时重新拉取
 #   - load_kubeconfig                                 仅复用已存在的合并 kubeconfig，找不到则报错
+#   - select_test_context      <cluster>              把默认 context 切到指定集群（不改原文件）
 #   - _run_runme_block_isolated <block> <kc>          隔离子进程执行 runme 块并返回纯净输出
 
 # 防止重复 source
@@ -339,6 +340,55 @@ load_kubeconfig() {
     fi
 
     export KUBECONFIG="$KUBECONFIG_MERGED_FILE"
+    return 0
+}
+
+# 把默认 context 切到指定集群，供单集群文档在多集群环境里指定执行目标
+# 用法: select_test_context <cluster>
+# 说明:
+#   - 派生一份 merged.yaml 的副本再改写其 current-context，不动原文件——
+#     merged.yaml 的 current-context 是 setup_kubeconfig 的产物（第一个集群），
+#     被某次单篇测试改掉会影响后续所有不带 --cluster 的测试
+#   - 全部 context 都保留，因此多集群文档里的 `kubectl --context` 仍然可用
+select_test_context() {
+    local cluster="$1"
+    if [ -z "$cluster" ]; then
+        log_error "select_test_context: 缺少集群名称"
+        return 1
+    fi
+    if [ ! -f "$KUBECONFIG_MERGED_FILE" ]; then
+        log_error "未找到 kubeconfig: $KUBECONFIG_MERGED_FILE"
+        log_error "请先执行 './run.sh --project <name> --init-only' 进行初始化"
+        return 1
+    fi
+
+    # context 不存在时后续每条 kubectl 都会失败且报错难定位，这里先拦住
+    local available
+    available=$(KUBECONFIG="$KUBECONFIG_MERGED_FILE" kubectl config get-contexts -o name 2>/dev/null)
+    if ! printf '%s\n' "$available" | grep -qx "$cluster"; then
+        log_error "kubeconfig 中不存在 context: $cluster"
+        log_error "可用 context: $(printf '%s' "$available" | tr '\n' ' ')"
+        log_error "该集群未参与上一次初始化时，请加上 --force-init 或重新 --init-only"
+        return 1
+    fi
+
+    local out="$KUBECONFIG_DIR/current-${cluster}.yaml"
+    local tmp
+    tmp=$(mktemp) || return 1
+    if ! awk -v target="$cluster" '
+        /^current-context:/ { print "current-context: " target; found=1; next }
+        { print }
+        END { if (!found) print "current-context: " target }
+    ' "$KUBECONFIG_MERGED_FILE" > "$tmp"; then
+        rm -f "$tmp"
+        log_error "切换默认 context 失败: $cluster"
+        return 1
+    fi
+    mv "$tmp" "$out"
+    chmod 600 "$out"
+
+    export KUBECONFIG="$out"
+    log_info "测试目标集群: $cluster (默认 context 已切换)"
     return 0
 }
 

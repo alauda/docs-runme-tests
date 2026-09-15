@@ -40,7 +40,9 @@ if [ ${#repos[@]} -eq 0 ]; then
     exit 1
 fi
 
-# 提取命名代码块内 `-f <url>` 形式的 URL
+# 提取命名代码块内的外部 URL：
+#   - `-f <url>`          —— kubectl apply / create 用
+#   - 以 `.sh` 结尾的 URL —— curl 下载脚本用（占位符 URL 不会命中）
 extract_urls() {
     local repo="$1"
     [ -d "$repo/docs" ] || return 0
@@ -58,6 +60,11 @@ extract_urls() {
                     sub(/^-f[[:space:]]+/, "", u)
                     print u
                     s = substr(s, RSTART + RLENGTH)
+                }
+                t = $0
+                while (match(t, /https?:\/\/[^[:space:]"'"'"']+\.sh/)) {
+                    print substr(t, RSTART, RLENGTH)
+                    t = substr(t, RSTART + RLENGTH)
                 }
             }
         ' "$f"

@@ -18,7 +18,7 @@
 
 所有 `PKG_*_URL` **不设置**——插件包由 lynx 依据 Release YAML 预上架，框架走 verify-only。
 
-两个可选开关默认 `false`，置 `true` 不需要模板再配任何东西（它们用的账号密码本就是框架必需项）：`KIALI_VERIFY_MONITORING`（mesh Case 3/5 额外验证 Kiali 监控可用）、`TRACING_VERIFY_TRACE_QUERY`（tracing 安装测试额外验证调用链可查）。
+两个可选开关默认 `false`，置 `true` 不需要模板再配任何东西（它们用的账号密码本就是框架必需项）：`KIALI_VERIFY_MONITORING`（mesh Case 3/5/6/7 额外验证 Kiali 监控可用；Case 6/7 走 `sample` 命名空间的 `sleep` → `helloworld` 流量）、`TRACING_VERIFY_TRACE_QUERY`（tracing 安装测试额外验证调用链可查）。
 
 报告产物：`$TEST_RESULT_DIR/allure-result/` 与 `allure-report/`。用例粒度为一篇文档的一次执行（DocTest），Case 作为 allure suite 分组。
 

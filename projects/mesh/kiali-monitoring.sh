@@ -13,7 +13,8 @@
 #      该接口由 Kiali 后台周期性刷新，配置刚下发时可能仍是上一轮结果，故需重试。
 #   2. GET /api/namespaces/graph —— 断言 Kiali 真能从监控后端算出流量速率，
 #      而不只是「连得上」。指标从产生到可被查询要经过一次抓取周期（60s 量级），
-#      故每轮先补一批 bookinfo 请求再查图，直到出现速率大于 0 的边。
+#      故每轮先补一批请求再查图，直到出现速率大于 0 的边。请求客户端按命名空间里
+#      实际部署的示例应用选：bookinfo 用 ratings，多集群的 sample 用 sleep。
 #
 # 两种数据面模式都支持，判定条件统一为「存在速率大于 0 的边」：
 #   - sidecar 模式：Envoy 上报 istio_requests_total，图上是 http 边；
@@ -35,7 +36,8 @@
 #
 # 环境变量:
 #   KIALI_VERIFY_MONITORING       默认 false；置 true 才执行本验证
-#   KIALI_VERIFY_NAMESPACE        流量图断言使用的命名空间，默认 bookinfo
+#   KIALI_VERIFY_NAMESPACE        流量图断言使用的命名空间，默认 bookinfo；
+#                                 多集群场景传 sample（示例应用是 sleep + helloworld）
 #   KIALI_VERIFY_READY_RETRIES    等待 /api/auth/openid_redirect 就绪的轮次，默认 30
 #   KIALI_VERIFY_READY_INTERVAL   上述探测间隔（秒），默认 5
 #   KIALI_VERIFY_STATUS_RETRIES   /api/istio/status 重试轮次，默认 10
@@ -271,20 +273,34 @@ _kiali_check_istio_status() {
     return 0
 }
 
-# 在 bookinfo 的 ratings pod 中同步打一批 productpage 请求
-# 用法: _kiali_gen_bookinfo_traffic <namespace> [请求数]
-# 说明: 与 maybe_gen_bookinfo_traffic 的后台常驻循环不同，这里是有界的同步请求——
-#       流量图断言只需要「最近一个速率窗口内有流量」，不需要留下后台进程。
-_kiali_gen_bookinfo_traffic() {
+# 在示例应用的客户端 pod 中同步打一批请求
+# 用法: _kiali_gen_traffic <namespace> [请求数]
+# 说明:
+#   - 与 maybe_gen_bookinfo_traffic / maybe_gen_sample_traffic 的后台常驻循环不同，
+#     这里是有界的同步请求——流量图断言只需要「最近一个速率窗口内有流量」，
+#     不需要留下后台进程。
+#   - 客户端按命名空间里实际部署的示例应用选：bookinfo 的 ratings → productpage:9080，
+#     多集群 sample 的 sleep → helloworld.<ns>:5000。多集群下这里只补当前集群这一路，
+#     对端集群的流量由 maybe_gen_sample_traffic 的后台循环持续产生。
+#   - sleep 镜像是 alpine 系，没有 bash，循环用 sh 的 while。
+_kiali_gen_traffic() {
     local ns="$1" count="${2:-20}" pod
     pod=$(kubectl get pod -l app=ratings -n "$ns" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null) || pod=""
-    if [ -z "$pod" ]; then
-        return 1
+    if [ -n "$pod" ]; then
+        kubectl exec "$pod" -c ratings -n "$ns" -- \
+            bash -c "for i in \$(seq 1 ${count}); do curl -sS -o /dev/null productpage:9080/productpage || true; done" \
+            > /dev/null 2>&1 || return 1
+        return 0
     fi
-    kubectl exec "$pod" -c ratings -n "$ns" -- \
-        bash -c "for i in \$(seq 1 ${count}); do curl -sS -o /dev/null productpage:9080/productpage || true; done" \
-        > /dev/null 2>&1 || return 1
-    return 0
+
+    pod=$(kubectl get pod -l app=sleep -n "$ns" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null) || pod=""
+    if [ -n "$pod" ]; then
+        kubectl exec "$pod" -c sleep -n "$ns" -- \
+            sh -c "i=0; while [ \$i -lt ${count} ]; do curl -sS -o /dev/null http://helloworld.${ns}:5000/hello || true; i=\$((i+1)); done" \
+            > /dev/null 2>&1 || return 1
+        return 0
+    fi
+    return 1
 }
 
 # 断言 Kiali 能从监控后端算出该命名空间的流量速率
@@ -374,19 +390,20 @@ _kiali_verify_monitoring_impl() {
     # 步骤 3: 流量图断言（sidecar 模式为 http 边，ambient 模式为 ztunnel 的 tcp 边）
     log_info "步骤 3/3: 校验 Kiali 能算出 ${ns} 命名空间的流量速率"
     if ! kubectl get namespace "$ns" > /dev/null 2>&1; then
-        log_error "命名空间 ${ns} 不存在，无法验证流量图；请先执行 bookinfo 部署用例，或用 KIALI_VERIFY_NAMESPACE 指定其它命名空间"
+        log_error "命名空间 ${ns} 不存在，无法验证流量图；请先执行 bookinfo 部署用例（多集群场景为 sample），或用 KIALI_VERIFY_NAMESPACE 指定其它命名空间"
         return 1
     fi
-    if ! kubectl get pod -l app=ratings -n "$ns" -o name 2>/dev/null | grep -q .; then
-        log_error "命名空间 ${ns} 中没有 app=ratings 的 Pod，无法生成 bookinfo 流量"
+    if ! kubectl get pod -l app=ratings -n "$ns" -o name 2>/dev/null | grep -q . \
+        && ! kubectl get pod -l app=sleep -n "$ns" -o name 2>/dev/null | grep -q .; then
+        log_error "命名空间 ${ns} 中既没有 app=ratings (bookinfo) 也没有 app=sleep (多集群 sample) 的 Pod，无法生成流量"
         return 1
     fi
 
     local attempt
     for attempt in $(seq 1 "$graph_retries"); do
         # 每轮先补一批请求：指标要经过一次抓取周期才可查，且速率窗口是滑动的
-        _kiali_gen_bookinfo_traffic "$ns" 20 \
-            || log_warn "生成 bookinfo 流量失败（第 ${attempt}/${graph_retries} 轮），继续查询流量图"
+        _kiali_gen_traffic "$ns" 20 \
+            || log_warn "生成示例流量失败（第 ${attempt}/${graph_retries} 轮），继续查询流量图"
         if _kiali_check_graph_traffic "$ns"; then
             return 0
         fi

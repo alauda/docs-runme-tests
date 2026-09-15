@@ -75,3 +75,37 @@ runme_run_with_assets() {
     # 只有独立进程里的 -e 才不受影响。
     bash -e -c "$content"
 }
+
+# 把命令串里命中清单的 URL 换成 file:// 本地地址（未命中的原样保留）
+# 用法: cmd=$(rewrite_urls_to_file_assets "$cmd")
+# 说明: 供 `curl -o <文件> <url>` 这类下载块使用。curl 不认裸文件路径（会当成
+#       相对 URL 去解析主机名），但认 file:// 协议，改写后离线环境同样能落盘。
+#       kubectl apply -f 走 rewrite_urls_to_assets（裸路径），两者不能混用。
+rewrite_urls_to_file_assets() {
+    local cmd="$1" url local_path
+    while IFS= read -r url; do
+        [ -n "$url" ] || continue
+        local_path=$(asset_local_path "$url")
+        [ -n "$local_path" ] || continue
+        # pattern 侧加引号，理由同 rewrite_urls_to_assets（避免 URL 里的 glob 元字符误匹配）
+        cmd="${cmd//"$url"/file://$local_path}"
+    done < <(printf '%s' "$cmd" | grep -oE 'https?://[^[:space:]"'"'"']+' | sort -u)
+    printf '%s' "$cmd"
+}
+
+# 执行下载类代码块（curl 取外部文件），离线环境改走预置资产的 file:// 地址
+# 用法: runme_run_curl_with_assets <block-name> [工作目录]
+# 说明: runme print 必须在文档仓库根执行，故先渲染再切目录，与
+#       kubectl_apply_runme_block 的顺序一致。
+runme_run_curl_with_assets() {
+    local block="$1" dir="${2:-.}" content
+    content=$(runme print "$block" 2>/dev/null)
+    if [ -z "$content" ]; then
+        log_error "无法获取代码块内容: $block"
+        return 1
+    fi
+    content=$(rewrite_urls_to_file_assets "$content")
+    # 与 runme_run_with_assets 同理：必须 fork 独立进程，-e 才不受调用方
+    # `f X || { ... }` 上下文抑制 errexit 的影响
+    ( cd "$dir" && bash -e -c "$content" )
+}

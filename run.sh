@@ -61,9 +61,13 @@ usage() {
                         - --file 模式可省略，引擎会按 repos.conf 自动查找；
                           若脚本在多个项目重名则报错要求显式指定
   --file <name>         测试指定文档（可指定多次，默认不执行初始化）
-  --cluster <name>      指定要初始化的集群名称（可指定多次）
-                        - 仅与 --init-only / --force-init 配合使用
-                        - 未指定时默认使用 \$SINGLE_CLUSTER_NAME
+  --cluster <name>      指定集群名称（可指定多次）
+                        - 与 --init-only / --force-init 配合时：要初始化的集群列表
+                        - 与 --file 配合时：取第一个作为测试执行的目标集群，
+                          把 kubeconfig 的默认 context 切到它（多集群环境里让
+                          单集群文档分别在两个集群上各跑一遍）
+                        - 未指定时初始化默认使用 \$SINGLE_CLUSTER_NAME，
+                          测试默认使用合并 kubeconfig 的既有 current-context
   --no-cleanup          不执行 cleanup 操作
   --cleanup-only        只执行 cleanup 操作
   --init-only           只执行环境初始化，不运行测试（必须配合 --project）
@@ -87,6 +91,9 @@ usage() {
 
   # 显式指定项目并强制初始化
   $0 --project tracing --file installing-distributed-tracing-elasticsearch --force-init
+
+  # 多集群环境里指定测试执行的目标集群（不做初始化）
+  $0 --project mesh --file metrics-and-mesh --cluster "$WEST_CLUSTER_NAME"
 
 通用必需环境变量:
   RUNME_VERSION PLATFORM_ADDRESS PLATFORM_USERNAME PLATFORM_PASSWORD
@@ -474,6 +481,13 @@ main() {
     if [ "$INIT_ONLY" = true ]; then
         log_success "环境初始化完成，退出（--init-only）"
         exit 0
+    fi
+
+    # ── --file 模式下的目标集群（--cluster）──
+    # project_prepare 里的 load_kubeconfig 会把 KUBECONFIG 指回合并文件，
+    # 因此切换必须排在它之后。多个 --cluster 时取第一个（一次运行只有一个默认集群）。
+    if [ ${#INIT_CLUSTERS[@]} -gt 0 ]; then
+        select_test_context "${INIT_CLUSTERS[0]}" || exit 1
     fi
 
     # ── 执行测试 ──

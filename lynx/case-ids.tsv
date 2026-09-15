@@ -33,6 +33,7 @@ mesh	configuration-overview	ASM-DOC-029
 mesh	install-multi-primary-multi-network	ASM-DOC-030
 mesh	install-primary-remote-multi-network	ASM-DOC-031
 mesh	pod-security-admission	ASM-DOC-032
+mesh	install-kiali-in-multi-cluster-mesh	ASM-DOC-033
 otel	rbac-resources	OTEL-DOC-001
 otel	install-opentelemetry	OTEL-DOC-002
 otel	without-sidecar	OTEL-DOC-003

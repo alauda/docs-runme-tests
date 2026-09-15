@@ -17,10 +17,30 @@
 
 # NOTE: This file is based on https://github.com/istio/istio.io/blob/master/tests/util/verify.sh.
 
+# 去掉输出里的 ANSI 转义序列（CSI 形式：ESC [ 参数 终止字母）。
+#
+# 为什么断言必须过这一道：runme 用 PTY 执行代码块，于是块里的工具会认为自己在终端上，
+# 带 `--color=auto` 的 grep（Ubuntu / macOS 的交互式 shell 都默认给 grep 加这个别名）
+# 会给**匹配到的那段文本**套上颜色码：
+#   INF <ESC>[01;31m<ESC>[KDiscovered cluster<ESC>[m<ESC>[K: Name=[cluster1], ...
+# 关键字若跨过被着色的那段（如 `Discovered cluster: Name=[cluster1]`），就会被从中间
+# 截断，substring 断言必然失败，而日志打出来看起来完全正常——极难排查。
+#
+# 仅在确实含 ESC 时才起一个 sed 子进程，其余情况原样返回，不影响既有断言的行为
+# （命令替换会吃掉尾部换行，所以不能无条件走这条路）。
+# 写法兼容 BSD sed（macOS）：ESC 用字面量字节，只用 BRE，不用 -E / -i。
+__strip_ansi() {
+    case "$1" in
+        *$'\033'*) printf '%s' "$1" | sed "s/$(printf '\033')\[[0-9;]*[a-zA-Z]//g" ;;
+        *) printf '%s' "$1" ;;
+    esac
+}
+
 # Returns 0 if $out and $expected are the same.  Otherwise, returns 1.
 __cmp_same() {
     local out="${1//$'\r'}"
     local expected=$2
+    case "$out" in *$'\033'*) out=$(__strip_ansi "$out") ;; esac
 
     if [[ "$out" != "$expected" ]]; then
         return 1
@@ -33,6 +53,7 @@ __cmp_same() {
 __cmp_contains() {
     local out="${1//$'\r'}"
     local expected=$2
+    case "$out" in *$'\033'*) out=$(__strip_ansi "$out") ;; esac
 
     if [[ "$out" != *"$expected"* ]]; then
         return 1
@@ -46,6 +67,7 @@ __cmp_contains() {
 __cmp_not_contains() {
     local out="${1//$'\r'}"
     local expected=$2
+    case "$out" in *$'\033'*) out=$(__strip_ansi "$out") ;; esac
 
     if [[ "$out" == *"$expected"* ]]; then
         return 1
@@ -59,6 +81,7 @@ __cmp_not_contains() {
 __cmp_elided() {
     local out="${1//$'\r'}"
     local expected=$2
+    case "$out" in *$'\033'*) out=$(__strip_ansi "$out") ;; esac
 
     local contains=""
     while IFS=$'\n' read -r line; do
@@ -85,6 +108,7 @@ __cmp_elided() {
 __cmp_regex() {
     local out="${1//$'\r'}"
     local expected=$2
+    case "$out" in *$'\033'*) out=$(__strip_ansi "$out") ;; esac
 
     if [[ "$out" =~ $expected ]]; then
         return 0
@@ -98,6 +122,7 @@ __cmp_regex() {
 __cmp_first_line() {
     local out=$1
     local expected=$2
+    case "$out" in *$'\033'*) out=$(__strip_ansi "$out") ;; esac
 
     IFS=$'\n\r' read -r out_first_line <<< "$out"
     IFS=$'\n' read -r expected_first_line <<< "$expected"

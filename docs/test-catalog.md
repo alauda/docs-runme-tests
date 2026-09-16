@@ -10,7 +10,7 @@
 | Istio HA - 自动伸缩 | `./run.sh --project mesh --file configuring-istio-ha-by-using-autoscaling` |
 | Istio HA - 固定副本数 | `./run.sh --project mesh --file configuring-istio-ha-by-using-replica-count` |
 | 指标与服务网格集成 | `./run.sh --project mesh --file metrics-and-mesh [--cluster <name>]` |
-| 网格调用链集成配置 | `./run.sh --project mesh --file config-with-service-mesh` |
+| 网格调用链集成配置 | `./run.sh --project mesh --file config-tracing-with-service-mesh [--cluster <name>]` |
 | Kiali 安装与配置 | `./run.sh --project mesh --file kiali` |
 | Bookinfo 应用部署（含网关） | `./run.sh --project mesh --file deploying-the-bookinfo-application` |
 | 严格 mTLS（命名空间级） | `./run.sh --project mesh --file mtls` |
@@ -54,6 +54,8 @@ KIALI_VERIFY_NAMESPACE=sample ./run.sh --project mesh --file kiali --cluster "$E
 - West 集群的 `kiali-operator` 由本用例自行补齐（文档前提要求每个集群都装 Operator，而 `--file kiali` 只作用于 East）。
 - 流量图断言用 `sample` 命名空间：多集群的示例应用是 `sleep` + `helloworld`，没有 bookinfo。两个集群的 `sleep` 后台流量由 `maybe_gen_sample_traffic` 在多集群安装用例里启动。
 - `--cleanup-only` 覆盖文档的「Removing a cluster from Kiali」与「Cleaning up Kiali」两节，会删掉 East 的 `Kiali` CR；随后的 `uninstalling-alauda-build-of-kiali` 只卸 Operator 与 CRDs。
+
+**网格调用链集成配置（多集群）**：`--cluster <name>` 指定执行目标集群，网格侧配置（`Istio` + `Telemetry`）按控制面走——多主拓扑两个集群各配一遍；主-远拓扑只配主集群，远端集群没有本地 istiod（sidecar 的 tracing 配置由主集群 istiod 下发，`Telemetry asm-default` 也不存在），该用例在远端集群只做 `jaeger-system` 服务发现标签，其余步骤自行跳过。调用链平台本身要在每个集群各装一套并共用索引前缀（见下方 tracing 章节）。多集群编排（Case 6/7）尚未接入这两个用例，需要时按上面的命令手动执行。
 
 ## otel（opentelemetry-docs）
 

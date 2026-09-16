@@ -65,7 +65,9 @@ usage() {
                         - 与 --init-only / --force-init 配合时：要初始化的集群列表
                         - 与 --file 配合时：取第一个作为测试执行的目标集群，
                           把 kubeconfig 的默认 context 切到它（多集群环境里让
-                          单集群文档分别在两个集群上各跑一遍）
+                          单集群文档分别在两个集群上各跑一遍），同时导出
+                          TEST_TARGET_CLUSTER 供项目钩子取用（走平台 API 的操作
+                          要的是集群名，如 tracing 的 Jaeger 集群插件落地集群）
                         - 未指定时初始化默认使用 \$SINGLE_CLUSTER_NAME，
                           测试默认使用合并 kubeconfig 的既有 current-context
   --no-cleanup          不执行 cleanup 操作
@@ -93,7 +95,11 @@ usage() {
   $0 --project tracing --file installing-distributed-tracing-elasticsearch --force-init
 
   # 多集群环境里指定测试执行的目标集群（不做初始化）
-  $0 --project mesh --file metrics-and-mesh --cluster "$WEST_CLUSTER_NAME"
+  $0 --project mesh --file metrics-and-mesh --cluster "\$WEST_CLUSTER_NAME"
+
+  # 多集群网格的两个集群各装一套调用链，共用一套 ES/OpenSearch 索引
+  TRACING_JAEGER_ES_INDEX_PREFIX=acp-mesh $0 --project tracing \\
+      --file installing-distributed-tracing-elasticsearch --cluster "\$WEST_CLUSTER_NAME"
 
 通用必需环境变量:
   RUNME_VERSION PLATFORM_ADDRESS PLATFORM_USERNAME PLATFORM_PASSWORD

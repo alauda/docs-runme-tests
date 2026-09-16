@@ -18,6 +18,8 @@
 | `project_init <clusters>` | 仅 `--init-only` / `--force-init` | kubeconfig + 插件包 + operator 等重量级初始化 |
 | `project_prepare` | 每次运行 | kubeconfig 加载等轻量级准备 |
 
+引擎还会向项目钩子与测试脚本导出：`FRAMEWORK_ROOT`、`DOC_REPO_ROOT`、`PROJECT`、各 `SKIP_*` 开关，以及带 `--cluster` 时的 `TEST_TARGET_CLUSTER`（本次运行的目标集群名）。后者是因为走平台 API 的操作要的是 ACP 集群名而不是 kubeconfig context——例如 tracing 的 Jaeger 集群插件资源建在 Global 集群，只切 context 无法决定它落到哪个集群。
+
 ## 3. 测试脚本结构
 
 每个 `runme-test_*.sh` 含 `test_<name>()`（执行步骤与验证），卸载 / 清理类文档还含 `cleanup_<name>()`。脚本头部固定为：

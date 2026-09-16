@@ -116,7 +116,7 @@ if case_begin_if "3" "单网格安装与应用测试 (Single Mesh & App + Tracin
         # 标签 opensearch 门控（与下面 egress 同一套机制）：TopoLVM 要求业务集群至少 3 个
         # 节点、每个节点有空闲裸盘（默认 /dev/vdb），dailybuild 的 asm-1 未挂数据盘。
         # CASE_TYPE 未设置（本地手工全量跑）时照常执行。
-        # 中间的 config-with-service-mesh 与 kiali 不受门控：前者步骤 1 检测不到
+        # 中间的 config-tracing-with-service-mesh 与 kiali 不受门控：前者步骤 1 检测不到
         # jaeger-system 命名空间就跳过、后者检测不到 jaeger-collector svc 就跳过调用链
         # 集成部分，二者在没有调用链平台时都能跑完。
         if doctest_selected opensearch; then
@@ -124,11 +124,11 @@ if case_begin_if "3" "单网格安装与应用测试 (Single Mesh & App + Tracin
         else
             log_warn "CASE_TYPE 未选中 opensearch，跳过调用链平台安装，网格调用链集成只做配置不校验链路"
         fi
-        ./run.sh --project mesh --file config-with-service-mesh --no-cleanup
+        ./run.sh --project mesh --file config-tracing-with-service-mesh --no-cleanup
         ./run.sh --project mesh --file kiali
         # 清理（逆序）：先卸 kiali，再卸网格调用链配置，再卸调用链平台
         ./run.sh --project mesh --file uninstalling-alauda-build-of-kiali
-        ./run.sh --project mesh --file config-with-service-mesh --cleanup-only
+        ./run.sh --project mesh --file config-tracing-with-service-mesh --cleanup-only
         if doctest_selected opensearch; then
             ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds --skip-cluster-plugin
         fi
@@ -201,7 +201,7 @@ if case_begin_if "5" "Ambient Mode 安装测试" smoke install ambient; then
         else
             log_warn "CASE_TYPE 未选中 opensearch，跳过调用链平台安装，网格调用链集成只做配置不校验链路"
         fi
-        ./run.sh --project mesh --file config-with-service-mesh --no-cleanup
+        ./run.sh --project mesh --file config-tracing-with-service-mesh --no-cleanup
         ./run.sh --project mesh --file kiali
         ./run.sh --project mesh --file waypoint-proxies
         # L7 特性测试（独立测试，包含清理步骤）

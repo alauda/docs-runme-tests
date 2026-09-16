@@ -6,7 +6,7 @@ mesh	install-mesh	ASM-DOC-002
 mesh	configuring-istio-ha-by-using-autoscaling	ASM-DOC-003
 mesh	configuring-istio-ha-by-using-replica-count	ASM-DOC-004
 mesh	metrics-and-mesh	ASM-DOC-005
-mesh	config-with-service-mesh	ASM-DOC-006
+mesh	config-tracing-with-service-mesh	ASM-DOC-006
 mesh	kiali	ASM-DOC-007
 mesh	deploying-the-bookinfo-application	ASM-DOC-008
 mesh	mtls	ASM-DOC-009

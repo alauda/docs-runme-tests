@@ -143,7 +143,7 @@ export CTYUN_CRED_FILE="$HOME/.codex/secrets/ctyun-relay/<你的账号>.json"   
 
 **请务必在时间盒起始时就跑。**
 
-### 3.6 实测踩坑
+### 3.7 实测踩坑
 
 `provision-ctyun.sh` 的头部注释里逐条列了 8 条，其中最容易浪费时间的三条：
 
@@ -180,11 +180,91 @@ export CTYUN_CRED_FILE="$HOME/.codex/secrets/ctyun-relay/<你的账号>.json"   
    legacy 是 `<namespace/name>:<tag>`，modern 是 `<digest>` / `<完整引用>`。
    文档里的 awk 按列位置取值，模式没切对会拼出垃圾串。
 
-## 6. 待办
+## 6. 怎么跑（不依赖 dailybuild）
 
-- [ ] 把 `runme-test_*.sh` 写进 `acp-docs`（用 `.claude/skills/auto-test-creator` 生成）
-- [ ] 给被测 `.mdx` 的代码块补 `{name=registry:<action>}` 属性
-- [ ] `Dockerfile` 增加 `acp-docs` 的 clone（注意仓库体积）
-- [ ] `lynx/assets-manifest.tsv` 登记测试脚本里的外部 URL（若有）
-- [ ] release-config 的 `CASE_TYPE` 增加 registry 测试项
-- [ ] `provision-ctyun.sh` 的第 4 步（装 ACP）尚未脚本化，需要时补齐
+这些测试**不需要** dailybuild 或任何 CI 就能跑。手动：
+
+```bash
+cd docs-runme-tests
+
+# 有现成 ACP 环境时
+export PLATFORM_ADDRESS=https://<your-acp>
+export PLATFORM_USERNAME=<user>
+export PLATFORM_PASSWORD=<password>
+export RUNME_VERSION=3.16.11
+export PKG_REGISTRY_OPERATOR_URL=<可选，Operator 包地址；留空要求平台已上架>
+
+# 没有现成环境时（可选机制）
+export CTYUN_CRED_FILE=~/.codex/secrets/ctyun-relay/<你的账号>.json
+./provision.sh --project registry
+
+# 跑单篇
+./run.sh --project registry --file image-registry-operator
+
+# 全量
+./run-registry-all.sh
+```
+
+前置：`acp-docs` 要 clone 到 `docs-runme-tests` 的**兄弟目录**（`repos.conf` 里是 `registry:../acp-docs`），
+或设 `REGISTRY_REPO_ROOT=/abs/path/to/acp-docs`。
+
+## 7. 待办
+
+分三档。**第一档是现在必须做的**，后两档等真需要时再做。
+
+### 7.1 现在需要
+
+- [ ] 把 `{name=registry:<操作>}` 属性补到其余 6 篇 Registry 文档
+      （`image_registry_operator.mdx` 已完成，可作样板）
+- [ ] 为这 6 篇各写一份 `runme-test_*.sh`
+      （用 `.claude/skills/auto-test-creator` 生成，规范见 [writing-doc-tests.md](writing-doc-tests.md)）
+
+### 7.2 等要接入 dailybuild 时再做
+
+**这两项只在「希望 dailybuild 自动跑」时才需要。不做的话测试照样能手动跑**，
+见上面第 6 节。
+
+- [ ] **`Dockerfile` 增加 `acp-docs` 的 clone**
+      作用：让 CI 构建出的测试镜像里**含有 acp-docs 与其中的测试脚本**。
+      dailybuild 跑的是镜像，镜像里没有文档仓库就找不到 `runme-test_*.sh`。
+      注意 `acp-docs` 体积远大于 mesh/otel/tracing 的三个文档仓库，会明显增加镜像大小与构建时间。
+- [ ] **`apt-test/release-config` 增加 registry 测试项**
+      作用：告诉 dailybuild **选中哪些 Case**。框架的 `CASE_TYPE` 只支持 `and` 合取与 `not`，
+      不支持 `or` 和括号。不加这一项的话，registry 的 Case 在 dailybuild 上
+      **不会跑，而且不会有任何报错**——只会在 allure 里显示成
+      `[expected] 未被 CASE_TYPE 选中` 的跳过。
+
+### 7.3 不着急
+
+- [ ] `provision-ctyun.sh` 第 4 步（装 ACP）脚本化
+      目前停在明确报错，可通过 `CTYUN_STEP4_SCRIPT` 接外部脚本。
+- [ ] 把 `framework/acp-verify.sh` 的断言能力反哺给 mesh / otel / tracing 的既有脚本
+      （可选优化，不影响新模块使用）
+
+## 8. 关于「要不要改 acp-docs」
+
+**测试脚本必须在 acp-docs 里，这是引擎写死的**：
+
+```bash
+# run.sh 的 _find_test_script
+p=$(find "$repo/docs" -type f -name "runme-test_${file}.sh")
+```
+
+`$repo` 是 `repos.conf` 里注册的**文档仓库根**。`--file` 模式只在这个路径下找脚本。
+绕过它的唯一办法是改引擎（框架级改动），或者直接
+`FRAMEWORK_ROOT=... bash <脚本路径>` 手跑——但那样会丢掉三层报告与 allure 集成。
+
+**MDX 的 `{name=}` 属性也必须加**，原因有二：
+
+1. runme 只能按名字引用代码块（`runme run "<prefix>:<action>"`），没有按索引/行号的路径
+2. 框架自己的 helper **硬编码了一批块名约定**。例如 `framework/common.sh` 的
+   `install_operator` 会去找这些块：
+   `<prefix>:check-packagemanifest-versions`、`<prefix>:confirm-catalogsource`、
+   `<prefix>:create-subscription-<operator>`、`<prefix>:wait-installplan-pending`、
+   `<prefix>:approve-installplan-manual`、`<prefix>:wait-csv-succeeded`、
+   `<prefix>:check-csv-status`。不加 name 就用不了这些 helper。
+
+**但「改 acp-docs」≠「必须提 PR」**。`{name=}` 是 MDX 代码围栏的元数据，
+**渲染后完全不可见**，对读者零影响；mesh/otel/tracing 三个文档仓库都是这个约定。
+当前状态是**只推了分支、没开 PR**，需要用的人 checkout 分支即可。
+要不要开 PR、什么时候开，取决于 acp-docs 的维护节奏。

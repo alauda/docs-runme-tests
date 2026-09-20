@@ -203,17 +203,48 @@ fi
 
 ## 6. 完成一个模块的检查清单
 
+### 6.1 本地能跑就要满足（不依赖任何 CI）
+
 - [ ] 被测 `.mdx` 的每个代码块都有 `{name=<前缀>:<操作>}`
+      （runme 只能按名字引用；框架 helper 还硬编码了一批块名，见下）
 - [ ] `runme-test_<doc>.sh` 与 `.mdx` **同仓同目录**
+      （引擎 `_find_test_script` 只找 `<文档仓库根>/docs/` 下的 `runme-test_*.sh`）
 - [ ] 脚本覆盖全部带 name 的块（`auto-test-creator` 的 100% 覆盖要求）
 - [ ] 多命令块用 `run_block_strict`，不是 `runme run`
 - [ ] yaml 块用 `apply_yaml_block` 或模式 C，不是 `runme run`
 - [ ] 权限断言用 `assert_rbac_*`，不是 `kubectl auth can-i`
 - [ ] 环境能力差异用 `skip_test_env`，不是标签
-- [ ] `lynx/case-ids.tsv` 已登记 `case_id`（**漏了会让镜像构建失败**）
-- [ ] `run-<模块>-all.sh` 里用 `case_begin_if` 带标签（裸 `case_begin` 在 lynx 上会无条件执行）
+- [ ] `run-<模块>-all.sh` 里用 `case_begin_if` 带标签
+      （裸 `case_begin` 不参与 `CASE_TYPE` 过滤；`case_skip` 也依赖它）
 - [ ] `bash lynx/check-shell-compat.sh` 通过（`$VAR` 后跟中文标点必须写 `${VAR}`）
 - [ ] 用 `/bin/bash -n` 验过（macOS 自带 3.2；不要用 `declare -A` / `mapfile` / GNU `sed -i`）
+- [ ] 手动跑过一遍：`./run.sh --project <模块> --file <文档名>`
+
+### 6.2 只有接入 dailybuild 才需要
+
+**不做这两项，测试照样能手动跑。** 什么时候真要让 dailybuild 自动跑，再补。
+
+- [ ] `lynx/case-ids.tsv` 登记 `case_id`（**漏了会让镜像构建失败**）
+- [ ] `Dockerfile` 增加该文档仓库的 clone
+      （dailybuild 跑的是镜像；镜像里没有文档仓库就找不到 `runme-test_*.sh`）
+- [ ] `apt-test/release-config` 增加该模块的测试项
+      （`CASE_TYPE` 只支持 `and` 合取与 `not`；不加的话 Case 在 dailybuild 上
+      **不会跑也不报错**，只会在 allure 里显示成 `[expected] 未被 CASE_TYPE 选中`）
+
+### 6.3 框架 helper 依赖的块名约定
+
+如果模块的文档要用 `framework/common.sh` 的 `install_operator`，
+这些块名是**写死的**，必须一一对上：
+
+```
+<前缀>:check-packagemanifest-versions
+<前缀>:confirm-catalogsource        （+ -output 配对块）
+<前缀>:create-subscription-<operator>
+<前缀>:wait-installplan-pending
+<前缀>:approve-installplan-manual
+<前缀>:wait-csv-succeeded
+<前缀>:check-csv-status
+```
 
 ---
 

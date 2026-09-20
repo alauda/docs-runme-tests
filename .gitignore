@@ -7,3 +7,7 @@ package/
 tmp/
 assets/
 *.tgz
+
+# Python 字节码缓存（framework/tests/*.py 工具脚本）
+__pycache__/
+*.pyc

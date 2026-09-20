@@ -14,9 +14,13 @@ PROJECTS_DIR="$FRAMEWORK_ROOT/projects"
 BIN_DIR="$FRAMEWORK_ROOT/bin"
 REPOS_CONF="$FRAMEWORK_ROOT/repos.conf"
 
-# ── 加载框架函数库（顺序固定：common → verify → acp-auth → kubeconfig → tools）────
+# ── 加载框架函数库（顺序固定：common → verify → acp-verify → acp-auth → kubeconfig → tools）──
 source "$FRAMEWORK_DIR/common.sh"
 source "$FRAMEWORK_DIR/verify.sh"
+# ACP 集群状态断言库（资源存在性 / condition / jsonpath / CRD schema / RBAC-SAR）。
+# 与 verify.sh 的分工：verify.sh 做纯文本比对，本文件做集群状态断言。
+# 文档测试脚本可直接用，无需自己 source。
+source "$FRAMEWORK_DIR/acp-verify.sh"
 source "$FRAMEWORK_DIR/report.sh"
 source "$FRAMEWORK_DIR/acp-auth.sh"
 source "$FRAMEWORK_DIR/kubeconfig.sh"

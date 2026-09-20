@@ -36,6 +36,7 @@
 | [image-build.md](docs/image-build.md) | 镜像构建与 Edge 流水线：本地构建、触发方式、tag 规则、文档 ref |
 | [maintenance.md](docs/maintenance.md) | **改了 X 还要同步改哪儿**：新增 Case、离线资源、版本升级、五仓联动、发版 |
 | [registry-project.md](docs/registry-project.md) | registry 项目说明：与其它项目的差异、**环境供给（可选）**、已知静默出错陷阱 |
+| [writing-doc-tests.md](docs/writing-doc-tests.md) | **给任意模块写文档测试**：两类断言怎么选、四个执行陷阱、换模块时改什么 |
 
 ## 快速开始
 
@@ -64,7 +65,8 @@ docs-runme-tests/
 ├── framework/                  # 通用引擎函数库（零项目耦合）
 │   ├── common.sh               # 日志 / operator 与集群插件安装 / 通用等待与断言
 │   ├── report.sh               # Run → Case → DocTest 三层结果统计
-│   ├── verify.sh               # 输出比对
+│   ├── verify.sh               # 输出比对（纯文本）
+│   ├── acp-verify.sh           # ACP 集群状态断言（资源/condition/jsonpath/CRD/RBAC-SAR）
 │   ├── acp-auth.sh             # ACP API Token 自动获取 / 校验 / 缓存
 │   ├── kubeconfig.sh           # ACP kubeconfig 拉取 / 合并 / 复用
 │   ├── tools.sh                # 工具检查 / runme·violet 安装 / 插件包上下架

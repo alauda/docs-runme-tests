@@ -79,12 +79,54 @@ packagemanifests.packages.operators.coreos.com "cluster-image-registry-operator"
 
 1. 本机 VPN 已连通 ctyun 私网 —— relay 机器**没有公网 IP**，SSH 只能走 VPN 私网直连。
    验证：`ping -c1 10.64.0.1`
-2. relay 凭据 JSON（0600），含 `accessKey` / `secretKey` / `endpoint` / `regionID`
+2. **relay 凭据文件（由调用者提供，见 3.5）**
 3. SSH 私钥（microOS 镜像默认用户 `boot`）
 4. `ctyun-relayctl` 二进制（可从 `cluster-api-provider-ctyun-relay` 离线编译）
 5. `cluster-api-provider-ctyun-relay` 的 checkout（含 runbook 与 provider 包）
 
-### 3.5 时间盒
+### 3.5 凭据契约：**由调用者提供，仓库不保存**
+
+**本仓库不保存任何 AK/SK，也不假设凭据属于谁。**
+
+```bash
+export CTYUN_CRED_FILE="$HOME/.codex/secrets/ctyun-relay/<你的账号>.json"   # 权限 0600
+```
+
+文件格式：
+
+```json
+{
+  "apiEndpointType": "Relay",
+  "endpoint": "https://ctyun-relay.alaudatech.net",
+  "accessKey": "<AK>",
+  "secretKey": "<SK>",
+  "regionID": "<region>"
+}
+```
+
+未提供时，`provision-ctyun.sh` 的前置校验会**明确失败**并打印上面的格式，
+不会回退到任何默认路径。
+
+#### 为什么不在仓库里给默认值
+
+早期版本曾把某个人的账号名写成 `CTYUN_ACCOUNT` 的默认值。那不是密钥，但意味着
+**「仓库知道某个人是谁」**：
+
+- 别人用必然指向错误路径，失败原因还不明显
+- 账号名是不该外泄的个人标识
+
+`framework/tests/provision_test.sh` 的第 7 节把这条变成了**构建期会跑的守卫**：
+
+| 守卫 | 断言 |
+| --- | --- |
+| 7.1 | 凭据路径不得硬编码具体账号名 |
+| 7.2 | 仓库内不得出现 AK/SK 字面量（占位符与注释除外） |
+| 7.3 | 不得写死某个人的家目录路径 |
+| 7.4 | 未提供凭据时必须明确报错并给出格式 |
+
+扫描器 `framework/tests/scan_secrets.py` 命中时**只回显掩码**，不把疑似密钥写进日志。
+
+### 3.6 时间盒
 
 个人账号 relay TTL **硬性 8h**，无法放宽。全流程实测约 55–65 分钟：
 

@@ -58,9 +58,26 @@ FLAVOR_BOOTSTRAP="${FLAVOR_BOOTSTRAP:-s6.2xlarge.2}"   # 8C16G
 FLAVOR_CP="${FLAVOR_CP:-s6.4xlarge.2}"                 # 16C32G
 
 RELAY_ENDPOINT="${RELAY_ENDPOINT:-https://ctyun-relay.alaudatech.net}"
-CTYUN_ACCOUNT="${CTYUN_ACCOUNT:-huizhang}"
 CTYUN_TEAM="${CTYUN_TEAM:-acp}"
-CRED_FILE="${CRED_FILE:-${HOME}/.codex/secrets/ctyun-relay/${CTYUN_ACCOUNT}.json}"
+
+# ── 凭据：**必须由调用者提供** ────────────────────────────────────────────────
+# 本仓库**不保存任何 AK/SK**，也**不假设凭据属于谁**。
+# 每个调用者自己准备凭据文件并导出路径：
+#
+#   export CTYUN_CRED_FILE="$HOME/.codex/secrets/ctyun-relay/<你的账号>.json"   # 0600
+#
+# 文件格式：
+#   {"apiEndpointType":"Relay","endpoint":"https://ctyun-relay.alaudatech.net",
+#    "accessKey":"...","secretKey":"...","regionID":"..."}
+#
+# 为什么不在仓库里给默认值：默认值意味着「仓库知道某个人是谁」——
+# 既会指向错误路径（别人用必然失败），也是不该外泄的个人标识。
+# 兼容旧变量名 CRED_FILE（同样必须显式提供，没有默认值）。
+CTYUN_CRED_FILE="${CTYUN_CRED_FILE:-${CRED_FILE:-}}"
+CRED_FILE="${CTYUN_CRED_FILE}"
+
+# SSH 私钥同样由调用者提供；只给一个常见的本地路径作为**提示**，
+# 不存在时会明确报错并提示如何设置，不会静默使用别人的路径。
 SSH_KEY="${SSH_KEY:-${HOME}/Downloads/id_rsa_microos}"
 RELAYCTL="${RELAYCTL:-${FRAMEWORK_ROOT}/bin/ctyun-relayctl}"
 
@@ -102,9 +119,17 @@ _ctyun_check_prereqs() {
     fi
 
     log_info "[2/6] 校验 relay 凭据..."
-    if [ ! -f "${CRED_FILE}" ]; then
+    if [ -z "${CRED_FILE}" ]; then
+        log_error "未提供 relay 凭据文件路径。"
+        log_error "凭据由调用者提供——本仓库不保存任何 AK/SK，也不假设凭据属于谁。请导出："
+        log_error "  export CTYUN_CRED_FILE=/abs/path/to/<你的账号>.json    # 权限 0600"
+        log_error "文件格式："
+        log_error "  {\"apiEndpointType\":\"Relay\",\"endpoint\":\"https://ctyun-relay.alaudatech.net\","
+        log_error "   \"accessKey\":\"<AK>\",\"secretKey\":\"<SK>\",\"regionID\":\"<region>\"}"
+        rc=1
+    elif [ ! -f "${CRED_FILE}" ]; then
         log_error "凭据文件不存在: ${CRED_FILE}"
-        log_error "格式: {\"apiEndpointType\":\"Relay\",\"endpoint\":\"...\",\"accessKey\":\"...\",\"secretKey\":\"...\",\"regionID\":\"...\"}"
+        log_error "请确认 CTYUN_CRED_FILE 指向你自己的凭据文件。"
         rc=1
     elif [ "$(stat -f '%Lp' "${CRED_FILE}" 2>/dev/null || stat -c '%a' "${CRED_FILE}" 2>/dev/null)" != "600" ]; then
         log_warn "凭据文件权限不是 600: ${CRED_FILE}"

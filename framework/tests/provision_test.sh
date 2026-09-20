@@ -182,6 +182,60 @@ check_eq "无产物时不出现加载日志" \
     "$(printf '%s' "$out" | grep -c '已加载环境供给产物' || true)" "0"
 rm -rf "$tmpd"
 
+printf '\n[7] 凭据卫生：仓库内不得出现 AK/SK，也不得假设凭据属于谁\n'
+# 这一节的由来：provision-ctyun.sh 最初把某个人的账号名写成了 CTYUN_ACCOUNT 的默认值。
+# 那不是密钥，但意味着「仓库知道某个人是谁」——别人用必然指向错误路径，也是不该
+# 外泄的个人标识。凭据必须由调用者提供。这里把它变成构建期会跑的守卫。
+PROVISION_FILES=(
+    "$FRAMEWORK_ROOT/projects/registry/provision-ctyun.sh"
+    "$FRAMEWORK_ROOT/projects/registry/project.sh"
+    "$FRAMEWORK_ROOT/provision.sh"
+)
+
+# 7.1 不得出现「某个具体账号名」作为凭据路径默认值
+bad_account=""
+for f in "${PROVISION_FILES[@]}"; do
+    [ -f "$f" ] || continue
+    hit="$(grep -n -E 'CTYUN_ACCOUNT:-[^}"]' "$f" 2>/dev/null || true)"
+    [ -z "$hit" ] || bad_account="${bad_account}${f}: ${hit}; "
+    hit="$(grep -n -E 'secrets/ctyun-relay/[A-Za-z]' "$f" 2>/dev/null || true)"
+    [ -z "$hit" ] || bad_account="${bad_account}${f}: ${hit}; "
+done
+check_eq "凭据路径未硬编码具体账号名" "$bad_account" ""
+
+# 7.2 不得出现 AK/SK 字面量（占位符与文档示例除外）
+bad_secret=""
+for f in "${PROVISION_FILES[@]}"; do
+    [ -f "$f" ] || continue
+    hit="$(python3 "$FRAMEWORK_ROOT/framework/tests/scan_secrets.py" "$f" 2>/dev/null || true)"
+    [ -z "$hit" ] || bad_secret="${bad_secret}${f}: ${hit}; "
+done
+check_eq "仓库内无 AK/SK 字面量" "$bad_secret" ""
+
+# 7.3 不得把某个人的家目录路径写死（$HOME 变量插值可以）
+bad_home=""
+for f in "${PROVISION_FILES[@]}"; do
+    [ -f "$f" ] || continue
+    hit="$(grep -n -E '(/Users/|/home/[a-z])' "$f" 2>/dev/null | grep -v '^[0-9]*: *#' || true)"
+    [ -z "$hit" ] || bad_home="${bad_home}${f}: ${hit}; "
+done
+check_eq "无写死的家目录路径" "$bad_home" ""
+
+# 7.4 未提供凭据时，ctyun 供给的前置校验必须明确失败并指出怎么设置
+# 注意 log_error 走 stderr，命令替换默认只捕获 stdout，必须在调用处显式 2>&1
+out="$(
+    set -u
+    FRAMEWORK_ROOT="$FRAMEWORK_ROOT"
+    source "$FRAMEWORK_ROOT/framework/common.sh"
+    unset CTYUN_CRED_FILE CRED_FILE
+    source "$FRAMEWORK_ROOT/projects/registry/provision-ctyun.sh"
+    _ctyun_check_prereqs 2>&1
+    echo "RC=$?"
+)"
+check_contains "无凭据时报错提到 CTYUN_CRED_FILE" "$out" "CTYUN_CRED_FILE"
+check_contains "无凭据时给出文件格式" "$out" "apiEndpointType"
+check_contains "无凭据时前置校验返回非 0" "$out" "RC=1"
+
 printf '\n────────────────────────────────────────\n'
 printf '通过 %s / 失败 %s\n' "$T_PASS" "$T_FAIL"
 teardown_fixture

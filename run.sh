@@ -385,6 +385,17 @@ run_test_script() {
 main() {
     parse_args "$@"
 
+    # ── 可选：加载环境供给产物 ──────────────────────────────────────────────
+    # 由 provision.sh 生成（现场造一套 ACP 环境时使用）。文件不存在时完全无副作用，
+    # 因此不改变「环境已由外部提供」这一默认路径的任何行为。
+    # 必须在 check_env / ensure_acp_api_token 之前，因为二者都依赖 PLATFORM_*。
+    local provisioned_env="${FRAMEWORK_ROOT}/tmp/provisioned.env"
+    if [ -f "$provisioned_env" ]; then
+        # shellcheck disable=SC1090
+        source "$provisioned_env"
+        log_info "已加载环境供给产物: $provisioned_env"
+    fi
+
     log_info "文档自动化测试引擎"
     echo ""
 

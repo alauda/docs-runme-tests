@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # 镜像入口（lynx TestTemplate 里写 command: docs-test）
 #
-# 用法: docs-test <init|mesh|otel|tracing>
+# 用法: docs-test <init|mesh|otel|tracing|registry>
 #   init    —— 每个业务集群跑一次的前置：拉 kubeconfig、装集群插件与 servicemesh-operator2、
 #              用本 region 的 $GLOBAL_EXTERNAL_IPPOOL 建 MetalLB 地址池（owner=init）
 #   mesh    —— ./run-mesh-all.sh
 #   otel    —— ./run-otel-all.sh
 #   tracing —— ./run-tracing-all.sh
+#   registry —— ./run-registry-all.sh
 #
 # 无论编排怎么退出，都保证 $TEST_RESULT_DIR 下有一份 allure 报告：空的 allure 目录
 # 会让 lynx 的 summaryResult 变成 NUL，比一条明确的 broken 用例难排查得多。
@@ -67,13 +68,13 @@ lynx_adapt_env
 # 把"这份镜像里到底是哪一组四仓组合"打在日志最前面：ref 是会移动的分支名，
 # 排查 dailybuild 失败时真正要看的是 SHA（本地 docker build 出来的镜像没有
 # .image-info 时会是空，属正常）。
-log_info "镜像 tag=${DOCS_TEST_IMAGE_TAG:-<未知>}  mesh=${MESH_DOCS_REF:-?}@${MESH_DOCS_SHA:-?}  otel=${OTEL_DOCS_REF:-?}@${OTEL_DOCS_SHA:-?}  tracing=${TRACING_DOCS_REF:-?}@${TRACING_DOCS_SHA:-?}"
+log_info "镜像 tag=${DOCS_TEST_IMAGE_TAG:-<未知>}  mesh=${MESH_DOCS_REF:-?}@${MESH_DOCS_SHA:-?}  otel=${OTEL_DOCS_REF:-?}@${OTEL_DOCS_SHA:-?}  tracing=${TRACING_DOCS_REF:-?}@${TRACING_DOCS_SHA:-?}  registry=${REGISTRY_DOCS_REF:-?}@${REGISTRY_DOCS_SHA:-?}"
 
 MODE="${1:-}"
 case "$MODE" in
-    init|mesh|otel|tracing) ;;
+    init|mesh|otel|tracing|registry) ;;
     *)
-        log_error "用法: docs-test <init|mesh|otel|tracing>"
+        log_error "用法: docs-test <init|mesh|otel|tracing|registry>"
         exit 1
         ;;
 esac

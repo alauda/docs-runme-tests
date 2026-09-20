@@ -46,3 +46,10 @@ tracing	spm-ha-elasticsearch	TRACE-DOC-004
 tracing	spm-ha-opensearch	TRACE-DOC-005
 tracing	upgrading-distributed-tracing-elasticsearch	TRACE-DOC-006
 tracing	upgrading-distributed-tracing-opensearch	TRACE-DOC-007
+registry	image-registry-operator	REG-DOC-001
+registry	setting-up-and-configuring-the-registry	REG-DOC-002
+registry	accessing-the-registry	REG-DOC-003
+registry	managing-images-with-ac	REG-DOC-004
+registry	managing-access-and-cleanup	REG-DOC-005
+registry	exposing-the-registry	REG-DOC-006
+registry	image-registry-operator-upgrade	REG-DOC-007

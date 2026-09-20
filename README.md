@@ -9,7 +9,8 @@
 ├── docs-runme-tests/          # 本仓库：测试引擎 + 编排 + 各项目钩子
 ├── servicemesh2-docs/         # 文档仓库（mesh）
 ├── opentelemetry-docs/        # 文档仓库（otel）
-└── distributed-tracing-docs/  # 文档仓库（tracing）
+├── distributed-tracing-docs/  # 文档仓库（tracing）
+└── acp-docs/                  # 文档仓库（registry）
 ```
 
 测试脚本 `runme-test_*.sh` 与被测 `.mdx` 同仓同目录（runme 按 CWD 所在 git 仓库扫描代码块；文档与测试同 PR 演进）。本仓库提供引擎、通用函数库、各项目初始化逻辑与全量编排。
@@ -21,6 +22,7 @@
 | mesh | `servicemesh2-docs` | `run-mesh-all.sh` | Alauda Service Mesh v2 |
 | otel | `opentelemetry-docs` | `run-otel-all.sh` | Alauda Build of OpenTelemetry v2 |
 | tracing | `distributed-tracing-docs` | `run-tracing-all.sh` | Alauda Distributed Tracing |
+| registry | `acp-docs` | `run-registry-all.sh` | Alauda Container Platform Registry |
 
 ## 文档导航
 
@@ -32,7 +34,8 @@
 | [architecture.md](docs/architecture.md) | 工作原理：runme、项目钩子、脚本结构、验证工具、三层结果统计 |
 | [dailybuild.md](docs/dailybuild.md) | 在 lynx / dailybuild 中运行：变量映射、Case 标签与 `CASE_TYPE` |
 | [image-build.md](docs/image-build.md) | 镜像构建与 Edge 流水线：本地构建、触发方式、tag 规则、文档 ref |
-| [maintenance.md](docs/maintenance.md) | **改了 X 还要同步改哪儿**：新增 Case、离线资源、版本升级、四仓联动、发版 |
+| [maintenance.md](docs/maintenance.md) | **改了 X 还要同步改哪儿**：新增 Case、离线资源、版本升级、五仓联动、发版 |
+| [registry-project.md](docs/registry-project.md) | registry 项目说明：与其它项目的差异、**环境供给（可选）**、已知静默出错陷阱 |
 
 ## 快速开始
 
@@ -42,6 +45,10 @@ cd docs-runme-tests
 ./run.sh --project mesh --init-only    # 初始化环境
 ./run.sh --file install-mesh           # 跑一篇文档
 ./run-mesh-all.sh                      # 全量编排
+
+# 没有现成 ACP 环境时（可选机制，不影响默认路径）
+./provision.sh --project registry --status
+./provision.sh --project registry
 ```
 
 环境变量先按 [configuration.md](docs/configuration.md) 配齐，命令细节见 [usage.md](docs/usage.md)。
@@ -51,7 +58,8 @@ cd docs-runme-tests
 ```bash
 docs-runme-tests/
 ├── run.sh                      # 单测执行引擎（项目感知）
-├── run-{mesh,otel,tracing}-all.sh   # 各项目全量编排
+├── provision.sh                # 环境供给入口（可选机制，见 registry-project.md）
+├── run-{mesh,otel,tracing,registry}-all.sh   # 各项目全量编排
 ├── repos.conf                  # 文档仓库注册表
 ├── framework/                  # 通用引擎函数库（零项目耦合）
 │   ├── common.sh               # 日志 / operator 与集群插件安装 / 通用等待与断言
@@ -65,7 +73,8 @@ docs-runme-tests/
 ├── projects/                   # 各文档项目专属逻辑
 │   ├── mesh/                   # 钩子 + Kiali 监控验证
 │   ├── otel/                   # 钩子
-│   └── tracing/                # 钩子 + OpenSearch / Elasticsearch / Jaeger 插件 / 调用链查询
+│   ├── tracing/                # 钩子 + OpenSearch / Elasticsearch / Jaeger 插件 / 调用链查询
+│   └── registry/               # 钩子 + 可选环境供给（ctyun）
 ├── lynx/                       # lynx / dailybuild 适配层
 │   ├── entrypoint.sh           # 镜像入口 docs-test <init|mesh|otel|tracing>
 │   ├── env-adapter.sh          # lynx 内置变量 → 框架变量

@@ -177,6 +177,7 @@ allure_write_environment() {
         printf 'docs.mesh.ref=%s\n'    "${MESH_DOCS_REF:-unknown}"
         printf 'docs.otel.ref=%s\n'    "${OTEL_DOCS_REF:-unknown}"
         printf 'docs.tracing.ref=%s\n' "${TRACING_DOCS_REF:-unknown}"
+    printf 'docs.registry.ref=%s\n' "${REGISTRY_DOCS_REF:-unknown}"
         printf 'case.type=%s\n'        "${CASE_TYPE:-}"
         printf 'resource.prefix=%s\n'  "${RESOURCE_PREFIX:-}"
         printf 'is.dual.stack=%s\n'    "${IS_DUAL_STACK:-false}"

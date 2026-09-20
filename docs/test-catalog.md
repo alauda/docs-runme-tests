@@ -115,3 +115,59 @@ KIALI_VERIFY_NAMESPACE=sample ./run.sh --project mesh --file kiali --cluster "$E
 两篇的公共代码块已按 runme 前缀参数化抽到 `distributed-tracing-docs/docs/en/upgrading/_upgrade-common.sh`。剩余差异是存储侧中段与两次 patch 的先后顺序：
 
 > **Elasticsearch 篇先换 oauth2-proxy 镜像再打配置 patch，OpenSearch 篇必须反过来。** 否则那次重启会让 v2.16 用默认的 `create_mappings=true` 覆盖掉 `jaeger-es-rollover init` 刚写的索引模板。
+
+## registry（acp-docs）
+
+被测文档位于 `acp-docs` 的 `docs/en/configure/registry/` 与 `docs/en/developer/registry/`。
+测试脚本与对应 `.mdx` 同仓同目录（`runme-test_<doc>.sh`）。
+
+| 文档名称 | 执行命令 |
+| --- | --- |
+| Registry Operator 安装与状态 | `./run.sh --project registry --file image-registry-operator` |
+| 存储配置与启用 | `./run.sh --project registry --file setting-up-and-configuring-the-registry` |
+| 访问 Registry | `./run.sh --project registry --file accessing-the-registry` |
+| 镜像管理（ac 命令） | `./run.sh --project registry --file managing-images-with-ac` |
+| 权限、用量与清理 | `./run.sh --project registry --file managing-access-and-cleanup` |
+| 暴露 Registry | `./run.sh --project registry --file exposing-the-registry` |
+| Operator 升级 | `./run.sh --project registry --file image-registry-operator-upgrade` |
+
+全量编排：`./run-registry-all.sh`
+
+### 前置条件
+
+1. **ACP 4.4 环境**。二选一：
+   - 已有环境：导出 `PLATFORM_ADDRESS` / `PLATFORM_USERNAME` / `PLATFORM_PASSWORD`
+   - 现场造：`./provision.sh --project registry`（天翼云路径，见 [registry-project.md](registry-project.md#环境供给)）
+2. **Operator 包上架**。全新 ACP 4.4 环境的 OperatorHub 里**没有** `cluster-image-registry-operator`，
+   需通过 `PKG_REGISTRY_OPERATOR_URL` 提供包地址由 `project_init` 上架。
+   地址为空即 verify-only（要求平台已预上架）。
+3. **Registry pull 凭据**。`REGISTRY_PULL_SECRET_NAME`（默认 `global-registry-auth`）。
+
+### 为什么这些文档值得自动化
+
+Registry 是**平台内置能力**且**长期演进**，文档里的命令、CR 字段、期望结果会随版本变。
+手工验证一次的成本是「申请环境 + 逐条执行 + 核对期望」，而最容易出问题的地方恰好是
+**不会报错、只会给出错误结果**的那类：
+
+- `managementState` 无默认值 → 未设置时 `Config/cluster` 报 `Available=True (Removed)`，
+  文档 § Check Operator and Registry Status 期望的组件根本不存在
+- 权限检查用 `kubectl auth can-i` 对 `registry/metrics` 恒返回 `no`
+  （该资源不在 API discovery 里），即使 RBAC 正确
+- `ac get images` 在 legacy / modern 两种模式下输出列不同，
+  文档里的 awk 按列位置取值，模式没切对会**静默产出垃圾**
+
+### 环境能力开关
+
+| 变量 | 默认 | 作用 |
+| --- | --- | --- |
+| `ENABLE_REGISTRY_EXPOSING` | `true` | 置 `false` 则 Case 5 以 `[env]` 跳过（无 LoadBalancer / Ingress 能力的环境） |
+| `REGISTRY_UPGRADE_PACKAGE_URL` | 空 | 空则 Case 6 以 `[env]` 跳过（目录源中无更新版本） |
+| `REGISTRY_PULL_SECRET_NAME` | `global-registry-auth` | 组件工作负载用的平台 registry pull Secret |
+| `PKG_REGISTRY_OPERATOR_URL` | 空 | 空即 verify-only，要求平台已预上架 Operator 包 |
+
+### 暂不纳入
+
+- **S3 / Swift / GCS / IBM COS / Azure 存储后端**：需要对应云存储与凭据，
+  dailybuild 环境不具备。环境支持后可加为带存储标签的独立 Case。
+- **`ImageSignature` 签名与校验**：需要签名工具链。
+- **从 OperatorHub Web UI 安装**：需要 console，且属人工路径。

@@ -16,14 +16,14 @@ fi
 
 rc=0
 
-bad="$(awk -F'\t' '!/^#/ && NF > 0 && (NF != 2 || $1 !~ /^(MESH|OTEL|TRACING)_DOCS_REF$/ || $2 == "" || $2 ~ /[[:space:]]/) {print NR": "$0}' "${REFS}")"
+bad="$(awk -F'\t' '!/^#/ && NF > 0 && (NF != 2 || $1 !~ /^(MESH|OTEL|TRACING|REGISTRY)_DOCS_REF$/ || $2 == "" || $2 ~ /[[:space:]]/) {print NR": "$0}' "${REFS}")"
 if [ -n "${bad}" ]; then
-    printf '错误: 以下行格式不合法（需两列 TAB 分隔，第一列是 MESH/OTEL/TRACING_DOCS_REF，第二列是非空且无空白的 ref）：\n' >&2
+    printf '错误: 以下行格式不合法（需两列 TAB 分隔，第一列是 MESH/OTEL/TRACING/REGISTRY_DOCS_REF，第二列是非空且无空白的 ref）：\n' >&2
     printf '%s\n' "${bad}" | sed 's/^/  /' >&2
     rc=1
 fi
 
-for key in MESH_DOCS_REF OTEL_DOCS_REF TRACING_DOCS_REF; do
+for key in MESH_DOCS_REF OTEL_DOCS_REF TRACING_DOCS_REF REGISTRY_DOCS_REF; do
     n="$(awk -F'\t' -v k="${key}" '!/^#/ && $1 == k {c++} END {print c+0}' "${REFS}")"
     if [ "${n}" -ne 1 ]; then
         printf '错误: %s 出现 %s 次，应恰好 1 次\n' "${key}" "${n}" >&2

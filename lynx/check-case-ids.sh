@@ -15,9 +15,9 @@ fi
 rc=0
 
 # 1. 每条记录三列，且编号格式合法
-bad_fmt="$(awk -F'\t' '!/^#/ && NF > 0 && (NF != 3 || $3 !~ /^(ASM|OTEL|TRACE)-DOC-[0-9]{3}$/) {print NR": "$0}' "$IDS")"
+bad_fmt="$(awk -F'\t' '!/^#/ && NF > 0 && (NF != 3 || $3 !~ /^(ASM|OTEL|TRACE|REG)-DOC-[0-9]{3}$/) {print NR": "$0}' "$IDS")"
 if [ -n "$bad_fmt" ]; then
-    printf '错误: 以下行格式不合法（需三列 TAB 分隔，编号形如 ASM-DOC-001）：\n' >&2
+    printf '错误: 以下行格式不合法（需三列 TAB 分隔，编号形如 ASM-DOC-001 / REG-DOC-001）：\n' >&2
     printf '%s\n' "$bad_fmt" | sed 's/^/  /' >&2
     rc=1
 fi

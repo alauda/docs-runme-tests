@@ -347,3 +347,53 @@ ensure_acp_api_token() {
     export ACP_API_TOKEN="$token"
     return 0
 }
+
+
+# ==============================================================================
+# ACP 会话（ac CLI 用）—— 与「平台 API Token」是两回事
+# ==============================================================================
+#
+# ensure_acp_api_token 解决的是**平台 REST API** 的鉴权（violet / 安装器用）。
+# 但 `ac` 命令（ac registry login / ac get imagestreams / ac adm top / ...）
+# 走的是另一条路：它依赖 `ac login` 写进 kubeconfig 的 **ACP extension**。
+#
+# 框架原先只处理前者。后果：任何用到 `ac` 的文档测试都会报
+#   cluster 'x' is not ACP-managed: ACP extension not found
+# 而且报错形态像是权限问题，排查方向容易跑偏。
+#
+# 本函数幂等：已有可用会话时直接返回，不做任何变更。
+# 可通过 AC_SESSION_NAME 指定会话名（默认 acp-docs-test）。
+ensure_ac_session() {
+    if ! command -v ac >/dev/null 2>&1; then
+        log_warn "未找到 ac 命令，跳过 ACP 会话建立（使用 ac 的文档测试会失败）"
+        log_warn "ac 由 ACP 客户端分发，框架不负责安装；请确保它在 PATH 里"
+        return 0
+    fi
+
+    # 幂等判断：已有可用会话就直接用
+    if ac config get-registry-mode >/dev/null 2>&1; then
+        log_info "ACP 会话已存在，复用（$(ac config get-registry-mode 2>/dev/null | awk 'NR==2 {print $5}')）"
+        return 0
+    fi
+
+    local session="${AC_SESSION_NAME:-acp-docs-test}"
+    log_info "建立 ACP 会话: ${session}（${PLATFORM_ADDRESS}）"
+
+    local args=(login "${PLATFORM_ADDRESS}" --name "${session}"
+                --username "${PLATFORM_USERNAME}" --password "${PLATFORM_PASSWORD}")
+    [ -n "${AC_LOGIN_IDP:-}" ] && args+=(--idp "${AC_LOGIN_IDP}")
+    [ -n "${AC_LOGIN_AUTH_TYPE:-}" ] && args+=(--auth-type "${AC_LOGIN_AUTH_TYPE}")
+
+    if ! ac "${args[@]}" >/dev/null 2>&1; then
+        log_error "ac login 失败"
+        log_error "若目标平台需要指定身份提供方，请设置 AC_LOGIN_IDP / AC_LOGIN_AUTH_TYPE"
+        return 1
+    fi
+
+    if ! ac config get-registry-mode >/dev/null 2>&1; then
+        log_error "ac login 返回成功，但会话仍不可用"
+        return 1
+    fi
+    log_success "ACP 会话已建立: ${session}"
+    return 0
+}

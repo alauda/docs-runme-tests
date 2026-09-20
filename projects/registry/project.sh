@@ -76,6 +76,12 @@ project_init() {
 # registry 轻量级准备（每次运行测试前调用）
 project_prepare() {
     load_kubeconfig || return 1
+    # Registry 文档大量使用 ac 命令（ac registry login / ac get imagestreams /
+    # ac adm top / ac image mirror ...）。这些命令依赖 ac login 建立的 ACP 会话，
+    # 而框架原先只处理平台 API Token，没有会话——不补这一步，
+    # 所有含 ac 的文档测试都会报 "not ACP-managed: ACP extension not found"。
+    # 幂等：已有会话时是 no-op。
+    ensure_ac_session || return 1
     return 0
 }
 

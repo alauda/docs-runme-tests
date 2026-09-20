@@ -127,6 +127,59 @@ apply_yaml_block <prefix>:<action>            # 取内容后 kubectl apply -f -
 > 附带坑：kubectl 会缓存 API discovery（默认 10 分钟）。新装的聚合 API 刚起来时
 > 缓存里没有对应子资源，`can-i` 也会误报 `no`。同一类问题的两种表现。
 
+### 3.35 `skip_test_env` 的语义：标记整篇 DocTest，且不中断执行
+
+`skip_test_env` **只设 `__TEST_SKIPPED=1` 然后返回 0**，不抛异常、不中断。
+引擎在**测试函数返回 0 且该标志为 1** 时才记为 `skipped`。
+
+所以：
+
+```bash
+# ❌ 错：skip 之后继续往下跑，而且调用方的 || return 1 会把 skip 当成失败
+helper_that_skips || return 1
+
+# ✅ 对：显式判断，然后 return 0 让引擎看到标志
+if 环境不具备; then
+    skip_test_env "原因"
+    return 0
+fi
+```
+
+两个容易踩的点：
+
+1. **`skip_test_env` 后面必须 `return 0`**（从测试函数返回，不是从内层 helper 返回），
+   否则引擎看到的是 `passed` 而不是 `skipped`
+2. **它标记的是整篇 DocTest**，不是某一节。若只有某一节环境不具备、
+   其余部分仍能跑，那就让它继续跑——标志会在最后统一生效。
+   实测：`exposing-the-registry` 在 default-route 拿不到 host 时 skip，
+   后面几节照样跑完，最终记为 `[env]` 跳过
+
+### 3.36 用 `ac` 命令的文档：框架需要先建 ACP 会话
+
+`ensure_acp_api_token` 解决的是**平台 REST API** 的鉴权（violet / 安装器用）。
+`ac` 命令（`ac registry login` / `ac get imagestreams` / `ac adm top` / `ac image mirror` …）
+走的是另一条路：依赖 `ac login` 写进 kubeconfig 的 **ACP extension**。
+
+框架原先只处理前者。后果是任何用到 `ac` 的文档测试都会报：
+
+```
+cluster 'x' is not ACP-managed: ACP extension not found
+```
+
+**报错形态像权限问题，排查方向容易跑偏。**
+现在 `framework/acp-auth.sh` 提供 `ensure_ac_session()`（幂等），
+由需要它的项目的 `project_prepare` 调用。新模块若也用 `ac`，照抄即可：
+
+```bash
+project_prepare() {
+    load_kubeconfig || return 1
+    ensure_ac_session || return 1     # 幂等；已有会话时是 no-op
+    return 0
+}
+```
+
+需要指定身份提供方时设 `AC_LOGIN_IDP` / `AC_LOGIN_AUTH_TYPE`。
+
 ### 3.4 断言"不存在"与断言"存在"一样重要
 
 文档经常给否定性论断（「全新环境里没有这个包」「该字段未实现」「这个限制不由 registry 施加」）。

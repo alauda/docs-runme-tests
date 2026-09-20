@@ -146,29 +146,13 @@ if case_begin_if "5" "Registry 暴露（Ingress / 自定义路由）" install ex
 fi
 
 # ------------------------------------------------------------------
-# Case 6: Operator 升级
-# 覆盖 image_registry_operator.mdx 的 § Upgrade。
+# 说明：Operator 升级不单列 Case
 #
-# 需要目录源里存在一个**更新的** Operator 版本，否则没有待审批的 InstallPlan，
-# 本 Case 直接 skip_test_env（而不是失败）。
-# 用 REGISTRY_UPGRADE_PACKAGE_URL 指向新版本包；未设置即跳过。
-#
-# 实测踩坑：CSV 升级会重新应用 Operator 的 ServiceAccount，
-# 把安装阶段挂上去的 registry pull Secret 冲掉，新 Pod 卡 ImagePullBackOff +
-# insufficient_scope: authorization failed。文档原先没写这一条。
+# § Upgrade 是 image_registry_operator.mdx 的一节，不是独立文档，
+# 其测试步骤已在 Case 1 的测试脚本里（_registry_step_upgrade），
+# 由 REGISTRY_UPGRADE_PACKAGE_URL 门控：未提供时 skip_test_env，
+# 不会让 Case 1 失败。单列 Case 会重复执行同一份脚本。
 # ------------------------------------------------------------------
-if case_begin_if "6" "Registry Operator 升级" install upgrade; then
-    if [ -z "${REGISTRY_UPGRADE_PACKAGE_URL:-}" ]; then
-        case_skip "6" "Registry Operator 升级" "未提供 REGISTRY_UPGRADE_PACKAGE_URL，目录源中无更新版本" env
-    elif (
-        set -e
-        ./run.sh --project registry --file image-registry-operator-upgrade --force-init
-    ); then
-        case_end 0
-    else
-        case_end 1
-    fi
-fi
 
 log_header "registry 项目所有测试任务执行完成！"
 

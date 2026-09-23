@@ -55,22 +55,51 @@ if case_begin_if "1" "OpenTelemetry v2 安装与卸载测试" smoke install; the
 fi
 
 # ------------------------------------------------------------------
-# Case 2: Java 自动注入示例服务（mesh-v2-test-suite 插件）+ 分布式调用链
+# Case 2: Java 自动注入示例服务（mesh-v2-test-suite 插件）
 # 前置：USE_MESH_V2_TEST_SUITE_PLUGIN=true（已装 mesh-v2-test-suite 集群插件，提供
 #       cpaas-system/mesh-v2-test-suite-java-otel-demo ConfigMap 与配套镜像）；未设置时
 #       java-instrumentation 测试以 SKIPPED 退出，不阻断编排。
-# 顺序：先装分布式调用链（提供 jaeger-system 的 OTel Collector 作为 javaagent 导出端点）
-#       → 部署 Java OTel demo → 卸载 Java OTel demo → 卸载分布式调用链。
+# 顺序：先装 Operator + Collector（Java demo 依赖 Operator 的 Instrumentation CRD 与
+#       自动注入 webhook，而 Case 1 收尾已把 Operator 与 CRDs 卸干净，故这里必须自己装）
+#       → 部署 Java OTel demo → 卸载 Java OTel demo → 卸载 Operator 与 CRDs。
 #
-# 标签带 elasticsearch、且**不带 smoke**：本 Case 的调用链链路只有 Elasticsearch 一种
-# 存储后端实现，而天翼云 openSUSE MicroOS 根文件系统不可变只读、装不了 hostPath 方式的
-# 本地 ES 存储，dailybuild 环境没有 ES 可用。环境支持 ES 后把 smoke 加回来、并去掉
-# release-config 里 CASE_TYPE 的 `and not elasticsearch` 即可恢复。
+# 与 Case 3 的区别：本 Case 只验「Operator 自动注入 Java agent」这一能力，不装调用链平台，
+# 因而不依赖任何存储后端，可以进 dailybuild 的 smoke 集合；span 真正上报到调用链的完整
+# 链路由 Case 3 覆盖。
 # ------------------------------------------------------------------
-if case_begin_if "2" "Java 自动注入示例服务 + 分布式调用链 (Java Instrumentation Demo)" install java elasticsearch; then
+if case_begin_if "2" "Java 自动注入示例服务 (Java Instrumentation Demo)" smoke install java; then
     if (
         set -e
-        ./run.sh --project tracing --file installing-distributed-tracing-elasticsearch --skip-telemetrygen --force-init
+        ./run.sh --project otel --file install-opentelemetry --force-init
+        ./run.sh --project otel --file java-instrumentation --no-cleanup
+        # 清理
+        ./run.sh --project otel --file java-instrumentation --cleanup-only
+        ./run.sh --project otel --file uninstalling-opentelemetry
+    ); then
+        case_end 0
+    else
+        case_end 1
+    fi
+fi
+
+# ------------------------------------------------------------------
+# Case 3: Java 自动注入示例服务（mesh-v2-test-suite 插件）+ 分布式调用链
+# 前置：同 Case 2 的 USE_MESH_V2_TEST_SUITE_PLUGIN=true。
+# 顺序：先装分布式调用链（提供 jaeger-system 的 OTel Collector 作为 javaagent 导出端点，
+#       其步骤 2 会自动装好前置依赖 OTel Operator）→ 部署 Java OTel demo
+#       → 卸载 Java OTel demo → 卸载分布式调用链。
+#
+# 标签带 opensearch、且**不带 smoke**：存储后端走 OpenSearch 链——安装测试的步骤 0 会按需
+# 自动安装 TopoLVM + OpenSearch（幂等），存储落在被测业务集群自身，不再依赖 Global 集群的
+# ACP 日志存储 Elasticsearch（天翼云 openSUSE MicroOS 根文件系统不可变只读，装不了 hostPath
+# 方式的本地 ES 存储）。代价是 TopoLVM 要求业务集群至少 3 个节点、每个节点有空闲裸盘
+# （默认 /dev/vdb），dailybuild 的 asm-1 未挂数据盘，故暂不带 smoke；环境支持后补上 smoke
+# 即可，release-config 里 CASE_TYPE 的表达式不用改。
+# ------------------------------------------------------------------
+if case_begin_if "3" "Java 自动注入示例服务 + 分布式调用链 (Java Instrumentation Demo)" install java opensearch; then
+    if (
+        set -e
+        ./run.sh --project tracing --file installing-distributed-tracing-opensearch --skip-telemetrygen --force-init
         ./run.sh --project otel --file java-instrumentation --no-cleanup
         # 清理
         ./run.sh --project otel --file java-instrumentation --cleanup-only

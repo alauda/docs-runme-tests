@@ -114,7 +114,7 @@ ConfigMap 的 `data` 字段：
 - `data.registry`：所有打包镜像统一使用的 ACP 内置镜像仓库地址（由 `scripts/plugin-config.yaml` 的 valuesTemplates 在安装时通过 `<< .RegistryAddress >>` 自动重写为当前集群的内置镜像仓库地址）。
 - `data.images`：所有打包镜像的**完整可拉取地址**（含上面的 registry 前缀），可直接在工作负载里引用。
 
-测试自动化（`tests/`）开启 `USE_MESH_V2_TEST_SUITE_PLUGIN=true` 后会读取 `data.registry` 来改写 docker.io / registry.istio.io 镜像，详见 [tests/README.md](../../tests/README.md)。
+测试自动化（`tests/`）开启 `USE_MESH_V2_TEST_SUITE_PLUGIN=true` 后会读取 `data.registry` 来改写 docker.io / registry.istio.io 镜像，详见 [docs/configuration.md](../../docs/configuration.md)。
 
 ```yaml
 spec:

@@ -6,7 +6,7 @@ mesh	install-mesh	ASM-DOC-002
 mesh	configuring-istio-ha-by-using-autoscaling	ASM-DOC-003
 mesh	configuring-istio-ha-by-using-replica-count	ASM-DOC-004
 mesh	metrics-and-mesh	ASM-DOC-005
-mesh	config-with-service-mesh	ASM-DOC-006
+mesh	config-tracing-with-service-mesh	ASM-DOC-006
 mesh	kiali	ASM-DOC-007
 mesh	deploying-the-bookinfo-application	ASM-DOC-008
 mesh	mtls	ASM-DOC-009
@@ -32,6 +32,8 @@ mesh	updating-waypoint-proxies	ASM-DOC-028
 mesh	configuration-overview	ASM-DOC-029
 mesh	install-multi-primary-multi-network	ASM-DOC-030
 mesh	install-primary-remote-multi-network	ASM-DOC-031
+mesh	pod-security-admission	ASM-DOC-032
+mesh	install-kiali-in-multi-cluster-mesh	ASM-DOC-033
 otel	rbac-resources	OTEL-DOC-001
 otel	install-opentelemetry	OTEL-DOC-002
 otel	without-sidecar	OTEL-DOC-003

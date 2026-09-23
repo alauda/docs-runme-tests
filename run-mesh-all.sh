@@ -74,6 +74,9 @@ if case_begin_if "3" "单网格安装与应用测试 (Single Mesh & App + Tracin
         set -e
         # 安装网格和应用
         ./run.sh --project mesh --file install-mesh
+        # Pod Security Admission：给 istio / istio-waypoint 两个网关类打 seccompProfile overlay，
+        # 使 Gateway API 网关与 waypoint 能被 Restricted 命名空间准入（须在建 Gateway 之前）
+        ./run.sh --project mesh --file pod-security-admission
         # 入口网关 (sidecar 模式) 测试：复用 sidecar 控制面（含 IstioCNI），各自带清理。
         # 两篇都要把网关 Service 改成 type: LoadBalancer 再取 EXTERNAL-IP 发流量，
         # 没有 MetalLB 就永远等不到地址、必然失败，故受 ENABLE_METALLB 门控
@@ -99,36 +102,41 @@ if case_begin_if "3" "单网格安装与应用测试 (Single Mesh & App + Tracin
             ./run.sh --project mesh --file routing-egress-traffic-via-k8s-gateway-api-in-sidecar-mode --no-cleanup
             ./run.sh --project mesh --file routing-egress-traffic-via-k8s-gateway-api-in-sidecar-mode --cleanup-only
         fi
-        ./run.sh --project mesh --file metrics-and-mesh
+        # metrics-and-mesh 带 cleanup（删 ServiceMonitor / PodMonitor / Telemetry）
+        ./run.sh --project mesh --file metrics-and-mesh --no-cleanup
         ./run.sh --project mesh --file deploying-the-bookinfo-application --no-cleanup
         # 为 bookinfo 命名空间启用严格 mTLS（PeerAuthentication STRICT）
         ./run.sh --project mesh --file mtls --no-cleanup
         # 调用链集成：先装调用链平台，再配置网格上报，再装含调用链集成的 kiali
         # mesh 场景下由 bookinfo 业务流量产生 trace，无需 telemetrygen 端到端验证
         #
-        # 调用链平台目前只有 Elasticsearch 一条可用的存储链，故装/卸两步受 DocTest 级
-        # 标签 elasticsearch 门控（与下面 egress 同一套机制）：天翼云 openSUSE MicroOS
-        # 根文件系统不可变只读，装不了 hostPath 方式的本地 ES 存储，dailybuild 环境没有
-        # ES 可用。CASE_TYPE 未设置（本地手工全量跑）时照常执行，行为不变。
-        # 中间的 config-with-service-mesh 与 kiali 不受门控：前者步骤 1 检测不到
+        # 存储后端走 OpenSearch 链：安装测试的步骤 0 会按需自动安装 TopoLVM + OpenSearch
+        # （幂等，Case 5 再跑一次直接复用已装好的实例），存储落在被测业务集群自身，
+        # 不再依赖 Global 集群的 ACP 日志存储 Elasticsearch。装/卸两步因此受 DocTest 级
+        # 标签 opensearch 门控（与下面 egress 同一套机制）：TopoLVM 要求业务集群至少 3 个
+        # 节点、每个节点有空闲裸盘（默认 /dev/vdb），dailybuild 的 asm-1 未挂数据盘。
+        # CASE_TYPE 未设置（本地手工全量跑）时照常执行。
+        # 中间的 config-tracing-with-service-mesh 与 kiali 不受门控：前者步骤 1 检测不到
         # jaeger-system 命名空间就跳过、后者检测不到 jaeger-collector svc 就跳过调用链
-        # 集成部分，二者在没有调用链平台时都能跑完（Case 5 走的就是这条路径）。
-        if doctest_selected elasticsearch; then
-            ./run.sh --project tracing --file installing-distributed-tracing-elasticsearch --skip-telemetrygen
+        # 集成部分，二者在没有调用链平台时都能跑完。
+        if doctest_selected opensearch; then
+            ./run.sh --project tracing --file installing-distributed-tracing-opensearch --skip-telemetrygen
         else
-            log_warn "CASE_TYPE 未选中 elasticsearch，跳过调用链平台安装，网格调用链集成只做配置不校验链路"
+            log_warn "CASE_TYPE 未选中 opensearch，跳过调用链平台安装，网格调用链集成只做配置不校验链路"
         fi
-        ./run.sh --project mesh --file config-with-service-mesh --no-cleanup
+        ./run.sh --project mesh --file config-tracing-with-service-mesh --no-cleanup
         ./run.sh --project mesh --file kiali
         # 清理（逆序）：先卸 kiali，再卸网格调用链配置，再卸调用链平台
         ./run.sh --project mesh --file uninstalling-alauda-build-of-kiali
-        ./run.sh --project mesh --file config-with-service-mesh --cleanup-only
-        if doctest_selected elasticsearch; then
+        ./run.sh --project mesh --file config-tracing-with-service-mesh --cleanup-only
+        if doctest_selected opensearch; then
             ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds --skip-cluster-plugin
         fi
         # 清理 bookinfo 命名空间的严格 mTLS 配置（在删除 bookinfo 前移除 PeerAuthentication）
         ./run.sh --project mesh --file mtls --cleanup-only
         ./run.sh --project mesh --file deploying-the-bookinfo-application --cleanup-only
+        # 回收监控对接对象（须在卸载网格前，Telemetry 的 CRD 还在）
+        ./run.sh --project mesh --file metrics-and-mesh --cleanup-only
         ./run.sh --project mesh --file uninstalling-alauda-service-mesh
     ); then
         case_end 0
@@ -164,16 +172,6 @@ if case_begin_if "5" "Ambient Mode 安装测试" smoke install ambient; then
         set -e
         # 安装 ambient 网格和应用（operator 可能已经被删除，所以要 --force-init）
         ./run.sh --project mesh --file installing-ambient-mode --force-init
-        ./run.sh --project mesh --file metrics-and-mesh
-        ./run.sh --project mesh --file deploying-ambient-bookinfo --no-cleanup
-        # 为 bookinfo 命名空间启用严格 mTLS（PeerAuthentication STRICT）
-        ./run.sh --project mesh --file mtls --no-cleanup
-        ./run.sh --project mesh --file config-with-service-mesh --no-cleanup
-        ./run.sh --project mesh --file kiali
-        ./run.sh --project mesh --file waypoint-proxies
-        # L7 特性测试（独立测试，包含清理步骤）
-        ./run.sh --project mesh --file ambient-l7-features --no-cleanup
-        ./run.sh --project mesh --file ambient-l7-features --cleanup-only
         # 入口网关 K8S Gateway API 测试（集群需要支持 `LoadBalancer`）：
         # 同 Case 3，取不到 EXTERNAL-IP 必然失败，故受 ENABLE_METALLB 门控。
         if [ "${ENABLE_METALLB:-false}" = "true" ]; then
@@ -192,10 +190,34 @@ if case_begin_if "5" "Ambient Mode 安装测试" smoke install ambient; then
             ./run.sh --project mesh --file routing-egress-traffic-via-k8s-gateway-api-in-ambient-mode --no-cleanup
             ./run.sh --project mesh --file routing-egress-traffic-via-k8s-gateway-api-in-ambient-mode --cleanup-only
         fi
+        ./run.sh --project mesh --file metrics-and-mesh --no-cleanup
+        ./run.sh --project mesh --file deploying-ambient-bookinfo --no-cleanup
+        # 为 bookinfo 命名空间启用严格 mTLS（PeerAuthentication STRICT）
+        ./run.sh --project mesh --file mtls --no-cleanup
+        # 同 Case 3：OpenSearch 链，步骤 0 的 TopoLVM + OpenSearch 自动安装幂等，
+        # Case 3 已装好时直接复用（存储后端属环境级资源，不随调用链卸载回收）
+        if doctest_selected opensearch; then
+            ./run.sh --project tracing --file installing-distributed-tracing-opensearch --skip-telemetrygen
+        else
+            log_warn "CASE_TYPE 未选中 opensearch，跳过调用链平台安装，网格调用链集成只做配置不校验链路"
+        fi
+        ./run.sh --project mesh --file config-tracing-with-service-mesh --no-cleanup
+        ./run.sh --project mesh --file kiali
+        ./run.sh --project mesh --file waypoint-proxies
+        # L7 特性测试（独立测试，包含清理步骤）
+        ./run.sh --project mesh --file ambient-l7-features --no-cleanup
+        ./run.sh --project mesh --file ambient-l7-features --cleanup-only
+
         # 清理 bookinfo 命名空间的严格 mTLS 配置（在卸载网格前移除 PeerAuthentication）
         ./run.sh --project mesh --file mtls --cleanup-only
         # 卸载 kiali
         ./run.sh --project mesh --file uninstalling-alauda-build-of-kiali
+        # 卸载调用链组件
+        if doctest_selected opensearch; then
+            ./run.sh --project tracing --file uninstalling-distributed-tracing --skip-operator-and-crds --skip-cluster-plugin
+        fi
+        # 回收监控对接对象（须在卸载网格前，Telemetry 的 CRD 还在）
+        ./run.sh --project mesh --file metrics-and-mesh --cleanup-only
         # 卸载 ambient 网格
         ./run.sh --project mesh --file uninstalling-alauda-service-mesh-in-ambient-mode
         # 清理 bookinfo
@@ -228,8 +250,28 @@ else
             ./run.sh --project mesh --init-only --cluster "$EAST_CLUSTER_NAME" --cluster "$WEST_CLUSTER_NAME"
             # 公共前置: 生成 CA 证书并下发 cacerts 到两个集群
             ./run.sh --project mesh --file configuration-overview
-            # 多主多网络安装 + 验证 + 卸载
+            # 多主多网络安装 + 验证（环境保留给 Kiali 多集群用例，卸载排在最后）
             ./run.sh --project mesh --file install-multi-primary-multi-network --no-cleanup
+            # ── Kiali 多集群（install-kiali-in-multi-cluster-mesh）──
+            # 监控对接要在每个集群各做一遍：监控是按集群分别抓取的，PodMonitor /
+            # ServiceMonitor 缺一个集群，Kiali 就看不到那个集群的指标。Telemetry 只在
+            # 跑控制面的集群生效，远端集群由 metrics-and-mesh 自行跳过（apply 会被
+            # validation.istio.io webhook 拒）。
+            ./run.sh --project mesh --file metrics-and-mesh --cluster "$EAST_CLUSTER_NAME" --no-cleanup
+            ./run.sh --project mesh --file metrics-and-mesh --cluster "$WEST_CLUSTER_NAME" --no-cleanup
+            # East 装 Kiali server（install_operator 顺带装上 East 的 kiali-operator）；
+            # West 的 kiali-operator 由 install-kiali-in-multi-cluster-mesh 用例补齐。
+            # 流量图断言改用 sample 命名空间——多集群的示例应用是 sleep + helloworld，
+            # 没有 bookinfo；两个集群的 sleep 后台流量由 maybe_gen_sample_traffic 打。
+            KIALI_VERIFY_NAMESPACE=sample \
+                ./run.sh --project mesh --file kiali --cluster "$EAST_CLUSTER_NAME"
+            ./run.sh --project mesh --file install-kiali-in-multi-cluster-mesh --no-cleanup
+            # cleanup-only 覆盖文档的「Removing a cluster from Kiali」与「Cleaning up Kiali」
+            # 两节，East 的 Kiali CR 在此删除，之后只剩 Operator 与 CRDs 要卸
+            ./run.sh --project mesh --file install-kiali-in-multi-cluster-mesh --cleanup-only
+            ./run.sh --project mesh --file uninstalling-alauda-build-of-kiali --cluster "$EAST_CLUSTER_NAME"
+            ./run.sh --project mesh --file metrics-and-mesh --cluster "$WEST_CLUSTER_NAME" --cleanup-only
+            ./run.sh --project mesh --file metrics-and-mesh --cluster "$EAST_CLUSTER_NAME" --cleanup-only
             ./run.sh --project mesh --file install-multi-primary-multi-network --cleanup-only
         ); then
             case_end 0
@@ -248,8 +290,28 @@ else
             ./run.sh --project mesh --init-only --cluster "$EAST_CLUSTER_NAME" --cluster "$WEST_CLUSTER_NAME"
             # 重新下发 cacerts (Case 7 cleanup 已删除 istio-system,需要重建)
             ./run.sh --project mesh --file configuration-overview
-            # 主-远多网络安装 + 验证 + 卸载
+            # 主-远多网络安装 + 验证（环境保留给 Kiali 多集群用例，卸载排在最后）
             ./run.sh --project mesh --file install-primary-remote-multi-network --no-cleanup
+            # ── Kiali 多集群（install-kiali-in-multi-cluster-mesh）──
+            # 监控对接要在每个集群各做一遍：监控是按集群分别抓取的，PodMonitor /
+            # ServiceMonitor 缺一个集群，Kiali 就看不到那个集群的指标。Telemetry 只在
+            # 跑控制面的集群生效，远端集群由 metrics-and-mesh 自行跳过（apply 会被
+            # validation.istio.io webhook 拒）。
+            ./run.sh --project mesh --file metrics-and-mesh --cluster "$EAST_CLUSTER_NAME" --no-cleanup
+            ./run.sh --project mesh --file metrics-and-mesh --cluster "$WEST_CLUSTER_NAME" --no-cleanup
+            # East 装 Kiali server（install_operator 顺带装上 East 的 kiali-operator）；
+            # West 的 kiali-operator 由 install-kiali-in-multi-cluster-mesh 用例补齐。
+            # 流量图断言改用 sample 命名空间——多集群的示例应用是 sleep + helloworld，
+            # 没有 bookinfo；两个集群的 sleep 后台流量由 maybe_gen_sample_traffic 打。
+            KIALI_VERIFY_NAMESPACE=sample \
+                ./run.sh --project mesh --file kiali --cluster "$EAST_CLUSTER_NAME"
+            ./run.sh --project mesh --file install-kiali-in-multi-cluster-mesh --no-cleanup
+            # cleanup-only 覆盖文档的「Removing a cluster from Kiali」与「Cleaning up Kiali」
+            # 两节，East 的 Kiali CR 在此删除，之后只剩 Operator 与 CRDs 要卸
+            ./run.sh --project mesh --file install-kiali-in-multi-cluster-mesh --cleanup-only
+            ./run.sh --project mesh --file uninstalling-alauda-build-of-kiali --cluster "$EAST_CLUSTER_NAME"
+            ./run.sh --project mesh --file metrics-and-mesh --cluster "$WEST_CLUSTER_NAME" --cleanup-only
+            ./run.sh --project mesh --file metrics-and-mesh --cluster "$EAST_CLUSTER_NAME" --cleanup-only
             ./run.sh --project mesh --file install-primary-remote-multi-network --cleanup-only
         ); then
             case_end 0

@@ -8,6 +8,11 @@
 #     install_all_cluster_plugins / install_all_servicemesh_operators / fetch_platform_ca）
 #   - 项目钩子 project_check_env / project_init / project_prepare
 
+# Kiali 监控功能验证模块（verify_kiali_monitoring，供 runme-test_kiali.sh 在
+# 安装与调用链集成之后调用；默认关闭，KIALI_VERIFY_MONITORING=true 时才执行）
+# shellcheck disable=SC1091
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/kiali-monitoring.sh"
+
 # ==============================================================================
 # mesh 测试脚本辅助函数
 # ==============================================================================
@@ -110,6 +115,136 @@ maybe_gen_bookinfo_traffic() {
     return 0
 }
 
+# 按需带 --context 调 kubectl（ctx 为空则用当前 context）
+# 用法: _kubectl_ctx <ctx> <args>...
+_kubectl_ctx() {
+    local ctx="$1"; shift
+    if [ -n "$ctx" ]; then
+        kubectl --context "$ctx" "$@"
+    else
+        kubectl "$@"
+    fi
+}
+
+# (可选) 在 sample 命名空间的 sleep pod 中后台生成 helloworld 请求流量
+# 用法: maybe_gen_sample_traffic [namespace] [context]...   # namespace 默认 sample
+# 说明:
+#   - 多集群网格的示例应用是 sample 命名空间里的 sleep + helloworld（v1 在 East、
+#     v2 在 West），与 bookinfo 场景对应的自动打流量机制就是本函数。
+#   - 开关 AUTO_GEN_SAMPLE_TRAFFIC；未设置时继承 AUTO_GEN_BOOKINFO_TRAFFIC
+#     （dailybuild 模板已置 true），所以无需再给多集群测试项加环境变量。
+#   - 两个集群各有一个 sleep，两边都要打：Kiali 的跨集群边要求双向都有速率，
+#     只打一边时 Traffic Graph 只画得出一半。
+#   - sleep 镜像是 alpine 系，没有 bash，循环用 sh。
+#   - 承载循环的 sleep pod 被重启后循环随之消失，需在重启就绪后再次调用。
+maybe_gen_sample_traffic() {
+    local enabled="${AUTO_GEN_SAMPLE_TRAFFIC:-${AUTO_GEN_BOOKINFO_TRAFFIC:-false}}"
+    [ "$enabled" = "true" ] || return 0
+
+    local ns="sample"
+    if [ $# -gt 0 ]; then
+        ns="$1"
+        shift
+    fi
+    local contexts=("$@")
+    if [ ${#contexts[@]} -eq 0 ]; then
+        contexts=("")
+    fi
+
+    log_info "生成 sample 请求流量 (namespace=${ns}, 集群数=${#contexts[@]})"
+
+    local ctx pod
+    for ctx in "${contexts[@]}"; do
+        pod=$(_kubectl_ctx "$ctx" get pod -l app=sleep -n "$ns" \
+            -o jsonpath='{.items[0].metadata.name}' 2>/dev/null) || pod=""
+        if [ -z "$pod" ]; then
+            log_warn "集群 ${ctx:-当前} 的命名空间 ${ns} 中未找到 sleep pod, 跳过流量生成"
+            continue
+        fi
+        _kubectl_ctx "$ctx" exec "$pod" -c sleep -n "$ns" -- \
+            sh -c "(while true; do curl -sS -o /dev/null http://helloworld.${ns}:5000/hello || true; sleep 9.9; done) >/dev/null 2>&1 &" \
+            || {
+            log_warn "集群 ${ctx:-当前} 启动 sleep 流量循环失败"
+            continue
+        }
+        log_success "集群 ${ctx:-当前} 的 sleep 流量生成已启动 (pod=${pod})"
+    done
+    return 0
+}
+
+# 重试执行 runme 块并断言其输出
+# 用法: retry_runme_verify <block> <cmp_fn> <expected> [attempts] [interval]
+#   cmp_fn   —— framework/verify.sh 的 __cmp_lines / __cmp_contains，签名 (输出, 期望)
+#   最后一次的输出回填到 RETRY_RUNME_OUTPUT，供调用方打印失败详情
+#
+# 适用边界（重要）:
+#   仅用于「被断言的状态本身是异步收敛的」——即产品行为正确，只是达成终态需要时间，
+#   一次性断言会踩到中间窗口。典型例子：IstioRevision 已消失但其 istiod Pod 还在
+#   优雅终止、等待 GC 回收，两者异步。
+#
+#   不得用于掩盖产品缺陷。若某个场景是产品不支持或存在 bug，用例就应当如实失败，
+#   由测试暴露问题，而不是靠加长重试窗口把它熬过去——那样只会让缺陷在验收中隐身。
+#   参考反例：ambient 模式在 kube-ovn underlay 组网下健康检查探针 100% 超时，
+#   应用必然 CrashLoopBackOff（详见 my-foam/area/istio/ambient-mode/）。该场景下
+#   相关用例应当失败，此前为其添加的重试已移除。
+retry_runme_verify() {
+    local block="$1" cmp_fn="$2" expected="$3"
+    local attempts="${4:-12}" interval="${5:-5}"
+    local output="" attempt
+
+    for ((attempt = 1; attempt <= attempts; attempt++)); do
+        if output=$(runme run "$block" 2>&1) && "$cmp_fn" "$output" "$expected"; then
+            RETRY_RUNME_OUTPUT="$output"
+            return 0
+        fi
+        if [ "$attempt" -lt "$attempts" ]; then
+            log_warn "$block 验证未通过，等待 ${interval} 秒后重试 ($((attempt + 1))/$attempts)..."
+            sleep "$interval"
+        fi
+    done
+
+    RETRY_RUNME_OUTPUT="$output"
+    return 1
+}
+
+# 重试执行命令并断言其输出（retry_runme_verify 的命令版）
+# 用法: retry_cmd_verify <cmd> <cmp_fn> <expected> [attempts] [interval]
+#   cmd      —— 完整命令串，内部 eval 执行；适用于不是直接 `runme run` 的场景，
+#               典型如「渲染出 runme 块后经 curl pod 发起」的外部访问验证
+#   cmp_fn   —— framework/verify.sh 的 __cmp_lines / __cmp_contains / __cmp_elided
+#   最后一次的输出回填到 RETRY_CMD_OUTPUT，供调用方打印失败详情
+#
+# 适用边界（重要）: 与 retry_runme_verify 完全一致——仅用于「被断言的状态本身是异步
+# 收敛的」，不得用于掩盖产品缺陷。
+#
+#   本函数新增时的典型场景：LoadBalancer 的**数据面**就绪晚于控制面。
+#   `.status.loadBalancer.ingress` 由 LB controller 回填，而真正让流量可达的是数据面
+#   （MetalLB L2 模式下是 speaker 的 announce + GARP；云厂商 LB 则是后端注册与健康检查），
+#   两者异步且 controller 先完成，因此 `_wait_for_ingress_lb` 返回时数据面未必已就绪。
+#   2026-09-07 g5(KubeOS on DCS) 实测：集群内**第一个** LoadBalancer 上二者相差约 2 秒
+#   （curl 起于 12:40:41，speaker 首次 serviceAnnounced 在 12:40:43），单次断言踩中这个
+#   窗口直接失败；而同一 VIP 的后续用例（Gateway API sidecar / ambient、多集群东西向
+#   网关）全部通过——路径已预热。这属于「产品行为正确、终态需要时间」，用重试等待收敛。
+retry_cmd_verify() {
+    local cmd="$1" cmp_fn="$2" expected="$3"
+    local attempts="${4:-12}" interval="${5:-5}"
+    local output="" attempt
+
+    for ((attempt = 1; attempt <= attempts; attempt++)); do
+        if output=$(eval "$cmd" 2>&1) && "$cmp_fn" "$output" "$expected"; then
+            RETRY_CMD_OUTPUT="$output"
+            return 0
+        fi
+        if [ "$attempt" -lt "$attempts" ]; then
+            log_warn "命令验证未通过，等待 ${interval} 秒后重试 ($((attempt + 1))/$attempts)..."
+            sleep "$interval"
+        fi
+    done
+
+    RETRY_CMD_OUTPUT="$output"
+    return 1
+}
+
 # ==============================================================================
 # 网关安装 / Linux 内核兼容 公共函数
 # ------------------------------------------------------------------------------
@@ -140,6 +275,38 @@ _gw_inject_ctx() {
     else
         printf '%s' "$cmd"
     fi
+}
+
+# 内核 < 4.11 且网关以 root 运行时,把网关所在命名空间的 PSA enforce 放宽到 baseline
+# 用法: relax_psa_for_root_gateway <namespace> [run_as_root=true] [context]
+# 说明:
+#   - 仅 ENABLE_GW_LINUX_KERNEL_COMPAT=true 且 run_as_root=true 时生效,否则 no-op;
+#     内核 >= 4.11 的常规环境不会走到这里,命名空间保持 Restricted。
+#   - Restricted profile 禁止 root 容器,与 Scenario 2 的 runAsUser: 0 互斥。文档
+#     gateways/gateway-installation/linux-kernel-compatibility-notice.mdx 明确要求
+#     这种场景下网关命名空间使用 Baseline 或更低的 profile,这里按文档结论对齐环境。
+relax_psa_for_root_gateway() {
+    [ "${ENABLE_GW_LINUX_KERNEL_COMPAT:-false}" = "true" ] || return 0
+    local ns="$1" run_as_root="${2:-true}" ctx="${3:-}"
+    [ "$run_as_root" = "true" ] || return 0
+    if [ -z "$ns" ]; then
+        log_error "relax_psa_for_root_gateway: 用法 <namespace> [run_as_root] [context]"
+        return 1
+    fi
+    local kargs=(kubectl); [ -n "$ctx" ] && kargs+=(--context "$ctx")
+
+    # 命名空间没打 enforce 标签时无需放宽(默认即 privileged)
+    local current
+    current=$("${kargs[@]}" get namespace "$ns" \
+        -o jsonpath='{.metadata.labels.pod-security\.kubernetes\.io/enforce}' 2>/dev/null)
+    [ "$current" = "restricted" ] || return 0
+
+    log_warn "内核兼容(root)与 Restricted PSA 互斥,将命名空间 $ns 的 enforce 放宽为 baseline"
+    "${kargs[@]}" label namespace "$ns" pod-security.kubernetes.io/enforce=baseline --overwrite || {
+        log_error "放宽命名空间 $ns 的 PSA enforce 失败"
+        return 1
+    }
+    return 0
 }
 
 # 通过 gateway injection 安装网关 (installing-a-gateway-via-injection.mdx)
@@ -298,6 +465,9 @@ reconcile_injected_gateway_runasroot() {
     fi
     local kargs=(kubectl); [ -n "$ctx" ] && kargs+=(--context "$ctx")
 
+    # 以 root 运行与 Restricted PSA 互斥,先按文档把命名空间放宽到 baseline
+    relax_psa_for_root_gateway "$ns" "$run_as_root" "$ctx" || return 1
+
     log_info "内核兼容(root): 修正注入网关 Deployment $dep 的 istio-proxy runAsNonRoot=false (ns=$ns)"
     # 策略合并 (默认 strategic): 按容器名 istio-proxy 合并，仅改 runAsNonRoot，保留其余 securityContext 字段；
     # patch 触发滚动更新，新副本以一致的 securityContext 重新注入后即可被准入。
@@ -322,6 +492,9 @@ apply_kernel_compat_k8s_gateway_api() {
     local kargs=(kubectl); [ -n "$ctx" ] && kargs+=(--context "$ctx")
 
     log_info "K8s Gateway API 内核兼容: ns=$ns gw=$gw_name run_as_root=$run_as_root${ctx:+ context=$ctx}"
+
+    # 0. Scenario 2 让网关以 root 运行,与 Restricted PSA 互斥,先按文档把命名空间放宽到 baseline
+    relax_psa_for_root_gateway "$ns" "$run_as_root" "$ctx" || return 1
 
     # 1. asm-kube-gateway-options ConfigMap (幂等)
     local cm_block cm_yaml

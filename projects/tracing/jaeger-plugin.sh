@@ -20,7 +20,9 @@
 #   PKG_JAEGER_CLUSTER_PLUGIN_URL - 插件包下载地址，可选：提供时未上架会自动下载并 violet
 #                                   push 到 Global；留空即 verify-only，要求插件已由平台
 #                                   （dailybuild）预上架，否则报错（见 _tracing_jaeger_plugin_install_via_global）
-#   SINGLE_CLUSTER_NAME           - 默认目标集群（可用第二参数覆盖）
+#   TEST_TARGET_CLUSTER           - 本次运行的目标集群（run.sh 带 --cluster 时由
+#                                   select_test_context 导出），优先于 SINGLE_CLUSTER_NAME
+#   SINGLE_CLUSTER_NAME           - 兜底的默认目标集群（可用第二参数覆盖）
 
 # 全局侧步骤：上架 + 文档代码块 1-3（查已发布版本、创建 ModuleInfo、验证 Running）。
 # 集群插件资源（ModuleConfig / ModuleInfo）仅存于 Global 集群，故单独成函数，
@@ -139,7 +141,10 @@ EOF
 # 参数:
 #   runme_prefix   - 文档代码块前缀（install-tracing-elasticsearch / install-tracing-opensearch
 #                    / upgrade-tracing-elasticsearch / upgrade-tracing-opensearch）
-#   target_cluster - 插件落地的目标集群，默认 ${SINGLE_CLUSTER_NAME}（即当前被测业务集群）
+#   target_cluster - 插件落地的目标集群，默认 ${TEST_TARGET_CLUSTER}（run.sh --cluster 指定的
+#                    被测集群），未指定 --cluster 时回落到 ${SINGLE_CLUSTER_NAME}。
+#                    多集群网格里两个集群都要装调用链，靠它把插件装到正确的集群上——
+#                    插件资源建在 Global，只切 context 不足以决定落地集群
 #   verify_cm_block - 目标集群侧校验镜像清单 ConfigMap 的代码块名，默认
 #                    <runme_prefix>:verify-jaeger-plugin-configmap；显式传空字符串即跳过
 #                    该步——两篇升级文档没有这个代码块，改用 get-plugin-images 直接读镜像
@@ -147,13 +152,13 @@ EOF
 #       会追加 Global）；调用方 KUBECONFIG 需指向目标业务集群（文档代码块 4 在其上执行）
 tracing_install_jaeger_plugin() {
     local runme_prefix="$1"
-    local target_cluster="${2:-${SINGLE_CLUSTER_NAME:-}}"
+    local target_cluster="${2:-${TEST_TARGET_CLUSTER:-${SINGLE_CLUSTER_NAME:-}}}"
     # 用 ${3-默认值}（不带冒号）取默认：显式传 "" 表示无该代码块，需与"未传参"区分
     local verify_cm_block="${3-${runme_prefix}:verify-jaeger-plugin-configmap}"
 
     if [ -z "$runme_prefix" ] || [ -z "$target_cluster" ]; then
         log_error "tracing_install_jaeger_plugin: 缺少必要参数"
-        log_error "用法: tracing_install_jaeger_plugin <runme_prefix> [target_cluster]（默认 \$SINGLE_CLUSTER_NAME）"
+        log_error "用法: tracing_install_jaeger_plugin <runme_prefix> [target_cluster]（默认 \$TEST_TARGET_CLUSTER，回落 \$SINGLE_CLUSTER_NAME）"
         return 1
     fi
     # 插件包地址为可选：留空即 verify-only —— 包由平台（dailybuild）预上架，

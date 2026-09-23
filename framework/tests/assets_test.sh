@@ -123,6 +123,35 @@ EOF
     rm -rf "$stub" "$SANDBOX"
 }
 
+test_rewrite_file_assets() {
+    printf '\n== rewrite_urls_to_file_assets ==\n'
+    setup_sandbox
+    local out
+    out="$(rewrite_urls_to_file_assets 'curl -L -o b.yaml https://example.com/a/b.yaml')"
+    check_eq "URL 换成 file:// 地址" "$out" "curl -L -o b.yaml file://$SANDBOX/assets/example.com/a/b.yaml"
+    out="$(rewrite_urls_to_file_assets 'curl -L -o o.yaml https://example.com/other.yaml')"
+    check_contains "未登记的 URL 保持原样" "$out" "https://example.com/other.yaml"
+    rm -rf "$SANDBOX"
+}
+
+test_runme_run_curl_with_assets() {
+    printf '\n== runme_run_curl_with_assets ==\n'
+    setup_sandbox
+    # 伪造 runme：print 出一条真实形态的 curl 下载命令
+    local stub; stub="$(mktemp -d)"
+    cat > "$stub/runme" <<EOF
+#!/usr/bin/env bash
+[ "\$1" = "print" ] || exit 1
+echo "curl -sS -o downloaded.yaml https://example.com/a/b.yaml"
+EOF
+    chmod +x "$stub/runme"
+    local work; work="$(mktemp -d)"
+    PATH="$stub:$PATH" runme_run_curl_with_assets fake:block "$work" >/dev/null 2>&1
+    check_eq "file:// 下载落盘内容正确" "$(cat "$work/downloaded.yaml" 2>/dev/null)" "kind: ConfigMap"
+    check_eq "落盘在指定工作目录" "$([ -e "$work/downloaded.yaml" ] && echo yes || echo no)" "yes"
+    rm -rf "$stub" "$work" "$SANDBOX"
+}
+
 test_manifest_wellformed() {
     printf '\n== lynx/assets-manifest.tsv 格式 ==\n'
     local f="$FRAMEWORK_ROOT/lynx/assets-manifest.tsv"
@@ -145,6 +174,8 @@ main() {
     test_rewrite
     test_runme_run_with_assets
     test_runme_run_with_assets_failfast
+    test_rewrite_file_assets
+    test_runme_run_curl_with_assets
     test_manifest_wellformed
     printf '\n==================================\n'
     printf '通过: %d  失败: %d\n' "$T_PASS" "$T_FAIL"

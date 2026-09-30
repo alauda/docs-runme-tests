@@ -131,6 +131,66 @@ test_case_end_reflects_doctest() {
     rm -rf "$RUNME_TEST_RUN_DIR"
 }
 
+# ── 测试：执行日志抄送（终端照常输出，同时写文件；stderr 一并收进来）──
+test_log_tee() {
+    printf '\n== _log_tee_begin / _log_tee_end ==\n'
+    local dir log out
+    dir="$(mktemp -d)"
+    log="$dir/logs/x.log"
+    out="$( { _log_tee_begin "$log"; echo "to-stdout"; echo "to-stderr" >&2; _log_tee_end; echo "after-end"; } 2>&1 )"
+    check_contains "终端仍能看到 stdout" "$out" "to-stdout"
+    check_contains "终端仍能看到 stderr" "$out" "to-stderr"
+    check_contains "终端能看到结束后的输出" "$out" "after-end"
+    check_contains "日志含 stdout" "$(cat "$log")" "to-stdout"
+    check_contains "日志含 stderr" "$(cat "$log")" "to-stderr"
+    check_eq "结束后的输出不再写入日志" "$(grep -c after-end "$log")" "0"
+    check_eq "FIFO 已清理" "$(find "$dir" -name '*.fifo' | wc -l | tr -d ' ')" "0"
+
+    # 连续两次 begin：先收尾旧的，输出只进新文件
+    out="$( { _log_tee_begin "$dir/a.log"; echo "in-a"; _log_tee_begin "$dir/b.log"; echo "in-b"; _log_tee_end; } 2>&1 )"
+    check_eq "旧日志不含新内容" "$(grep -c in-b "$dir/a.log")" "0"
+    check_contains "新日志含新内容" "$(cat "$dir/b.log")" "in-b"
+
+    # ( ... ) 子 shell 继承了父 shell 的抄送变量：不能去收尾父 shell 的抄送（会错恢复 fd、白等 5 秒），
+    # 而是在其上再开一层——内层日志只含内层输出，外层日志经父管道也收得到
+    local t0 t1
+    t0=$(date +%s)
+    out="$( { _log_tee_begin "$dir/outer.log"; echo "o1"; ( _log_tee_begin "$dir/inner.log"; echo "i1"; _log_tee_end ); echo "o2"; _log_tee_end; } 2>&1 )"
+    t1=$(date +%s)
+    check_contains "外层日志含子 shell 输出" "$(cat "$dir/outer.log")" "i1"
+    check_contains "外层日志含子 shell 之后的输出" "$(cat "$dir/outer.log")" "o2"
+    check_eq "内层日志只含内层输出" "$(cat "$dir/inner.log")" "i1"
+    check_eq "子 shell 收尾不空等" "$([ $((t1 - t0)) -lt 3 ] && echo fast || echo slow)" "fast"
+
+    # 建不了日志目录时不抄送、不报错，输出照常
+    local rc=0
+    out="$( { _log_tee_begin "/proc/nonexistent/x.log" || rc=$?; echo "still-here"; _log_tee_end; echo "rc=$rc"; } 2>/dev/null )"
+    check_contains "抄送失败不影响输出" "$out" "still-here"
+    check_contains "抄送失败返回 0" "$out" "rc=0"
+    rm -rf "$dir"
+}
+
+# ── 测试：Case / doctest 记录带上日志路径 ──
+test_log_file_recorded() {
+    printf '\n== 记录中的 log_file ==\n'
+    new_sandbox
+    report_record_doctest mesh kiali runme-test_kiali.sh test failed "" "x" 100 160 /tmp/k.log
+    report_record_doctest mesh kiali runme-test_kiali.sh test passed "" "" 160 170
+    check_contains "doctest 记录日志路径" "$(sed -n 1p "$RUNME_TEST_RUN_DIR/results.jsonl")" '"log_file":"/tmp/k.log"'
+    check_contains "未传日志路径时为空串" "$(sed -n 2p "$RUNME_TEST_RUN_DIR/results.jsonl")" '"log_file":""'
+    rm -rf "$RUNME_TEST_RUN_DIR"
+
+    new_sandbox
+    ( case_begin 6 "多集群" "multicluster"; echo "inside-case"; case_end 0 ) >/dev/null 2>&1
+    local line log
+    line="$(grep '"type":"case"' "$RUNME_TEST_RUN_DIR/results.jsonl")"
+    log="$RUNME_TEST_RUN_DIR/logs/case-6.log"
+    check_contains "case 记录日志路径" "$line" "\"log_file\":\"$log\""
+    check_contains "Case 日志含标题" "$(cat "$log")" "Case 6: 多集群"
+    check_contains "Case 日志含 Case 内输出" "$(cat "$log")" "inside-case"
+    rm -rf "$RUNME_TEST_RUN_DIR"
+}
+
 # ── 测试：case_begin_if 按 CASE_TYPE 门控 ──
 test_case_begin_if() {
     printf '\n== case_begin_if ==\n'
@@ -339,6 +399,8 @@ main() {
     test_case_tags
     test_case_end_reflects_doctest
     test_case_begin_if
+    test_log_tee
+    test_log_file_recorded
     test_finalize_exit
     test_exit_on_test_failure
     test_finalize_idempotent

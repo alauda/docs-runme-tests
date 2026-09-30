@@ -308,6 +308,14 @@ run_test_script() {
     file="$(_doctest_name_from_script "$test_script")"
     if [ "$CLEANUP_ONLY" = true ]; then phase="cleanup-only"; else phase="test"; fi
 
+    # 本篇文档测试的执行日志（终端照常输出），allure 挂为附件；失败时尾部写入 trace
+    local log_file=""
+    if [ -n "${RUNME_TEST_RUN_DIR:-}" ]; then
+        __DOCTEST_SEQ=$(( ${__DOCTEST_SEQ:-0} + 1 ))
+        log_file="$RUNME_TEST_RUN_DIR/logs/doctest-${file}-${phase}-$$-${__DOCTEST_SEQ}.log"
+        _log_tee_begin "$log_file"
+    fi
+
     log_header "执行测试: $script_name"
 
     # 清除上一个脚本残留的 test_/cleanup_ 函数
@@ -333,8 +341,9 @@ run_test_script() {
     if [ -z "$test_func" ]; then
         end_ts=$(date +%s)
         log_error "在 $script_name 中未找到测试函数 (test_*)"
+        _log_tee_end
         report_record_doctest "$PROJECT" "$file" "$script_name" "$phase" \
-            "failed" "" "未找到测试函数 test_*" "$start_ts" "$end_ts"
+            "failed" "" "未找到测试函数 test_*" "$start_ts" "$end_ts" "$log_file"
         return 1
     fi
 
@@ -347,8 +356,9 @@ run_test_script() {
             log_warn "未找到 cleanup 函数"; status="skipped"; skip_reason="[expected] 无 cleanup 函数"
         fi
         end_ts=$(date +%s)
+        _log_tee_end
         report_record_doctest "$PROJECT" "$file" "$script_name" "$phase" \
-            "$status" "$skip_reason" "$fail_reason" "$start_ts" "$end_ts"
+            "$status" "$skip_reason" "$fail_reason" "$start_ts" "$end_ts" "$log_file"
         [ "$status" = "failed" ] && return 1
         return 0
     fi
@@ -374,8 +384,9 @@ run_test_script() {
     fi
 
     end_ts=$(date +%s)
+    _log_tee_end
     report_record_doctest "$PROJECT" "$file" "$script_name" "$phase" \
-        "$status" "$skip_reason" "$fail_reason" "$start_ts" "$end_ts"
+        "$status" "$skip_reason" "$fail_reason" "$start_ts" "$end_ts" "$log_file"
 
     [ "$status" = "failed" ] && return 1
     return 0

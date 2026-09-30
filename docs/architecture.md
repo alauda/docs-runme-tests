@@ -80,6 +80,10 @@ source "$FRAMEWORK_ROOT/framework/verify.sh"
 | `results.jsonl` | 唯一数据源，每行一条记录 |
 | `summary.json` | 三层结构化汇总（两套计数 + 每 Case 明细） |
 | `junit.xml` | 标准 JUnit，对接 CI |
+| `logs/doctest-<doc>-<phase>-*.log` | 每个 DocTest 的执行日志（stdout + stderr） |
+| `logs/case-<id>.log` | 每个 Case 的全程日志，含 `--init-only` 等不产生 DocTest 的步骤 |
+
+日志由 `_log_tee_begin` / `_log_tee_end` 抄送：终端照常输出，同时写文件。allure 报告据此给每个 DocTest 挂「执行日志」附件，无 DocTest 的 Case（如环境初始化）挂「Case 执行日志」；失败用例另把 `[ERROR]` 行与日志末尾 80 行写进 trace。附件去掉颜色码并屏蔽平台密码 / API token。`statusDetails.message` 不变——dailybuild 巡检拿它当失败签名去重建单。
 
 终端结束时打印美化摘要（总耗时、Case/DocTest 两套计数、每 Case 一行、失败 / 跳过明细）。退出码：有 failed 则非 0。
 

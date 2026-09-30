@@ -25,6 +25,54 @@ _allure_case_id() {
     awk -F'\t' -v p="$project" -v d="$doc" '$1==p && $2==d {print $3; exit}' "$ALLURE_CASE_IDS_FILE"
 }
 
+# 日志清洗：去 ANSI 颜色码与 \r，屏蔽平台密码 / API token（附件随 allure 报告分发）
+# 按字面量替换（awk index），密码里的正则元字符不会误伤；短于 4 个字符的值不屏蔽。
+# 用法: _allure_clean_log <src> > <dst>
+_allure_clean_log() {
+    ALLURE_MASK_1="${PLATFORM_PASSWORD:-}" ALLURE_MASK_2="${PASSWORD:-}" \
+    ALLURE_MASK_3="${ACP_API_TOKEN:-}" awk '
+        function mask(s, t,   out, i) {
+            if (length(t) < 4) return s
+            out = ""
+            while ((i = index(s, t)) > 0) {
+                out = out substr(s, 1, i - 1) "******"
+                s = substr(s, i + length(t))
+            }
+            return out s
+        }
+        {
+            gsub(/\033\[[0-9;]*[A-Za-z]/, "")
+            gsub(/\r/, "")
+            $0 = mask($0, ENVIRON["ALLURE_MASK_1"])
+            $0 = mask($0, ENVIRON["ALLURE_MASK_2"])
+            $0 = mask($0, ENVIRON["ALLURE_MASK_3"])
+            print
+        }' "$1"
+}
+
+# 失败摘要（写入 statusDetails.trace）：[ERROR] 行（最多 30 行）+ 日志末尾 80 行
+# statusDetails.message 保持不变：dailybuild 巡检拿它当失败签名去重建单，塞进易变内容会重复建单。
+# 用法: _allure_log_trace <cleaned_log>
+_allure_log_trace() {
+    local f="$1" errs
+    errs=$(grep -F '[ERROR]' "$f" | head -n 30)
+    if [ -n "$errs" ]; then
+        printf '== [ERROR] 行 ==\n%s\n\n' "$errs"
+    fi
+    printf '== 日志末尾 80 行（完整日志见附件「执行日志」）==\n'
+    tail -n 80 "$f"
+}
+
+# 把一份执行日志落成 allure 附件：成功时 stdout 输出附件文件名，日志不存在时输出空串
+# 用法: attach=$(_allure_attach_log <src_log> <allure-result-dir> <uuid>)
+_allure_attach_log() {
+    local src="$1" outdir="$2" uuid="$3" name
+    [ -n "$src" ] && [ -f "$src" ] || return 0
+    name="${uuid}-attachment.log"
+    _allure_clean_log "$src" > "$outdir/$name" || { rm -f "$outdir/$name"; return 0; }
+    printf '%s' "$name"
+}
+
 # allure_emit_results <results.jsonl> <allure-result-dir>
 allure_emit_results() {
     local results="$1" outdir="$2"
@@ -48,6 +96,7 @@ allure_emit_results() {
     # 用 project|case_id|file|phase 做键，再加一个出现次序兜底重复。
     # 计数用字符串而不是 declare -A：macOS 自带 bash 3.2 没有关联数组。
     local line rtype project doc uuid cid phase rcase key seen_keys="" occ
+    local rstatus attach trace
     while IFS= read -r line; do
         [ -n "$line" ] || continue
         rtype=$(printf '%s' "$line" | jq -r '.type // ""')
@@ -56,8 +105,14 @@ allure_emit_results() {
         doc=$(printf '%s' "$line" | jq -r '.file')
         phase=$(printf '%s' "$line" | jq -r '.phase // ""')
         rcase=$(printf '%s' "$line" | jq -r '.case_id // ""')
+        rstatus=$(printf '%s' "$line" | jq -r '.status // ""')
         uuid=$(_allure_uuid)
         cid=$(_allure_case_id "$project" "$doc")
+        attach=$(_allure_attach_log "$(printf '%s' "$line" | jq -r '.log_file // ""')" "$outdir" "$uuid")
+        trace=""
+        if [ -n "$attach" ] && [ "$rstatus" = "failed" ]; then
+            trace=$(_allure_log_trace "$outdir/$attach")
+        fi
         key="${project}|${rcase}|${doc}|${phase}"
         occ=$(printf '%s' "$seen_keys" | grep -Fxc -- "$key" 2>/dev/null || true)
         occ=$(( ${occ:-0} + 1 ))
@@ -65,7 +120,8 @@ allure_emit_results() {
 "
         printf '%s' "$line" | jq \
             --arg uuid "$uuid" --arg case_id "${cid:-}" --argjson casemap "$casemap" \
-            --arg occ "$occ" --argjson multi "$( [ "$occ" -gt 1 ] && echo true || echo false )" '
+            --arg occ "$occ" --argjson multi "$( [ "$occ" -gt 1 ] && echo true || echo false )" \
+            --arg attach "$attach" --arg trace "$trace" '
             . as $r
             | ($casemap[$r.case_id] // {name: "（无 Case）", tags: ""}) as $c
             # 名字保持可读：主跑仍是纯文档名，只给 cleanup-only 与重复出现加后缀
@@ -78,10 +134,10 @@ allure_emit_results() {
                 fullName: "\($r.project)/\($r.file) [Case \($r.case_id) \($r.phase // "")]",
                 historyId: "\($r.project)/\($r.file)|case\($r.case_id)|\($r.phase // "")|\($occ)",
                 status: $r.status,
-                statusDetails: {
+                statusDetails: ({
                     message: (if $r.status == "failed" then ($r.fail_reason // "")
                               else ($r.skip_reason // "") end)
-                },
+                } + (if $trace == "" then {} else {trace: $trace} end)),
                 start: (($r.start_ts // 0) * 1000),
                 stop:  (($r.end_ts   // 0) * 1000),
                 labels: (
@@ -91,7 +147,10 @@ allure_emit_results() {
                     + (if $case_id == "" then [] else [{name: "case_id", value: $case_id}] end)
                     + ($c.tags | split(" ") | map(select(length > 0)) | map({name: "tag", value: .}))
                 )
-              }' > "$outdir/${uuid}-result.json" || return 1
+              }
+            + (if $attach == "" then {}
+               else {attachments: [{name: "执行日志", source: $attach, type: "text/plain"}]} end)
+            ' > "$outdir/${uuid}-result.json" || return 1
     done < "$results"
 
     # 补发「整 Case 无任何 doctest」的占位结果：case / case_skip 记录里出现过、
@@ -108,7 +167,8 @@ allure_emit_results() {
                   | {case_id, case_name,
                      status: (if .type=="case_skip" then "skipped" else .status end),
                      skip_reason: (.skip_reason // ""),
-                     tags: (.tags // "")}
+                     tags: (.tags // ""),
+                     log_file: (.log_file // "")}
         ' "$results") || return 1
 
     local orow now
@@ -116,8 +176,15 @@ allure_emit_results() {
         [ -n "$orow" ] || continue
         uuid=$(_allure_uuid)
         now=$(( $(date +%s) * 1000 ))
+        # 无 doctest 的 Case（典型如环境初始化）挂 Case 全程日志，失败原因只能从这里看
+        attach=$(_allure_attach_log "$(printf '%s' "$orow" | jq -r '.log_file')" "$outdir" "$uuid")
+        trace=""
+        if [ -n "$attach" ] && [ "$(printf '%s' "$orow" | jq -r '.status')" = "failed" ]; then
+            trace=$(_allure_log_trace "$outdir/$attach")
+        fi
         printf '%s' "$orow" | jq \
-            --arg uuid "$uuid" --arg project "${RUNME_TEST_PROJECT:-unknown}" --argjson now "$now" '
+            --arg uuid "$uuid" --arg project "${RUNME_TEST_PROJECT:-unknown}" --argjson now "$now" \
+            --arg attach "$attach" --arg trace "$trace" '
             . as $c
             | {
                 uuid: $uuid,
@@ -125,7 +192,8 @@ allure_emit_results() {
                 fullName: "case/\($c.case_id)",
                 historyId: "case/\($c.case_id)",
                 status: $c.status,
-                statusDetails: { message: $c.skip_reason },
+                statusDetails: ({ message: $c.skip_reason }
+                                + (if $trace == "" then {} else {trace: $trace} end)),
                 start: $now,
                 stop:  $now,
                 labels: (
@@ -134,7 +202,10 @@ allure_emit_results() {
                       {name: "severity", value: "normal"} ]
                     + ($c.tags | split(" ") | map(select(length > 0)) | map({name: "tag", value: .}))
                 )
-              }' > "$outdir/${uuid}-result.json" || return 1
+              }
+            + (if $attach == "" then {}
+               else {attachments: [{name: "Case 执行日志", source: $attach, type: "text/plain"}]} end)
+            ' > "$outdir/${uuid}-result.json" || return 1
     done <<EOF
 $orphans
 EOF

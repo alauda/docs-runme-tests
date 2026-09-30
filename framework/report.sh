@@ -63,6 +63,46 @@ _report_append() {
     printf '%s\n' "$1" >> "$RUNME_TEST_RUN_DIR/results.jsonl"
 }
 
+# ── 执行日志抄送：stdout/stderr 照常输出，同时追加写入日志文件（供 allure 附件）──
+# 用 FIFO + 后台 tee 而不是 >(tee ...)：结束时要等 tee 写完，需要它的 PID，
+# 而 bash 3.2（macOS）拿不到进程替换的 PID。原 fd 暂存到 7/8（四个仓库的脚本都没占用）。
+# 尽力而为：建不了 FIFO 就不抄送，绝不影响测试本身。同一进程不嵌套，开新的先结束旧的。
+# 抄送归属按 shell 进程区分：( ... ) 子 shell 会继承父 shell 的变量，但父 shell 的抄送不归它收尾——
+# 它在其上再开一层，输出经父 shell 的管道照样进父日志。bash 3.2 没有 BASHPID，子 shell 里 $$
+# 仍是父进程，故用 $(exec sh -c 'echo $PPID') 取当前 shell 的真实 PID。
+# 用法: _log_tee_begin <log_file>
+_log_tee_begin() {
+    local log="$1" fifo
+    _log_tee_end
+    mkdir -p "$(dirname "$log")" 2>/dev/null || return 0
+    fifo="${log}.fifo"
+    rm -f "$fifo"
+    mkfifo "$fifo" 2>/dev/null || return 0
+    tee -a "$log" < "$fifo" &
+    __LOG_TEE_PID=$!
+    __LOG_TEE_OWNER=$(exec sh -c 'echo "$PPID"')
+    exec 7>&1 8>&2 >"$fifo" 2>&1
+    rm -f "$fifo"
+    return 0
+}
+
+# 结束抄送并恢复 stdout/stderr；后台子进程仍持有管道时最多等 5 秒，不无限阻塞
+_log_tee_end() {
+    [ -n "${__LOG_TEE_PID:-}" ] || return 0
+    if [ "${__LOG_TEE_OWNER:-}" != "$(exec sh -c 'echo "$PPID"')" ]; then
+        __LOG_TEE_PID=""    # 继承自父 shell 的抄送，不动 fd
+        return 0
+    fi
+    exec 1>&7 2>&8 7>&- 8>&-
+    local i=0
+    while kill -0 "$__LOG_TEE_PID" 2>/dev/null && [ "$i" -lt 50 ]; do
+        sleep 0.1
+        i=$((i + 1))
+    done
+    __LOG_TEE_PID=""
+    return 0
+}
+
 # ── 内部：runme-test_<x>.sh -> <x> ──
 _doctest_name_from_script() {
     local name
@@ -106,10 +146,10 @@ report_init() {
     return 0
 }
 
-# ── report_record_doctest <project> <file> <script> <phase> <status> <skip_reason> <fail_reason> <start_ts> <end_ts> ──
+# ── report_record_doctest <project> <file> <script> <phase> <status> <skip_reason> <fail_reason> <start_ts> <end_ts> [log_file] ──
 report_record_doctest() {
     local project="$1" file="$2" script="$3" phase="$4" status="$5"
-    local skip_reason="$6" fail_reason="$7" start_ts="$8" end_ts="$9"
+    local skip_reason="$6" fail_reason="$7" start_ts="$8" end_ts="$9" log_file="${10:-}"
     local duration
     duration=$(( end_ts - start_ts ))
     _report_append "$(jq -nc \
@@ -118,7 +158,8 @@ report_record_doctest() {
         --arg case_name "${RUNME_TEST_CASE_NAME:-}" --arg phase "$phase" \
         --arg status "$status" --arg skip_reason "$skip_reason" --arg fail_reason "$fail_reason" \
         --argjson start_ts "$start_ts" --argjson end_ts "$end_ts" --argjson duration_s "$duration" \
-        '{type:$type,project:$project,file:$file,script:$script,case_id:$case_id,case_name:$case_name,phase:$phase,status:$status,skip_reason:$skip_reason,fail_reason:$fail_reason,start_ts:$start_ts,end_ts:$end_ts,duration_s:$duration_s}')"
+        --arg log_file "$log_file" \
+        '{type:$type,project:$project,file:$file,script:$script,case_id:$case_id,case_name:$case_name,phase:$phase,status:$status,skip_reason:$skip_reason,fail_reason:$fail_reason,start_ts:$start_ts,end_ts:$end_ts,duration_s:$duration_s,log_file:$log_file}')"
 }
 
 # ── case_begin <case_id> <case_name> [tags] ──
@@ -128,6 +169,12 @@ case_begin() {
     RUNME_TEST_CASE_TAGS="${3:-}"
     export RUNME_TEST_CASE_ID RUNME_TEST_CASE_NAME RUNME_TEST_CASE_TAGS
     __CASE_START_TS="$(date +%s)"
+    # Case 全程日志（含 init-only 等不产生 doctest 记录的步骤），挂到无 doctest 的 Case 占位结果上
+    __CASE_LOG_FILE=""
+    if [ -n "${RUNME_TEST_RUN_DIR:-}" ]; then
+        __CASE_LOG_FILE="$RUNME_TEST_RUN_DIR/logs/case-$1.log"
+        _log_tee_begin "$__CASE_LOG_FILE"
+    fi
     log_header "Case $1: $2"
 }
 
@@ -140,8 +187,8 @@ _case_record() {
         --arg type "case" --arg case_id "${RUNME_TEST_CASE_ID:-}" \
         --arg case_name "${RUNME_TEST_CASE_NAME:-}" --arg status "$status" \
         --arg tags "${RUNME_TEST_CASE_TAGS:-}" \
-        --argjson duration_s "$duration" \
-        '{type:$type,case_id:$case_id,case_name:$case_name,status:$status,tags:$tags,duration_s:$duration_s}')"
+        --argjson duration_s "$duration" --arg log_file "${__CASE_LOG_FILE:-}" \
+        '{type:$type,case_id:$case_id,case_name:$case_name,status:$status,tags:$tags,duration_s:$duration_s,log_file:$log_file}')"
 }
 
 # ── 内部：本 Case 内是否有已记录为 failed 的文档测试 ──
@@ -189,6 +236,7 @@ case_end() {
         _case_record "failed"
         log_error "Case ${RUNME_TEST_CASE_ID:-?}: ${RUNME_TEST_CASE_NAME:-} 失败（继续后续 Case）"
     fi
+    _log_tee_end
     unset RUNME_TEST_CASE_ID RUNME_TEST_CASE_NAME RUNME_TEST_CASE_TAGS
     return 0
 }
@@ -199,11 +247,13 @@ case_end_fatal() {
     if [ "$__CASE_RC" -eq 0 ]; then
         _case_record "passed"
         log_success "Case ${RUNME_TEST_CASE_ID:-?}: ${RUNME_TEST_CASE_NAME:-} 通过"
+        _log_tee_end
         unset RUNME_TEST_CASE_ID RUNME_TEST_CASE_NAME RUNME_TEST_CASE_TAGS
         return 0
     fi
     _case_record "failed"
     log_error "致命前置 Case ${RUNME_TEST_CASE_ID:-?}: ${RUNME_TEST_CASE_NAME:-} 失败，中止整个 Run"
+    _log_tee_end
     unset RUNME_TEST_CASE_ID RUNME_TEST_CASE_NAME RUNME_TEST_CASE_TAGS
     report_finalize
     exit 1
@@ -364,6 +414,8 @@ report_finalize() {
         return "${__REPORT_FINALIZE_RC:-0}"
     fi
     __REPORT_FINALIZED=1
+    # 异常中断时 Case 抄送可能还开着：先收尾，allure 才能读到完整日志
+    _log_tee_end
 
     local results="${RUNME_TEST_RUN_DIR:-}/results.jsonl"
     if [ -z "${RUNME_TEST_RUN_DIR:-}" ] || [ ! -f "$results" ]; then

@@ -124,6 +124,52 @@ EOF
     rm -rf "$dir"
 }
 
+# 执行日志挂为附件：去颜色码、屏蔽密码；失败用例的 [ERROR] 行与日志尾部进 trace，
+# 但 statusDetails.message 必须保持原样（dailybuild 巡检用它当失败签名去重建单）
+test_emit_results_log_attachment() {
+    printf '\n== allure_emit_results 执行日志附件 ==\n'
+    local dir; dir="$(mktemp -d)"
+    printf '\033[0;34m[INFO]\033[0m 步骤 3.1\n\033[0;31m[ERROR]\033[0m East 端流量验证失败 pw=S3cret-pw\r\n最后一行\n' > "$dir/fail.log"
+    printf 'all good\n' > "$dir/pass.log"
+    printf '\033[0;31m[ERROR]\033[0m 拉取 kubeconfig 失败\n' > "$dir/case1.log"
+    cat > "$dir/results.jsonl" <<EOF
+{"type":"doctest","project":"mesh","file":"install-mpmn","script":"s.sh","case_id":"6","case_name":"多集群","phase":"test","status":"failed","skip_reason":"","fail_reason":"测试函数 test_x 返回非 0","start_ts":100,"end_ts":190,"duration_s":90,"log_file":"$dir/fail.log"}
+{"type":"doctest","project":"mesh","file":"configuration-overview","script":"c.sh","case_id":"6","case_name":"多集群","phase":"test","status":"passed","skip_reason":"","fail_reason":"","start_ts":90,"end_ts":100,"duration_s":10,"log_file":"$dir/pass.log"}
+{"type":"doctest","project":"mesh","file":"nolog","script":"n.sh","case_id":"6","case_name":"多集群","phase":"test","status":"passed","skip_reason":"","fail_reason":"","start_ts":90,"end_ts":100,"duration_s":10,"log_file":"$dir/missing.log"}
+{"type":"case","case_id":"6","case_name":"多集群","status":"failed","tags":"multicluster","duration_s":100,"log_file":"$dir/case6.log"}
+{"type":"case","case_id":"1","case_name":"环境初始化","status":"failed","tags":"always","duration_s":5,"log_file":"$dir/case1.log"}
+EOF
+    PLATFORM_PASSWORD="S3cret-pw" allure_emit_results "$dir/results.jsonl" "$dir/allure-result"
+
+    local r fail pass nolog case1 src
+    r="$dir/allure-result"
+    fail="$(jq -s '.[] | select(.name == "install-mpmn")' "$r"/*-result.json)"
+    pass="$(jq -s '.[] | select(.name == "configuration-overview")' "$r"/*-result.json)"
+    nolog="$(jq -s '.[] | select(.name == "nolog")' "$r"/*-result.json)"
+    case1="$(jq -s '.[] | select(.name == "Case 1: 环境初始化")' "$r"/*-result.json)"
+
+    check_eq "失败用例 message 保持原样" "$(printf '%s' "$fail" | jq -r '.statusDetails.message')" "测试函数 test_x 返回非 0"
+    check_eq "附件名" "$(printf '%s' "$fail" | jq -r '.attachments[0].name')" "执行日志"
+    check_eq "附件类型" "$(printf '%s' "$fail" | jq -r '.attachments[0].type')" "text/plain"
+    src="$(printf '%s' "$fail" | jq -r '.attachments[0].source')"
+    check_eq "附件文件落在结果目录" "$(test -f "$r/$src" && echo yes)" "yes"
+    check_eq "附件去掉颜色码" "$(grep -c "$(printf '\033')" "$r/$src")" "0"
+    check_eq "附件去掉 \\r" "$(grep -c "$(printf '\r')" "$r/$src")" "0"
+    check_contains "附件屏蔽密码" "$(cat "$r/$src")" "pw=******"
+    check_eq "附件不含明文密码" "$(grep -c 'S3cret-pw' "$r/$src")" "0"
+    check_contains "trace 含 ERROR 行" "$(printf '%s' "$fail" | jq -r '.statusDetails.trace')" "[ERROR] East 端流量验证失败"
+    check_contains "trace 含日志末尾" "$(printf '%s' "$fail" | jq -r '.statusDetails.trace')" "最后一行"
+
+    check_eq "通过用例也挂附件" "$(printf '%s' "$pass" | jq -r '.attachments | length')" "1"
+    check_eq "通过用例不写 trace" "$(printf '%s' "$pass" | jq -r '.statusDetails | has("trace")')" "false"
+    check_eq "日志文件不存在时不挂附件" "$(printf '%s' "$nolog" | jq -r 'has("attachments")')" "false"
+
+    check_eq "无 doctest 的 Case 挂 Case 日志" "$(printf '%s' "$case1" | jq -r '.attachments[0].name')" "Case 执行日志"
+    check_contains "无 doctest 的失败 Case 写 trace" "$(printf '%s' "$case1" | jq -r '.statusDetails.trace')" "拉取 kubeconfig 失败"
+    check_eq "有 doctest 的 Case 不单独出结果" "$(jq -s '[.[] | select(.name == "Case 6: 多集群")] | length' "$r"/*-result.json)" "0"
+    rm -rf "$dir"
+}
+
 test_emit_broken() {
     printf '\n== allure_emit_broken ==\n'
     local dir; dir="$(mktemp -d)"
@@ -168,6 +214,7 @@ main() {
     test_emit_results
     test_emit_results_orphan_case
     test_emit_results_duplicate_docs
+    test_emit_results_log_attachment
     test_emit_broken
     test_environment_and_categories
     test_generate_missing_cli

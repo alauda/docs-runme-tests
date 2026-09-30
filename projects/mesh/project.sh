@@ -175,7 +175,7 @@ maybe_gen_sample_traffic() {
 # 重试执行 runme 块并断言其输出
 # 用法: retry_runme_verify <block> <cmp_fn> <expected> [attempts] [interval]
 #   cmp_fn   —— framework/verify.sh 的 __cmp_lines / __cmp_contains，签名 (输出, 期望)
-#   最后一次的输出回填到 RETRY_RUNME_OUTPUT，供调用方打印失败详情
+#   最后一次的输出回填到 RETRY_RUNME_OUTPUT，供调用方打印失败详情；首次未通过的输出直接打到日志
 #
 # 适用边界（重要）:
 #   仅用于「被断言的状态本身是异步收敛的」——即产品行为正确，只是达成终态需要时间，
@@ -197,6 +197,11 @@ retry_runme_verify() {
             RETRY_RUNME_OUTPUT="$output"
             return 0
         fi
+        # 首次未通过的输出留在日志里：重试成功后也能看出收敛前是什么状态
+        if [ "$attempt" -eq 1 ]; then
+            log_warn "$block 首次验证未通过，当时输出:"
+            printf '%s\n' "$output"
+        fi
         if [ "$attempt" -lt "$attempts" ]; then
             log_warn "$block 验证未通过，等待 ${interval} 秒后重试 ($((attempt + 1))/$attempts)..."
             sleep "$interval"
@@ -212,7 +217,7 @@ retry_runme_verify() {
 #   cmd      —— 完整命令串，内部 eval 执行；适用于不是直接 `runme run` 的场景，
 #               典型如「渲染出 runme 块后经 curl pod 发起」的外部访问验证
 #   cmp_fn   —— framework/verify.sh 的 __cmp_lines / __cmp_contains / __cmp_elided
-#   最后一次的输出回填到 RETRY_CMD_OUTPUT，供调用方打印失败详情
+#   最后一次的输出回填到 RETRY_CMD_OUTPUT，供调用方打印失败详情；首次未通过的输出直接打到日志
 #
 # 适用边界（重要）: 与 retry_runme_verify 完全一致——仅用于「被断言的状态本身是异步
 # 收敛的」，不得用于掩盖产品缺陷。
@@ -234,6 +239,10 @@ retry_cmd_verify() {
         if output=$(eval "$cmd" 2>&1) && "$cmp_fn" "$output" "$expected"; then
             RETRY_CMD_OUTPUT="$output"
             return 0
+        fi
+        if [ "$attempt" -eq 1 ]; then
+            log_warn "命令首次验证未通过，当时输出:"
+            printf '%s\n' "$output"
         fi
         if [ "$attempt" -lt "$attempts" ]; then
             log_warn "命令验证未通过，等待 ${interval} 秒后重试 ($((attempt + 1))/$attempts)..."

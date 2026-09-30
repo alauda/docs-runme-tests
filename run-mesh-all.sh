@@ -267,9 +267,13 @@ else
                 ./run.sh --project mesh --file kiali --cluster "$EAST_CLUSTER_NAME"
             ./run.sh --project mesh --file install-kiali-in-multi-cluster-mesh --no-cleanup
             # cleanup-only 覆盖文档的「Removing a cluster from Kiali」与「Cleaning up Kiali」
-            # 两节，East 的 Kiali CR 在此删除，之后只剩 Operator 与 CRDs 要卸
+            # 两节，两个集群的 Kiali CR 在此删除，之后只剩 Operator 与 CRDs 要卸。
+            # 两个集群都要卸：West 的 kiali-operator 是 install-kiali-in-multi-cluster-mesh
+            # 补装的，只卸 East 会把它（Subscription / CSV / CRD）一直留在 West 上。
+            # 集群上已没有 Kiali CR 时卸载用例自行跳过删 CR 的两步。
             ./run.sh --project mesh --file install-kiali-in-multi-cluster-mesh --cleanup-only
             ./run.sh --project mesh --file uninstalling-alauda-build-of-kiali --cluster "$EAST_CLUSTER_NAME"
+            ./run.sh --project mesh --file uninstalling-alauda-build-of-kiali --cluster "$WEST_CLUSTER_NAME"
             ./run.sh --project mesh --file metrics-and-mesh --cluster "$WEST_CLUSTER_NAME" --cleanup-only
             ./run.sh --project mesh --file metrics-and-mesh --cluster "$EAST_CLUSTER_NAME" --cleanup-only
             ./run.sh --project mesh --file install-multi-primary-multi-network --cleanup-only
@@ -307,9 +311,13 @@ else
                 ./run.sh --project mesh --file kiali --cluster "$EAST_CLUSTER_NAME"
             ./run.sh --project mesh --file install-kiali-in-multi-cluster-mesh --no-cleanup
             # cleanup-only 覆盖文档的「Removing a cluster from Kiali」与「Cleaning up Kiali」
-            # 两节，East 的 Kiali CR 在此删除，之后只剩 Operator 与 CRDs 要卸
+            # 两节，两个集群的 Kiali CR 在此删除，之后只剩 Operator 与 CRDs 要卸。
+            # 两个集群都要卸：West 的 kiali-operator 是 install-kiali-in-multi-cluster-mesh
+            # 补装的，只卸 East 会把它（Subscription / CSV / CRD）一直留在 West 上。
+            # 集群上已没有 Kiali CR 时卸载用例自行跳过删 CR 的两步。
             ./run.sh --project mesh --file install-kiali-in-multi-cluster-mesh --cleanup-only
             ./run.sh --project mesh --file uninstalling-alauda-build-of-kiali --cluster "$EAST_CLUSTER_NAME"
+            ./run.sh --project mesh --file uninstalling-alauda-build-of-kiali --cluster "$WEST_CLUSTER_NAME"
             ./run.sh --project mesh --file metrics-and-mesh --cluster "$WEST_CLUSTER_NAME" --cleanup-only
             ./run.sh --project mesh --file metrics-and-mesh --cluster "$EAST_CLUSTER_NAME" --cleanup-only
             ./run.sh --project mesh --file install-primary-remote-multi-network --cleanup-only

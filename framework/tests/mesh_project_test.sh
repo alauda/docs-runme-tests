@@ -153,6 +153,13 @@ test_retry_runme_verify() {
     check_eq "断言始终不过则返回 1" "$?" "1"
     check_eq "按 attempts 次数耗尽" "$(wc -l < "$calls_file" | tr -d ' ')" "3"
 
+    # 4) 首次未通过时打印当时的输出（重试后即使成功，日志里也留得下收敛前的样子），且只打一次
+    local out
+    : > "$calls_file"
+    out="$(STUB_FAIL_TIMES=2 retry_runme_verify blk __cmp_contains "ok-output" 5 1 2>&1)"
+    check_contains "首次失败输出进日志" "$out" "container not found"
+    check_eq "首次失败输出只打一次" "$(printf '%s\n' "$out" | grep -c 'container not found')" "1"
+
     unset -f runme sleep
     unset STUB_FAIL_TIMES
     rm -f "$calls_file"
@@ -201,6 +208,13 @@ test_retry_cmd_verify() {
     STUB_FAIL_TIMES=99 retry_cmd_verify stub_cmd __cmp_contains "HTTP/1.1 200 OK" 2 1 >/dev/null 2>&1
     check_eq "始终失败则返回 1" "$?" "1"
     check_contains "失败时回填最后一次输出" "$RETRY_CMD_OUTPUT" "curl: (7) Failed to connect"
+
+    # 5) 首次未通过时打印当时的输出，且只打一次
+    local out
+    : > "$calls_file"
+    out="$(STUB_FAIL_TIMES=2 retry_cmd_verify stub_cmd __cmp_contains "HTTP/1.1 200 OK" 5 1 2>&1)"
+    check_contains "首次失败输出进日志" "$out" "curl: (7) Failed to connect"
+    check_eq "首次失败输出只打一次" "$(printf '%s\n' "$out" | grep -c 'curl: (7)')" "1"
 
     unset -f stub_cmd sleep
     unset STUB_FAIL_TIMES
